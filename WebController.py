@@ -12,23 +12,31 @@ insttype_list = ["Marketplace","List","Company","News Agency","Equity",
 
 stocklist = []
 
-def dircheck(stock):
-    instrument = stock[3]
-    tradecurrency = stock[2]
-    os.chdir("Instrumenttype")
-    os.chdir(insttype_list[instrument])
-    folder = os.listdir()
-    print(folder)
-    # for i in folder:
-    #     if i == insttype_list[instrument]:
-    #         print(instrument)
-    #         print(tradecurrency)
-
 def main():
-    # urlcheck(1000, 10000)
-    dircheck([1,1,1,3])
+    ready = urlcheck(0, 100)
+    i = 0
+    os.chdir("Instrumenttype")
+    while i < len(stocklist) and ready == True: 
+        dircheck(stocklist[i])
+        i += 1
 
-
+def dircheck(stock):
+    insref,name,tradecurrency,instrumenttype= stock[:]
+    os.chdir(insttype_list[instrumenttype])
+    while True:
+        try:
+            os.chdir(tradecurrency)
+        except FileNotFoundError:
+            os.mkdir(tradecurrency)
+            os.chdir(tradecurrency)
+        break
+    while True:
+        try:
+            os.mkdir(f"{insref}_{name}")
+        except FileExistsError:
+            break
+    os.chdir(f'../../')
+    return
 
 def urlinfo(page):
     html_bytes = page.read()
@@ -38,11 +46,10 @@ def urlinfo(page):
     insref = info[0].split(':')
     name = info[1].split(':')
     tradecurrency = info[2].split(':')
-    instrument = info[5].split(':')
-    stock = [int(insref[1]), name[1], tradecurrency[1], int(instrument[1])]
+    instrumenttype = info[5].split(':')
+    stock = [int(insref[1]), name[1].strip("\""), 
+             tradecurrency[1].strip("\""), int(instrumenttype[1])]
     stocklist.append(stock)
-    print(stock)
-
 
 def urlcheck(start, end):
     i = start
@@ -56,6 +63,6 @@ def urlcheck(start, end):
             except:
                 break
         i += 1
-
+    return True
 
 main()
