@@ -13,12 +13,27 @@ insttype_list = ["Marketplace","List","Company","News Agency","Equity",
 stocklist = []
 
 def main():
-    ready = urlcheck(0, 100)
-    i = 0
+    urlcheck(0, 100)
+    folder()    
     os.chdir("Instrumenttype")
-    while i < len(stocklist) and ready == True: 
+    i = 0
+    while i < len(stocklist): 
         dircheck(stocklist[i])
         i += 1
+
+def folder():
+    while True:
+        try:
+            os.mkdir("Instrumenttype")
+            os.chdir("Instrumenttype")
+            i = 0
+            while i < len(insttype_list):
+                os.mkdir(insttype_list[i])
+                i += 1
+            os.chdir("../")
+        except FileExistsError:
+            break
+    return
 
 def dircheck(stock):
     insref,name,tradecurrency,instrumenttype= stock[:]
@@ -63,6 +78,6 @@ def urlcheck(start, end):
             except:
                 break
         i += 1
-    return True
+    return
 
 main()
