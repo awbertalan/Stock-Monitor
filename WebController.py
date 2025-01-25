@@ -13,8 +13,8 @@ insttype_list = ["Marketplace","List","Company","News Agency","Equity",
 stocklist = []
 
 def main():
-    urlcheck(0, 100)
-    folder()    
+    urlcheck(140000, 1000000)
+    folder()
     os.chdir("Instrumenttype")
     i = 0
     while i < len(stocklist): 
@@ -62,7 +62,7 @@ def urlinfo(page):
     name = info[1].split(':')
     tradecurrency = info[2].split(':')
     instrumenttype = info[5].split(':')
-    stock = [int(insref[1]), name[1].strip("\""), 
+    stock = [int(insref[1]), name[1].replace('\\','').replace('/','').strip('\"'), 
              tradecurrency[1].strip("\""), int(instrumenttype[1])]
     stocklist.append(stock)
 
@@ -77,6 +77,9 @@ def urlcheck(start, end):
                 break
             except:
                 break
+        if i%100 == 0:
+            print(i)
+            print(len(stocklist))
         i += 1
     return
 
