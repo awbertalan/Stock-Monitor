@@ -60,9 +60,10 @@ def urlinfo(page):
     info = html[17: html.find(end)].split(',')
     insref = info[0].split(':')
     name = info[1].split(':')
+    clnname = re.sub(r'[^a-zA-Z0-9]', '', name[1])
     tradecurrency = info[2].split(':')
     instrumenttype = info[5].split(':')
-    stock = [int(insref[1]), name[1].replace('\\','').replace('/','').strip('\"'), 
+    stock = [int(insref[1]), clnname, 
              tradecurrency[1].strip("\""), int(instrumenttype[1])]
     stocklist.append(stock)
 
