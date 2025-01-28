@@ -1,5 +1,5 @@
 from urllib.request import urlopen
-import csv, os, re, time, datetime
+import csv, os, re, time, datetime,threading
 
 insttype_list = ["Marketplace","List","Company","News Agency","Equity",
                   "Derivative","Index","Exchange Traded Fund","Mutual Fund",
@@ -13,10 +13,11 @@ insttype_list = ["Marketplace","List","Company","News Agency","Equity",
 stocklist = []
 
 def main():
-    start = 1000000
-    end = 1600000
+    start = 2000000
+    end = 3000000
     print(f"Checking Millistream if any stocks are found between {start} and {end}")
-    starttime = urlcheck(start, end)
+    starttime = time.time()
+    multi(start, end)
     folder()
     i = 0
     while i < len(stocklist): 
@@ -25,6 +26,23 @@ def main():
     endtime = time.time()
     totaltime = datetime.timedelta(seconds=int(endtime-starttime))
     print(f"The time of execution of between {start} and {end} program is {totaltime} and number of stocks found {len(stocklist)}")
+
+def multi(start, end):
+    stack = (end - start) // 4
+    thread0 = threading.Thread(target=urlcheck, args=(start, (start+stack), 0))
+    thread1 = threading.Thread(target=urlcheck, args=((start+stack), (start+stack*2), 1))
+    thread2 = threading.Thread(target=urlcheck, args=((start+stack*2), (start+stack*3), 2))
+    thread3 = threading.Thread(target=urlcheck, args=((start+stack*3), end, 3))
+
+    thread0.start()
+    thread1.start()
+    thread2.start()
+    thread3.start()
+
+    thread0.join()
+    thread1.join()
+    thread2.join()
+    thread3.join()
 
 def folder():
     while True:
@@ -71,9 +89,10 @@ def urlinfo(page):
              tradecurrency[1].strip("\""), int(instrumenttype[1])]
     stocklist.append(stock)
 
-def urlcheck(start, end):
+def urlcheck(start, end, thread):
     starttime = time.time()
     i = starttime
+    flag = False
     s = 0
     while start <= end :
         url = f"https://mws-2.millistream.com/mws.fcgi?widget=intradaychart&token=0a4a41df-ed7b-4a36-b4c5-5a9706613825&target=buildwidget_0&fields=name,tradecurrency,time,date,tradeprice,tradequantity,marketopen,marketclose,closeprice1d&language=sv&compress=1&insref={start}&intradaylen=7&xhr=0&adjusted=1"
@@ -85,14 +104,15 @@ def urlcheck(start, end):
                 break
             except:
                 break
-        if start%1000 == 0:
+        if start%1000 == 0 and flag:
             j = time.time()
             elapsedtime = datetime.timedelta(seconds=int(j-starttime))
-            print(f"The time of execution of between {start-1000} and {start} program is: {round((j-i),3)} seconds, actual time {elapsedtime}")
+            print(f"The time of execution of between {start-1000} and {start} on thread {thread} is: {round((j-i),3)} seconds, actual time {elapsedtime}")
             i = time.time()
-            print(f"Number of stocks found {s} and total number of stocks in list {len(stocklist)}")
+            print(f"Number of stocks found {s} and total number of stocks in list {len(stocklist)}", "\n")
             s = 0
         start += 1
+        flag = True
     return starttime
 
 main()
