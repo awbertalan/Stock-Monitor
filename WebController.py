@@ -1,5 +1,6 @@
 from urllib.request import urlopen
-import csv, os, re, time, datetime,threading
+from colors import color
+import os, re, time, datetime,threading
 
 insttype_list = ["Marketplace","List","Company","News Agency","Equity",
                   "Derivative","Index","Exchange Traded Fund","Mutual Fund",
@@ -29,10 +30,10 @@ def main():
 
 def multi(start, end):
     stack = (end - start) // 4
-    thread0 = threading.Thread(target=urlcheck, args=(start, (start+stack), 0))
-    thread1 = threading.Thread(target=urlcheck, args=((start+stack), (start+stack*2), 1))
-    thread2 = threading.Thread(target=urlcheck, args=((start+stack*2), (start+stack*3), 2))
-    thread3 = threading.Thread(target=urlcheck, args=((start+stack*3), end, 3))
+    thread0 = threading.Thread(target=urlcheck, args=(start, (start+stack), 0, color["VIOLET2"]))
+    thread1 = threading.Thread(target=urlcheck, args=((start+stack), (start+stack*2), 1, color["GREEN2"]))
+    thread2 = threading.Thread(target=urlcheck, args=((start+stack*2), (start+stack*3), 2, color["YELLOW2"]))
+    thread3 = threading.Thread(target=urlcheck, args=((start+stack*3), end, 3, color["BLUE2"]))
 
     thread0.start()
     thread1.start()
@@ -47,14 +48,14 @@ def multi(start, end):
 def folder():
     while True:
         try:
+            os.chdir("Instrumenttype")
+        except FileNotFoundError:
             os.mkdir("Instrumenttype")
             os.chdir("Instrumenttype")
             i = 0
             while i < len(insttype_list):
                 os.mkdir(insttype_list[i])
                 i += 1
-        except FileExistsError:
-            os.chdir("Instrumenttype")
         return
 
 def dircheck(stock):
@@ -82,6 +83,7 @@ def urlinfo(page):
     info = html[17: html.find(end)].split(',')
     insref = info[0].split(':')
     name = info[1].split(':')
+    # Migthy need to redo all before 213789 because of whitespace is in name
     clnname = re.sub(r'[^a-zA-Z0-9]', '', name[1])
     tradecurrency = info[2].split(':')
     instrumenttype = info[5].split(':')
@@ -89,7 +91,7 @@ def urlinfo(page):
              tradecurrency[1].strip("\""), int(instrumenttype[1])]
     stocklist.append(stock)
 
-def urlcheck(start, end, thread):
+def urlcheck(start, end, thread, paint):
     starttime = time.time()
     i = starttime
     flag = False
@@ -107,7 +109,7 @@ def urlcheck(start, end, thread):
         if start%1000 == 0 and flag:
             j = time.time()
             elapsedtime = datetime.timedelta(seconds=int(j-starttime))
-            print(f"The time of execution of between {start-1000} and {start} on thread {thread} is: {round((j-i),3)} seconds, actual time {elapsedtime}")
+            print(f"{paint}The time of execution of between {start-1000} and {start} on thread {thread} is: {round((j-i),3)} seconds, actual time {elapsedtime}{color["RESET"]}")
             i = time.time()
             print(f"Number of stocks found {s} and total number of stocks in list {len(stocklist)}", "\n")
             s = 0
