@@ -1,0 +1,6 @@
+.env
+.DS_Store
+.claude/
+Instrumenttype/
+__pycache__/
+*.pyc

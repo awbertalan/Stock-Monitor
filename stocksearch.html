@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Stock Search</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    #search-box {
+      width: 100%; padding: 10px; font-size: 15px;
+      box-sizing: border-box; border: 1px solid #ccc;
+      border-radius: 4px; margin-bottom: 16px;
+    }
+    #results { list-style: none; padding: 0; margin: 0; }
+    #results li { padding: 10px 12px; border-bottom: 1px solid #eee; cursor: pointer; }
+    #results li:hover { background: #f7f7f7; }
+    .stock-name { font-size: 15px; font-weight: bold; }
+    .stock-meta { font-size: 13px; color: #666; margin-top: 3px; }
+    .csv-badge {
+      display: inline-block; font-size: 11px; background: #e8f0fe;
+      color: #0066cc; border-radius: 3px; padding: 1px 6px;
+      margin-right: 4px; margin-top: 4px;
+    }
+    #empty { color: #aaa; font-size: 14px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h2>Stock Search</h2>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch" class="active">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <input id="search-box" type="text" placeholder="Search by name, insref, type or currency..." oninput="onSearch()">
+  <ul id="results"></ul>
+  <div id="empty" style="display:none">No stocks with CSV data found.</div>
+
+  <script>
+    let searchDebounce;
+
+    function onSearch() {
+      clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(doSearch, 250);
+    }
+
+    function doSearch() {
+      const q = document.getElementById('search-box').value;
+      fetch('/search?q=' + encodeURIComponent(q))
+        .then(r => r.json()).then(renderResults);
+    }
+
+    function renderResults(data) {
+      const ul    = document.getElementById('results');
+      const empty = document.getElementById('empty');
+      ul.innerHTML = '';
+      if (!data.length) { empty.style.display = ''; return; }
+      empty.style.display = 'none';
+      data.forEach(s => {
+        const li     = document.createElement('li');
+        const sep    = s.folder.indexOf('_');
+        const insref = sep >= 0 ? s.folder.slice(0, sep) : '';
+        const badges = s.csvs.map(f => `<span class="csv-badge">${esc(f)}</span>`).join('');
+        li.innerHTML =
+          `<div class="stock-name">${esc(s.name)}</div>` +
+          `<div class="stock-meta">${esc(s.type)} &nbsp;|&nbsp; ${esc(s.currency)}` +
+          (insref ? ` &nbsp;|&nbsp; #${esc(insref)}` : '') + `</div>` +
+          `<div style="margin-top:5px">${badges}</div>`;
+        li.onclick = () => {
+          li.style.opacity = '0.5';
+          li.style.pointerEvents = 'none';
+          li.querySelector('.stock-name').textContent += '  Updating…';
+          fetch('/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'path=' + encodeURIComponent(s.path)
+          })
+          .finally(() => {
+            window.location.href = '/view?path=' + encodeURIComponent(s.path);
+          });
+        };
+        ul.appendChild(li);
+      });
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    doSearch();
+  </script>
+  <script src="/nav.js"></script>
+</body>
+</html>

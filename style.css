@@ -1,0 +1,27 @@
+body { font-family: Arial, sans-serif; max-width: 600px; margin: 60px auto; padding: 0 20px; }
+h2 { margin-bottom: 8px; }
+a { color: #0066cc; }
+
+nav { margin-bottom: 28px; display: flex; gap: 12px; }
+nav a { text-decoration: none; padding: 7px 18px; border-radius: 4px; background: #e8e8e8; color: #333; font-weight: bold; }
+nav a.active { background: #0066cc; color: white; }
+.nav-update-btn {
+  margin-left: auto; padding: 6px 16px; border: none; border-radius: 4px;
+  background: #1a7f37; color: #fff; font-size: 13px; font-weight: bold;
+  font-family: Arial, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.nav-update-btn:hover    { background: #166130; }
+.nav-update-btn:disabled { background: #8a94a6; cursor: default; }
+
+/* Watchlist star — dashboard cards */
+.card-star-btn {
+  position: absolute; top: 8px; right: 8px;
+  background: none; border: none; cursor: pointer;
+  font-size: 17px; color: #ddd; padding: 2px; line-height: 1;
+}
+.card-star-btn:hover   { color: #f0b429; }
+.card-star-btn.starred { color: #f0b429; }
+
+/* Watchlist section heading on dashboard */
+.section-heading { font-size: 14px; font-weight: bold; color: #1a1f36; margin-bottom: 10px; }
+.section-divider { border: none; border-top: 1px solid #e0e4ef; margin: 24px 0 20px; }

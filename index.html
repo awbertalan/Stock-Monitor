@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Millistream Scraper</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .form-row {
+      display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    .form-field { display: flex; flex-direction: column; gap: 5px; }
+    .form-field label { font-size: 12px; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 0.4px; }
+    .form-field input {
+      width: 120px; padding: 8px 10px; font-size: 15px;
+      border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;
+    }
+    .btn-group { display: flex; gap: 8px; }
+    .btn-start {
+      padding: 9px 22px; font-size: 15px; background: #0066cc;
+      color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
+    }
+    .btn-start:hover     { background: #0052a3; }
+    .btn-start:disabled  { background: #aaa; cursor: default; }
+    .btn-stop {
+      padding: 9px 18px; font-size: 15px; background: #fff;
+      color: #c0392b; border: 1px solid #c0392b; border-radius: 4px;
+      cursor: pointer; font-weight: bold;
+    }
+    .btn-stop:hover    { background: #fdf0ee; }
+    .btn-stop:disabled { color: #bbb; border-color: #ddd; cursor: default; background: #fff; }
+
+    #progress-section {
+      background: #f8f9fc; border: 1px solid #e0e4ef; border-radius: 6px;
+      padding: 14px 16px; margin-bottom: 16px;
+    }
+    .progress-header {
+      display: flex; justify-content: space-between;
+      align-items: baseline; margin-bottom: 8px;
+    }
+    .phase-label { font-weight: bold; font-size: 14px; color: #1a1f36; }
+    .progress-nums { font-size: 13px; color: #666; }
+    .progress-bar-bg {
+      background: #e0e4ef; border-radius: 3px; height: 6px; overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; background: #0066cc; border-radius: 3px;
+      transition: width 0.4s ease; width: 0%;
+    }
+    .progress-bar-fill.scraping { background: #1a7f37; }
+    .progress-sub { font-size: 12px; color: #888; margin-top: 6px; }
+
+    #status-box {
+      padding: 12px 14px; background: #f4f4f4; border-radius: 4px;
+      font-size: 13px; white-space: pre-line; color: #333;
+      min-height: 36px; margin-bottom: 24px;
+    }
+
+    hr { border: none; border-top: 1px solid #eee; margin: 8px 0 20px; }
+
+    h3 { font-size: 15px; color: #1a1f36; margin-bottom: 12px; }
+
+    .history-table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .history-table th {
+      text-align: left; padding: 7px 10px; background: #f5f6fa;
+      color: #888; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.4px; border-bottom: 1px solid #eee;
+    }
+    .history-table td {
+      padding: 8px 10px; border-bottom: 1px solid #f0f0f0; color: #333;
+    }
+    .history-table tr:last-child td { border-bottom: none; }
+    .history-table tr:hover td { background: #fafafa; }
+    .badge-done    { color: #1a7f37; font-weight: bold; }
+    .badge-stopped { color: #c0392b; font-weight: bold; }
+    #history-empty { color: #aaa; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h2>Millistream Scraper</h2>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/scrape" class="active">Scrape</a>
+    <a href="/settings">Settings</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="form-row">
+    <div class="form-field">
+      <label>Start index</label>
+      <input type="number" id="start" value="0" min="0">
+    </div>
+    <div class="form-field">
+      <label>End index</label>
+      <input type="number" id="end" value="1000" min="1">
+    </div>
+    <div class="btn-group">
+      <button class="btn-start" id="btn-start" onclick="startSearch()">Start Scrape</button>
+      <button class="btn-stop"  id="btn-stop"  onclick="stopSearch()" disabled>Stop</button>
+    </div>
+  </div>
+
+  <div id="progress-section" style="display:none">
+    <div class="progress-header">
+      <span class="phase-label" id="phase-label"></span>
+      <span class="progress-nums" id="progress-nums"></span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="progress-fill"></div>
+    </div>
+    <div class="progress-sub" id="progress-sub"></div>
+  </div>
+
+  <div id="status-box">Ready.</div>
+
+  <hr>
+  <h3>Scrape History</h3>
+  <div id="history-empty" style="display:none">No scrape history yet.</div>
+  <table class="history-table" id="history-table" style="display:none">
+    <thead>
+      <tr>
+        <th>Date &amp; Time</th>
+        <th>Index Range</th>
+        <th>Checked</th>
+        <th>Stocks Found</th>
+        <th>Scraped</th>
+        <th>Duration</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="history-body"></tbody>
+  </table>
+
+  <hr>
+  <h3>History CSV Backfill</h3>
+  <p style="font-size:13px; color:#666; margin:0 0 12px;">
+    Generates <code>_History.csv</code> (daily closes from IPO) for every stock that doesn't have one yet.
+    Required before "Full History" shows long-term data on stock pages.
+  </p>
+  <div class="btn-group" style="margin-bottom:14px;">
+    <button class="btn-start" id="btn-backfill" onclick="startBackfill()">Start Backfill</button>
+  </div>
+  <div id="backfill-progress" style="display:none; margin-bottom:8px;">
+    <div class="progress-header">
+      <span class="phase-label">Fetching history</span>
+      <span class="progress-nums" id="backfill-nums"></span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill scraping" id="backfill-fill"></div>
+    </div>
+    <div class="progress-sub" id="backfill-sub"></div>
+  </div>
+  <div id="backfill-msg" style="font-size:13px; color:#555;"></div>
+
+  <script>
+    function startSearch() {
+      const start = document.getElementById('start').value;
+      const end   = document.getElementById('end').value;
+      document.getElementById('btn-start').disabled = true;
+      document.getElementById('btn-stop').disabled  = false;
+      fetch('/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'start=' + start + '&end=' + end
+      });
+      poll();
+    }
+
+    function stopSearch() {
+      const btn = document.getElementById('btn-stop');
+      btn.disabled    = true;
+      btn.textContent = 'Stopping…';
+      fetch('/stop', { method: 'POST' });
+    }
+
+    function poll() {
+      fetch('/status').then(r => r.json()).then(data => {
+        updateUI(data);
+        if (data.running) {
+          setTimeout(poll, 1000);
+        } else {
+          document.getElementById('btn-start').disabled = false;
+          document.getElementById('btn-stop').disabled  = true;
+          document.getElementById('btn-stop').textContent = 'Stop';
+          loadHistory();
+        }
+      });
+    }
+
+    const PHASE_LABELS = {
+      searching: 'Searching index range',
+      building:  'Creating folders',
+      scraping:  'Scraping price data',
+      done:      'Done',
+    };
+
+    function updateUI(data) {
+      document.getElementById('status-box').textContent = data.message || '';
+
+      const section = document.getElementById('progress-section');
+      if (!data.running && data.phase !== 'done') {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+
+      document.getElementById('phase-label').textContent =
+        PHASE_LABELS[data.phase] || data.phase;
+
+      const fill = document.getElementById('progress-fill');
+      fill.className = 'progress-bar-fill' + (data.phase === 'scraping' ? ' scraping' : '');
+
+      if (data.phase === 'searching' && data.total > 0) {
+        const pct = Math.min(100, Math.round(data.checked / data.total * 100));
+        fill.style.width = pct + '%';
+        document.getElementById('progress-nums').textContent =
+          pct + '%  ·  ' + data.checked + ' / ' + data.total + ' checked';
+        document.getElementById('progress-sub').textContent =
+          data.found + ' stock' + (data.found !== 1 ? 's' : '') + ' found so far';
+      } else if (data.phase === 'scraping' && data.scrape_total > 0) {
+        const pct = Math.min(100, Math.round(data.scrape_done / data.scrape_total * 100));
+        fill.style.width = pct + '%';
+        document.getElementById('progress-nums').textContent =
+          pct + '%  ·  ' + data.scrape_done + ' / ' + data.scrape_total;
+        document.getElementById('progress-sub').textContent = '';
+      } else if (data.phase === 'building') {
+        fill.style.width = '100%';
+        document.getElementById('progress-nums').textContent = '';
+        document.getElementById('progress-sub').textContent = '';
+      } else {
+        fill.style.width = '100%';
+        document.getElementById('progress-nums').textContent = '';
+        document.getElementById('progress-sub').textContent = '';
+      }
+    }
+
+    function fmtDuration(s) {
+      if (s < 60)   return s + 's';
+      const m = Math.floor(s / 60), r = s % 60;
+      return m + 'm ' + (r > 0 ? r + 's' : '');
+    }
+
+    function loadHistory() {
+      fetch('/scrape-history').then(r => r.json()).then(history => {
+        const empty = document.getElementById('history-empty');
+        const table = document.getElementById('history-table');
+        const tbody = document.getElementById('history-body');
+        if (!history.length) {
+          empty.style.display = '';
+          table.style.display = 'none';
+          return;
+        }
+        empty.style.display = 'none';
+        table.style.display = '';
+        tbody.innerHTML = [...history].reverse().map(h => {
+          const range   = h.start_index + ' – ' + h.end_index;
+          const checked = h.checked + ' / ' + (h.end_index - h.start_index + 1);
+          const dur     = fmtDuration(h.duration_s);
+          const status  = h.stopped_early
+            ? '<span class="badge-stopped">Early stop</span>'
+            : '<span class="badge-done">Done</span>';
+          return `<tr>
+            <td>${h.date} &nbsp;${h.time}</td>
+            <td>${range}</td>
+            <td>${checked}</td>
+            <td>${h.found}</td>
+            <td>${h.scraped ?? '—'}</td>
+            <td>${dur}</td>
+            <td>${status}</td>
+          </tr>`;
+        }).join('');
+      });
+    }
+
+    // On page load — reconnect if already running, load history
+    fetch('/status').then(r => r.json()).then(data => {
+      updateUI(data);
+      if (data.running) {
+        document.getElementById('btn-start').disabled = true;
+        document.getElementById('btn-stop').disabled  = false;
+        poll();
+      }
+    });
+    loadHistory();
+
+    // ── Backfill ────────────────────────────────────────────────────────────
+    function startBackfill() {
+      document.getElementById('btn-backfill').disabled = true;
+      fetch('/backfill-history', { method: 'POST' });
+      pollBackfill();
+    }
+
+    function pollBackfill() {
+      fetch('/backfill-history-status').then(r => r.json()).then(d => {
+        const prog = document.getElementById('backfill-progress');
+        const btn  = document.getElementById('btn-backfill');
+
+        if (d.total > 0) {
+          prog.style.display = '';
+          const pct = Math.min(100, Math.round(d.done / d.total * 100));
+          document.getElementById('backfill-fill').style.width = pct + '%';
+          document.getElementById('backfill-nums').textContent =
+            pct + '%  ·  ' + d.done + ' / ' + d.total;
+          document.getElementById('backfill-sub').textContent =
+            d.fetched + ' fetched  ·  ' + d.skipped + ' skipped  ·  ' + d.errors + ' errors';
+        }
+        if (d.message) document.getElementById('backfill-msg').textContent = d.message;
+
+        if (d.running) {
+          setTimeout(pollBackfill, 1500);
+        } else {
+          btn.disabled = false;
+        }
+      });
+    }
+
+    // Reconnect if backfill was already running when page opened
+    fetch('/backfill-history-status').then(r => r.json()).then(d => {
+      if (d.message) document.getElementById('backfill-msg').textContent = d.message;
+      if (d.running) {
+        document.getElementById('btn-backfill').disabled = true;
+        pollBackfill();
+      }
+    });
+  </script>
+  <script src="/nav.js"></script>
+</body>
+</html>
