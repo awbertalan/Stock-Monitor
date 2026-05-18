@@ -79,7 +79,53 @@ window.PE = (() => {
   // ── Pattern detection ─────────────────────────────────────────────────────────
   // Returns [{name, type:'bullish'|'bearish'|'neutral', baseWin, candleIdx, candle}]
 
-  function detect(candles, atr) {
+  // ── Context multipliers ───────────────────────────────────────────────────────
+  // ctx = { filters:{maTrend,rsi,maRegime}, priceAboveMa50, ma50SlopeUp, ma50AboveMa200, rsiValue }
+
+  function _applyContextMultipliers(pattern, ctx) {
+    let win = pattern.baseWin;
+    const isBull = pattern.type === 'bullish';
+    const isBear = pattern.type === 'bearish';
+    if (!isBull && !isBear) return win;  // neutral patterns unaffected
+
+    if (ctx.filters.maTrend) {
+      if (isBull) {
+        if      (ctx.priceAboveMa50 && ctx.ma50SlopeUp)  win *= 1.12;
+        else if (ctx.priceAboveMa50)                      win *= 1.04;
+        else if (!ctx.priceAboveMa50 && !ctx.ma50SlopeUp) win *= 0.88;
+        else                                              win *= 0.94;
+      } else {
+        if      (!ctx.priceAboveMa50 && !ctx.ma50SlopeUp) win *= 1.12;
+        else if (!ctx.priceAboveMa50)                      win *= 1.04;
+        else if (ctx.priceAboveMa50 && ctx.ma50SlopeUp)   win *= 0.88;
+        else                                              win *= 0.94;
+      }
+    }
+
+    if (ctx.filters.rsi && ctx.rsiValue !== null) {
+      const r = ctx.rsiValue;
+      if (isBull) {
+        if      (r >= 30 && r <= 55) win *= 1.10;   // sweet spot: building momentum
+        else if (r < 30)             win *= 1.04;   // oversold bounce potential
+        else if (r > 70)             win *= 0.85;   // overbought, risky long
+        else                         win *= 0.96;   // 55-70: slightly extended
+      } else {
+        if      (r >= 45 && r <= 70) win *= 1.10;   // sweet spot: fading momentum
+        else if (r > 70)             win *= 1.04;   // overbought, confirms short
+        else if (r < 30)             win *= 0.85;   // oversold, risky short
+        else                         win *= 0.96;
+      }
+    }
+
+    if (ctx.filters.maRegime) {
+      if      (isBull) win *= ctx.ma50AboveMa200 ? 1.08 : 0.92;
+      else if (isBear) win *= ctx.ma50AboveMa200 ? 0.92 : 1.08;
+    }
+
+    return Math.max(0.50, Math.min(0.95, win));
+  }
+
+  function detect(candles, atr, ctx = null) {
     const n   = candles.length;
     const out = [];
 
@@ -445,6 +491,8 @@ window.PE = (() => {
           && pe.bear && pe.is_large && e.close < b.open && e.close > a.close)
         _emit(out, 'Bearish Breakaway', 'bearish', 0.65, i, candles);
     }
+
+    if (ctx) out.forEach(p => { p.baseWin = _applyContextMultipliers(p, ctx); });
 
     return out;
   }

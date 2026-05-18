@@ -21,6 +21,7 @@
     <a href="/browse" class="active">Browse Folders</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
   <div id="breadcrumb"></div>
@@ -44,7 +45,7 @@
       let bc = '<a href="#" onclick="navigate(\'\')">Instrumenttype</a>';
       parts.forEach((p, i) => {
         const sub = parts.slice(0, i + 1).join('/');
-        bc += ' / <a href="#" onclick="navigate(\'' + sub + '\')">' + p + '</a>';
+        bc += ' / <a href="#" onclick="navigate(\'' + sub.replace(/'/g, "\\'") + '\')">' + p + '</a>';
       });
       document.getElementById('breadcrumb').innerHTML = bc;
 

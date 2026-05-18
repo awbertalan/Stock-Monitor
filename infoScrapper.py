@@ -1,8 +1,8 @@
 from urllib.request import urlopen
 from datetime import datetime, timezone
 import json, csv, os
-from dotenv import load_dotenv
-load_dotenv()
+import env_loader
+env_loader.load_env()
 
 TOKEN = os.environ["MILLISTREAM_TOKEN"]
 _BASE = "https://mws-2.millistream.com/mws.fcgi"

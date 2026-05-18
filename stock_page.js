@@ -9,8 +9,12 @@ let viewEnd          = 0;
 let showVolume       = false;
 let showCandles      = false;
 let candleBucketMs   = null;   // null = auto-select by view range
-let dragState        = null;
+let measureState     = null;  // { startX, startIdx } during drag
+let measureRange     = null;  // { startIdx, endIdx } persists after drag
 let hoverIdx         = null;
+const showMA         = { 20: false, 50: false, 200: false };
+const MA_COLORS      = { 20: '#f0a500', 50: '#0066cc', 200: '#cc3300' };
+let showRSI          = false;
 let currentCsvPath   = null;
 let usingFullHistory = false;
 let _lastCandles     = [];
@@ -46,9 +50,10 @@ async function loadCsv(path, init = false) {
   const res  = await fetch('/csv?path=' + encodeURIComponent(path));
   const data = await res.json();
   if (!Array.isArray(data) || !data.length) throw new Error('empty');
-  allData   = data;
-  viewStart = 0;
-  viewEnd   = allData.length - 1;
+  allData      = data;
+  viewStart    = 0;
+  viewEnd      = allData.length - 1;
+  measureRange = null;
   updateTicker();
   if (init) initChart(); else redraw();
   if (_patternMode) runPatternDetection();
@@ -57,8 +62,9 @@ async function loadCsv(path, init = false) {
 // ── Ticker ────────────────────────────────────────────────────────────────────
 
 function updateTicker() {
-  const prices = allData.map(r => r[1]);
-  const vols   = allData.map(r => r[2] || 0);
+  const data   = allData.slice(viewStart, viewEnd + 1);
+  const prices = data.map(r => r[1]);
+  const vols   = data.map(r => r[2] || 0);
   const first  = prices[0];
   const last   = prices[prices.length - 1];
   const change = last - first;
@@ -83,9 +89,11 @@ function updateTicker() {
 function initChart() {
   const pc = document.getElementById('price-chart');
   const vc = document.getElementById('volume-chart');
+  const rc = document.getElementById('rsi-chart');
   const W  = pc.offsetWidth || 760;
   pc.width  = W;  pc.height  = 320;
   vc.width  = W;  vc.height  = 80;
+  if (rc) { rc.width = W; rc.height = 80; }
   setupEvents(pc);
   redraw();
 }
@@ -94,6 +102,7 @@ function redraw() {
   if (showCandles) drawCandles();
   else drawPrice();
   if (showVolume) drawVolume();
+  if (showRSI) drawRSI();
   if (_patternMode && _lastCandles.length) drawPatternOverlay();
 }
 
@@ -153,6 +162,9 @@ function drawPrice() {
   grad.addColorStop(1, color + '04');
   ctx.fillStyle = grad; ctx.fill();
 
+  // Moving average overlay
+  drawMAOverlay(ctx, W, H);
+
   // X-axis labels
   drawXLabels(ctx, data, W, H, xOf);
 
@@ -172,6 +184,7 @@ function drawPrice() {
       drawTooltip(ctx, data[li], hx, W);
     }
   }
+  drawMeasureOverlay(ctx, W, H);
 }
 
 function drawXLabels(ctx, data, W, H, xOf) {
@@ -217,6 +230,220 @@ function drawTooltip(ctx, row, hx, W) {
   ctx.fillRect(tx - 8, ty - 14, tw + 14, 22);
   ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
   ctx.fillText(tip, tx, ty);
+}
+
+function drawMeasureOverlay(ctx, W, H) {
+  if (!measureRange) return;
+  const data = visData();
+  if (!data.length) return;
+  const n = data.length;
+  const xOf = i => PAD.left + (i / Math.max(n - 1, 1)) * (W - PAD.left - PAD.right);
+
+  const loGlobal = Math.min(measureRange.startIdx, measureRange.endIdx);
+  const hiGlobal = Math.max(measureRange.startIdx, measureRange.endIdx);
+  const loLocal  = Math.max(0, loGlobal - viewStart);
+  const hiLocal  = Math.min(n - 1, hiGlobal - viewStart);
+  if (loLocal >= hiLocal) return;
+
+  const x1 = xOf(loLocal);
+  const x2 = xOf(hiLocal);
+
+  // Shaded selection band
+  ctx.fillStyle = 'rgba(0,102,204,0.07)';
+  ctx.fillRect(x1, PAD.top, x2 - x1, H - PAD.top - PAD.bottom);
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = 'rgba(0,102,204,0.35)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x1, PAD.top); ctx.lineTo(x1, H - PAD.bottom); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x2, PAD.top); ctx.lineTo(x2, H - PAD.bottom); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Change stats
+  const pStart = data[loLocal][1];
+  const pEnd   = data[hiLocal][1];
+  const change = pEnd - pStart;
+  const pct    = (change / pStart) * 100;
+  const isUp   = change >= 0;
+  const col    = isUp ? '#00b36b' : '#e03131';
+
+  const fmtDate = ts => {
+    const d = new Date(ts);
+    return d.toLocaleDateString('en', { month: 'short', day: 'numeric' }) + ' ' +
+           d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' });
+  };
+  const line1 = `${fmtDate(data[loLocal][0])}  →  ${fmtDate(data[hiLocal][0])}`;
+  const line2 = `${isUp ? '+' : ''}${change.toFixed(2)}   (${isUp ? '+' : ''}${pct.toFixed(2)}%)`;
+
+  ctx.font = '11px Arial';
+  const w1 = ctx.measureText(line1).width;
+  ctx.font = 'bold 13px Arial';
+  const w2 = ctx.measureText(line2).width;
+  const boxW = Math.max(w1, w2) + 20;
+  const boxH = 46;
+  const midX = (x1 + x2) / 2;
+  const bx = Math.max(PAD.left, Math.min(W - PAD.right - boxW, midX - boxW / 2));
+  const by = PAD.top + 4;
+
+  ctx.fillStyle = 'rgba(20,20,20,0.88)';
+  ctx.fillRect(bx, by, boxW, boxH);
+  ctx.fillStyle = '#bbb'; ctx.textAlign = 'left';
+  ctx.font = '11px Arial';
+  ctx.fillText(line1, bx + 10, by + 16);
+  ctx.fillStyle = col;
+  ctx.font = 'bold 13px Arial';
+  ctx.fillText(line2, bx + 10, by + 35);
+}
+
+// ── Moving Averages ───────────────────────────────────────────────────────────
+
+function calcMA(period) {
+  const result = [];
+  let sum = 0;
+  for (let i = 0; i < allData.length; i++) {
+    sum += allData[i][1];
+    if (i >= period) sum -= allData[i - period][1];
+    result.push(i >= period - 1 ? sum / period : null);
+  }
+  return result;
+}
+
+function drawMAOverlay(ctx, W, H) {
+  if (![20, 50, 200].some(p => showMA[p])) return;
+  const data = visData();
+  if (!data.length) return;
+  const n      = data.length;
+  const prices = data.map(r => r[1]);
+  const minP   = Math.min(...prices);
+  const maxP   = Math.max(...prices);
+  const pRange = maxP - minP || 1;
+  const xOf    = i => PAD.left + (i / Math.max(n - 1, 1)) * (W - PAD.left - PAD.right);
+  const yOf    = p => PAD.top  + (1 - (p - minP) / pRange) * (H - PAD.top - PAD.bottom);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PAD.left, PAD.top, W - PAD.left - PAD.right, H - PAD.top - PAD.bottom);
+  ctx.clip();
+
+  [20, 50, 200].forEach(period => {
+    if (!showMA[period]) return;
+    const ma = calcMA(period);
+    ctx.beginPath();
+    let started = false;
+    for (let i = viewStart; i <= viewEnd; i++) {
+      if (ma[i] === null) continue;
+      const li = i - viewStart;
+      const px = xOf(li), py = yOf(ma[i]);
+      if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = MA_COLORS[period]; ctx.lineWidth = 1.2; ctx.lineJoin = 'round';
+    ctx.stroke();
+  });
+
+  ctx.restore();
+
+  // Labels on left y-axis
+  [20, 50, 200].forEach(period => {
+    if (!showMA[period]) return;
+    const ma  = calcMA(period);
+    const val = ma[viewEnd];
+    if (val === null) return;
+    const py = yOf(val);
+    if (py < PAD.top || py > H - PAD.bottom) return;
+    ctx.fillStyle = MA_COLORS[period]; ctx.textAlign = 'right'; ctx.font = 'bold 9px Arial';
+    ctx.fillText('MA' + period, PAD.left - 2, py + 3);
+  });
+}
+
+function toggleMA(period) {
+  showMA[period] = !showMA[period];
+  document.getElementById('btn-ma' + period)?.classList.toggle('active', showMA[period]);
+  redraw();
+}
+
+// ── RSI Indicator ─────────────────────────────────────────────────────────────
+
+function calcRSI(period = 14) {
+  const result = new Array(allData.length).fill(null);
+  if (allData.length < period + 1) return result;
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = allData[i][1] - allData[i - 1][1];
+    if (d > 0) avgGain += d; else avgLoss -= d;
+  }
+  avgGain /= period; avgLoss /= period;
+  result[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < allData.length; i++) {
+    const d = allData[i][1] - allData[i - 1][1];
+    avgGain = (avgGain * (period - 1) + Math.max(0,  d)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(0, -d)) / period;
+    result[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return result;
+}
+
+function drawRSI() {
+  const canvas = document.getElementById('rsi-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const data = visData();
+  if (!data.length) return;
+  const n    = data.length;
+  const rsi  = calcRSI();
+  const vpad = { top: 8, right: PAD.right, bottom: 20, left: PAD.left };
+  const xOf  = i => vpad.left + (i / Math.max(n - 1, 1)) * (W - vpad.left - vpad.right);
+  const yOf  = v => vpad.top  + (1 - v / 100) * (H - vpad.top - vpad.bottom);
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Overbought / oversold zones
+  ctx.fillStyle = 'rgba(224,49,49,0.06)';
+  ctx.fillRect(vpad.left, yOf(100), W - vpad.left - vpad.right, yOf(70) - yOf(100));
+  ctx.fillStyle = 'rgba(0,179,107,0.06)';
+  ctx.fillRect(vpad.left, yOf(30),  W - vpad.left - vpad.right, yOf(0)  - yOf(30));
+
+  // Reference lines at 30, 50, 70
+  [[70, '#e03131', [4, 4]], [50, '#e8e8e8', []], [30, '#00b36b', [4, 4]]].forEach(([level, color, dash]) => {
+    const yp = yOf(level);
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash(dash);
+    ctx.beginPath(); ctx.moveTo(vpad.left, yp); ctx.lineTo(W - vpad.right, yp); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#bbb'; ctx.textAlign = 'right'; ctx.font = '10px Arial';
+    ctx.fillText(level, vpad.left - 4, yp + 3);
+  });
+
+  // RSI line
+  ctx.beginPath();
+  let started = false;
+  for (let i = viewStart; i <= viewEnd; i++) {
+    if (rsi[i] === null) continue;
+    const li = i - viewStart;
+    const px = xOf(li), py = yOf(rsi[i]);
+    if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+  }
+  ctx.strokeStyle = '#9b59b6'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke();
+
+  // Label + current value
+  const cur = rsi[viewEnd];
+  const curCol = cur !== null ? (cur >= 70 ? '#e03131' : cur <= 30 ? '#00b36b' : '#9b59b6') : '#bbb';
+  ctx.fillStyle = '#999'; ctx.textAlign = 'left'; ctx.font = 'bold 10px Arial';
+  ctx.fillText('RSI(14)', vpad.left + 4, vpad.top + 10);
+  if (cur !== null) {
+    ctx.fillStyle = curCol;
+    ctx.fillText(cur.toFixed(1), vpad.left + 60, vpad.top + 10);
+  }
+}
+
+function toggleRSI() {
+  showRSI = !showRSI;
+  const rc  = document.getElementById('rsi-chart');
+  const btn = document.getElementById('btn-rsi');
+  rc.style.display = showRSI ? 'block' : 'none';
+  btn?.classList.toggle('active', showRSI);
+  if (showRSI) {
+    rc.width  = document.getElementById('price-chart').width;
+    rc.height = 80;
+    drawRSI();
+  }
 }
 
 // ── Volume chart ──────────────────────────────────────────────────────────────
@@ -362,6 +589,9 @@ function drawCandles() {
     ctx.fillRect(x - bodyW / 2, top, bodyW, Math.max(1, bot - top));
   });
 
+  // Moving average overlay
+  drawMAOverlay(ctx, W, H);
+
   // X-axis labels (reuse existing, map candle timestamps as fake rows)
   drawXLabels(ctx, candles.map(c => [c.ts, c.close, c.vol]), W, H, xOf);
 
@@ -369,6 +599,7 @@ function drawCandles() {
   if (hoveredCandle !== null) {
     drawCandleTooltip(ctx, candles[hoveredCandle], xOf(hoveredCandle), W);
   }
+  drawMeasureOverlay(ctx, W, H);
 }
 
 function drawCandleTooltip(ctx, c, hx, W) {
@@ -395,6 +626,12 @@ function drawCandleTooltip(ctx, c, hx, W) {
 // ── Interaction ───────────────────────────────────────────────────────────────
 
 function setupEvents(canvas) {
+  const idxAtX = x => {
+    const rect = canvas.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (x - rect.left - PAD.left) / (canvas.width - PAD.left - PAD.right)));
+    return Math.max(viewStart, Math.min(viewEnd, Math.round(viewStart + frac * (viewEnd - viewStart))));
+  };
+
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     const rect  = canvas.getBoundingClientRect();
@@ -402,44 +639,48 @@ function setupEvents(canvas) {
     const range = viewEnd - viewStart;
     const pivot = Math.round(viewStart + frac * range);
     const newRange = Math.max(10, Math.min(allData.length - 1, Math.round(range * (e.deltaY > 0 ? 1.15 : 0.87))));
-    viewStart = Math.max(0, Math.round(pivot - frac * newRange));
-    viewEnd   = Math.min(allData.length - 1, viewStart + newRange);
-    hoverIdx  = null;
+    viewStart    = Math.max(0, Math.round(pivot - frac * newRange));
+    viewEnd      = Math.min(allData.length - 1, viewStart + newRange);
+    measureRange = null;
+    hoverIdx     = null;
     redraw();
   }, { passive: false });
 
   canvas.addEventListener('mousedown', e => {
-    dragState = { startX: e.clientX, vs: viewStart, ve: viewEnd };
-    canvas.style.cursor = 'grabbing';
+    measureState = { startX: e.clientX, startIdx: idxAtX(e.clientX) };
+    canvas.style.cursor = 'crosshair';
   });
 
   window.addEventListener('mousemove', e => {
-    if (dragState) {
-      const range  = dragState.ve - dragState.vs;
-      const pxSpan = canvas.width - PAD.left - PAD.right;
-      const delta  = Math.round((dragState.startX - e.clientX) * range / pxSpan);
-      const ns     = Math.max(0, dragState.vs + delta);
-      viewStart    = ns;
-      viewEnd      = Math.min(allData.length - 1, ns + range);
-      if (viewEnd === allData.length - 1) viewStart = Math.max(0, viewEnd - range);
-      hoverIdx = null;
-      redraw();
+    if (measureState) {
+      const dx = Math.abs(e.clientX - measureState.startX);
+      if (dx > 4) {
+        const endIdx = idxAtX(e.clientX);
+        measureRange = { startIdx: measureState.startIdx, endIdx };
+        hoverIdx = null;
+        redraw();
+      }
       return;
     }
-    const rect  = canvas.getBoundingClientRect();
-    const frac  = (e.clientX - rect.left - PAD.left) / (canvas.width - PAD.left - PAD.right);
-    const range = viewEnd - viewStart;
-    hoverIdx = Math.max(viewStart, Math.min(viewEnd, Math.round(viewStart + frac * range)));
-    redraw();
+    const rect = canvas.getBoundingClientRect();
+    if (e.clientX >= rect.left && e.clientX <= rect.right &&
+        e.clientY >= rect.top  && e.clientY <= rect.bottom) {
+      hoverIdx = idxAtX(e.clientX);
+      redraw();
+    }
   });
 
-  window.addEventListener('mouseup', () => {
-    dragState = null;
+  window.addEventListener('mouseup', e => {
+    if (measureState) {
+      const dx = Math.abs(e.clientX - measureState.startX);
+      if (dx <= 4) { measureRange = null; redraw(); }  // plain click clears measure
+      measureState = null;
+    }
     canvas.style.cursor = 'crosshair';
   });
 
   canvas.addEventListener('mouseleave', () => {
-    if (!dragState) { hoverIdx = null; redraw(); }
+    if (!measureState) { hoverIdx = null; redraw(); }
   });
 }
 
@@ -464,18 +705,22 @@ function setRange(days) {
       break;
     }
   }
-  viewStart = start;
-  viewEnd   = allData.length - 1;
+  viewStart    = start;
+  viewEnd      = allData.length - 1;
+  measureRange = null;
   _clearRangeBtns();
   document.getElementById(RANGE_BTNS[days])?.classList.add('active');
+  updateTicker();
   if (_patternMode) runPatternDetection(); else redraw();
 }
 
 function resetZoom() {
-  viewStart = 0;
-  viewEnd   = allData.length - 1;
+  viewStart    = 0;
+  viewEnd      = allData.length - 1;
+  measureRange = null;
   _clearRangeBtns();
   document.getElementById('btn-7d')?.classList.add('active');
+  updateTicker();
   if (_patternMode) runPatternDetection(); else redraw();
 }
 
@@ -634,8 +879,9 @@ function _updateAlertButton(alert) {
   const btn = document.getElementById('btn-alert');
   if (!btn) return;
   if (alert) {
-    const sym = alert.condition === 'above' ? '>' : '<';
-    btn.textContent = `Alert: ${sym} ${alert.target}`;
+    const labels = { above: `> ${alert.target}`, below: `< ${alert.target}`,
+                     pct_rise: `↑ ${alert.target}%`, pct_drop: `↓ ${alert.target}%` };
+    btn.textContent = `Alert: ${labels[alert.condition] ?? alert.target}`;
     btn.classList.add('alert-set');
   } else {
     btn.textContent = 'Set Alert';
@@ -648,13 +894,33 @@ async function checkAlert(price) {
     const alerts = await fetch('/alerts').then(r => r.json());
     const alert  = alerts.find(a => a.path === _stockRelPath());
     if (!alert) return;
-    const hit = alert.condition === 'above' ? price >= alert.target : price <= alert.target;
+
+    let hit = false;
+    let body = '';
+    if (alert.condition === 'above') {
+      hit  = price >= alert.target;
+      body = `${price.toFixed(2)} is above your target of ${alert.target}`;
+    } else if (alert.condition === 'below') {
+      hit  = price <= alert.target;
+      body = `${price.toFixed(2)} is below your target of ${alert.target}`;
+    } else if (alert.condition === 'pct_rise' || alert.condition === 'pct_drop') {
+      const dayKey  = ts => { const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+      const today   = allData.length ? dayKey(allData[allData.length - 1][0]) : null;
+      const si      = today ? allData.findIndex(r => dayKey(r[0]) === today) : 0;
+      const dayOpen = allData[si >= 0 ? si : 0]?.[1] ?? price;
+      const pct     = dayOpen ? (price - dayOpen) / dayOpen * 100 : 0;
+      if (alert.condition === 'pct_rise') {
+        hit  = pct >=  alert.target;
+        body = `Up ${pct.toFixed(2)}% intraday (target +${alert.target}%)`;
+      } else {
+        hit  = pct <= -alert.target;
+        body = `Down ${Math.abs(pct).toFixed(2)}% intraday (target −${alert.target}%)`;
+      }
+    }
+
     if (!hit) return;
     if (Notification.permission === 'granted') {
-      const sym = alert.condition === 'above' ? 'above' : 'below';
-      new Notification(`${STOCK.name} — Price Alert`, {
-        body: `${price.toFixed(2)} is ${sym} your target of ${alert.target}`
-      });
+      new Notification(`${STOCK.name} — Price Alert`, { body });
     } else if (Notification.permission !== 'denied') {
       Notification.requestPermission();
     }
@@ -888,6 +1154,7 @@ let _patternMode    = false;
 let _patternResults = [];
 let _patternTfMs    = null;  // null = auto (same as chart display)
 let _patternHorizon = 7;
+const _patternFilters = { maTrend: false, rsi: false, maRegime: false };
 
 const _HORIZON_STEPS = { 1: [1], 3: [1, 3], 7: [1, 3, 7], 14: [1, 3, 7, 14], 30: [1, 3, 7, 14, 30] };
 
@@ -919,6 +1186,37 @@ function setPatternHorizon(days) {
   if (_patternMode) _renderPatternResults();  // no re-detect needed, just re-render
 }
 
+function setPatternFilter(key) {
+  _patternFilters[key] = !_patternFilters[key];
+  document.querySelectorAll('.pat-flt-btn').forEach(b => {
+    if (b.dataset.filter === key) b.classList.toggle('active', _patternFilters[key]);
+  });
+  if (_patternMode) runPatternDetection();
+}
+
+function _buildPatternContext() {
+  const anyActive = Object.values(_patternFilters).some(Boolean);
+  if (!anyActive) return null;
+
+  const ma50  = calcMA(50);
+  const ma200 = calcMA(200);
+  const rsi   = calcRSI();
+  const i     = viewEnd;
+
+  const ma50Now  = ma50[i];
+  const ma50Ago  = ma50[Math.max(0, i - 5)];
+  const ma200Now = ma200[i];
+  const price    = allData[i]?.[1] ?? null;
+
+  return {
+    filters:        _patternFilters,
+    priceAboveMa50: ma50Now  !== null && price !== null && price > ma50Now,
+    ma50SlopeUp:    ma50Now  !== null && ma50Ago !== null && ma50Now > ma50Ago,
+    ma50AboveMa200: ma50Now  !== null && ma200Now !== null && ma50Now > ma200Now,
+    rsiValue:       rsi[i],
+  };
+}
+
 function runPatternDetection() {
   const slice    = visData();
   if (!slice.length) return;
@@ -934,7 +1232,7 @@ function runPatternDetection() {
   }
 
   const atr = PE.calcATR(candles);
-  _patternResults = PE.detect(candles, atr)
+  _patternResults = PE.detect(candles, atr, _buildPatternContext())
     .sort((a, b) => b.candleIdx - a.candleIdx);   // most recent first
 
   _renderPatternResults();
@@ -945,12 +1243,17 @@ function _renderPatternResults() {
   const el       = document.getElementById('pattern-results');
   const horizons = _HORIZON_STEPS[_patternHorizon];
 
+  const activeFilters = Object.entries(_patternFilters).filter(([,v]) => v).map(([k]) => ({maTrend:'MA Trend', rsi:'RSI', maRegime:'MA Cross'}[k]));
+  const filterBadge = activeFilters.length
+    ? `<div style="font-size:11px; color:#f0a500; margin-bottom:8px;">⚡ Context filters active: ${activeFilters.join(', ')} — probabilities adjusted</div>`
+    : '';
+
   if (!_patternResults.length) {
-    el.innerHTML = '<div style="color:#ccc; font-size:13px; padding:8px 0;">No patterns detected in current view.</div>';
+    el.innerHTML = filterBadge + '<div style="color:#ccc; font-size:13px; padding:8px 0;">No patterns detected in current view.</div>';
     return;
   }
 
-  el.innerHTML = _patternResults.map(p => {
+  el.innerHTML = filterBadge + _patternResults.map(p => {
     const col   = p.type === 'bullish' ? '#00b36b' : p.type === 'bearish' ? '#e03131' : '#999';
     const arrow = p.type === 'bullish' ? '▲' : p.type === 'bearish' ? '▼' : '◆';
     const d     = p.candle ? new Date(p.candle.ts) : null;

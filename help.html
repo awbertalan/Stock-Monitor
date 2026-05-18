@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Help & Features</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: #f0f3fa; max-width: 900px; }
+    h2 { color: #1a1f36; letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #8a94a6; margin-bottom: 28px; }
+
+    .toc {
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      padding: 18px 24px; margin-bottom: 28px;
+      display: flex; flex-wrap: wrap; gap: 8px 24px;
+    }
+    .toc a {
+      color: #0052cc; font-size: 13px; text-decoration: none; font-weight: 600;
+    }
+    .toc a:hover { text-decoration: underline; }
+
+    .section {
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 12px;
+      padding: 24px 28px; margin-bottom: 20px;
+    }
+    .section-title {
+      font-size: 17px; font-weight: bold; color: #1a1f36;
+      margin-bottom: 14px; display: flex; align-items: center; gap: 10px;
+    }
+    .section-icon {
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .icon-blue   { background: #e8f0fe; }
+    .icon-green  { background: #e6f9f0; }
+    .icon-yellow { background: #fffbe6; }
+    .icon-purple { background: #f3effe; }
+    .icon-orange { background: #fff4e6; }
+    .icon-red    { background: #fff0f0; }
+    .icon-gray   { background: #f4f6fb; }
+
+    .feature-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;
+    }
+    @media (max-width: 600px) { .feature-grid { grid-template-columns: 1fr; } }
+
+    .feature-card {
+      background: #f8faff; border: 1px solid #e8ecf5; border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .feature-card-title {
+      font-size: 13px; font-weight: bold; color: #1a1f36; margin-bottom: 4px;
+    }
+    .feature-card-desc { font-size: 12.5px; color: #555; line-height: 1.5; }
+
+    .tip-list { list-style: none; padding: 0; margin: 10px 0 0; }
+    .tip-list li {
+      font-size: 13px; color: #444; padding: 7px 0;
+      border-bottom: 1px solid #f0f3fa; display: flex; gap: 10px;
+      align-items: flex-start; line-height: 1.5;
+    }
+    .tip-list li:last-child { border-bottom: none; }
+    .tip-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+
+    .badge {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      border-radius: 4px; padding: 2px 7px; margin-right: 3px; vertical-align: middle;
+    }
+    .badge-blue   { background: #e8f0fe; color: #0052cc; }
+    .badge-green  { background: #e6f9f0; color: #0a7c4b; }
+    .badge-yellow { background: #fffbe6; color: #7a5800; }
+    .badge-purple { background: #f3effe; color: #5a2d9c; }
+    .badge-orange { background: #fff4e6; color: #b84800; }
+    .badge-red    { background: #fff0f0; color: #c0392b; }
+    .badge-gray   { background: #f4f6fb; color: #555; }
+
+    .kbd {
+      display: inline-block; background: #f4f6fb; border: 1px solid #dde1ec;
+      border-radius: 4px; padding: 1px 7px; font-size: 11px; font-family: monospace;
+      color: #333;
+    }
+
+    .highlight-box {
+      background: #fffbe6; border: 1px solid #f0d060; border-radius: 8px;
+      padding: 10px 14px; font-size: 12.5px; color: #7a5800; margin-top: 12px;
+      line-height: 1.6;
+    }
+    .highlight-box.green { background: #e6f9f0; border-color: #a0dfc0; color: #0a5c36; }
+    .highlight-box.blue  { background: #e8f0fe; border-color: #a8c4f5; color: #003580; }
+
+    .strategy-rule {
+      display: flex; align-items: center; gap: 12px; padding: 8px 0;
+      border-bottom: 1px solid #f0f3fa; font-size: 13px;
+    }
+    .strategy-rule:last-child { border-bottom: none; }
+    .rule-label { font-weight: bold; color: #1a1f36; min-width: 90px; }
+    .rule-val   { color: #444; }
+  </style>
+</head>
+<body>
+  <h2>Help &amp; Features</h2>
+  <p class="subtitle">A guide to everything in the Millistream Stock Dashboard</p>
+
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help" class="active">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <!-- Table of contents -->
+  <div class="toc">
+    <a href="#dashboard">Dashboard</a>
+    <a href="#strategy">Strategy ★ Tab</a>
+    <a href="#simulation">Simulation Tab</a>
+    <a href="#stock-page">Stock Page</a>
+    <a href="#chart">Chart Controls</a>
+    <a href="#ma">Moving Averages</a>
+    <a href="#rsi">RSI</a>
+    <a href="#patterns">Pattern Engine</a>
+    <a href="#alerts">Alerts</a>
+    <a href="#market-panel">Market Panel</a>
+    <a href="#settings">Settings</a>
+    <a href="#tips">Quick Tips</a>
+  </div>
+
+
+  <!-- Dashboard -->
+  <div class="section" id="dashboard">
+    <div class="section-title">
+      <div class="section-icon icon-blue">📊</div>
+      Dashboard
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
+      The main dashboard shows all your tracked Swedish stocks with live price, 24h change, and a sparkline chart.
+      Use the tabs at the top to filter by market list, or switch to the Strategy and Simulation views.
+    </p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-card-title">OMXS30</div>
+        <div class="feature-card-desc">The 30 largest companies on Nasdaq Stockholm. Good overview of the overall market direction.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Favorites ⭐</div>
+        <div class="feature-card-desc">Stocks you've starred. Click the star icon on any card to add or remove it from your watchlist.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Spotlight / First North / Small/Mid/Large Cap</div>
+        <div class="feature-card-desc">Filtered views by market list. Use the sort buttons (Name, Price, Change, % Chg, Heatmap) to reorder.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Heatmap view</div>
+        <div class="feature-card-desc">Click <strong>Heatmap</strong> in the sort bar to see a colour-coded grid — green = up, red = down, intensity = magnitude.</div>
+      </div>
+    </div>
+    <div class="highlight-box blue" style="margin-top:14px;">
+      The <strong>change % shown on each card is the last 24 hours</strong>, not the calendar day. This gives a consistent view even outside market hours.
+    </div>
+  </div>
+
+
+  <!-- Strategy Tab -->
+  <div class="section" id="strategy">
+    <div class="section-title">
+      <div class="section-icon icon-yellow">★</div>
+      Strategy ★ Tab
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
+      A pre-filtered screener that automatically surfaces stocks matching a backtested intraday strategy.
+      Only equities that pass <em>all three</em> conditions appear here.
+    </p>
+    <div class="strategy-rule">
+      <span class="rule-label">DoD &gt; 1%</span>
+      <span class="rule-val">Today's price is more than 1% above yesterday's closing price — the stock has momentum.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Not at high</span>
+      <span class="rule-val">The stock is <em>not</em> within 0.5% of its 5-day high — avoids chasing exhausted moves.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Equity only</span>
+      <span class="rule-val">Indices, funds, and other instrument types are excluded.</span>
+    </div>
+    <div class="highlight-box" style="margin-top:14px;">
+      <strong>Entry rule:</strong> Buy at next open · Mon–Thu only (no Friday entries) ·
+      <span style="color:#0a7c4b; font-weight:bold;">Target +2%</span> ·
+      <span style="color:#c0392b; font-weight:bold;">Stop −1%</span> ·
+      Hold max 7 days.<br>
+      <strong>Backtested results (10+ years):</strong> 40.9% win rate · avg +72 SEK per trade · profitable in 10 of 11 years.
+      Best performers: SEB A, Nordea, SKF B, Electrolux B. Skip H&amp;M B.
+    </div>
+  </div>
+
+
+  <!-- Simulation Tab -->
+  <div class="section" id="simulation">
+    <div class="section-title">
+      <div class="section-icon icon-green">📋</div>
+      Simulation Tab
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
+      The Simulation tab is a <strong>paper trading journal</strong> — a way to test the strategy with real market data
+      but without risking real money. You log a stock as an entry at its current price, and the app automatically
+      tracks the outcome over the next 7 days using intraday price data it already has.
+      All trades are saved to disk so the history persists across restarts.
+    </p>
+
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin-bottom:10px;">How a trade works — step by step</div>
+    <ul class="tip-list">
+      <li>
+        <span class="tip-icon">1️⃣</span>
+        <span><strong>Find a candidate</strong> — go to the <strong>Strategy ★</strong> tab after market open. The screener has already filtered for DoD &gt; 1%, not at 5d high, equity only.</span>
+      </li>
+      <li>
+        <span class="tip-icon">2️⃣</span>
+        <span><strong>Log the entry</strong> — hover over the stock card and click <strong>+ Sim</strong>. The app records the exact current price as your entry price, along with the timestamp.</span>
+      </li>
+      <li>
+        <span class="tip-icon">3️⃣</span>
+        <span><strong>Automatic target &amp; stop</strong> — the app immediately calculates your <span style="color:#16c784; font-weight:bold;">target at entry × 1.02 (+2%)</span> and <span style="color:#ea3943; font-weight:bold;">stop at entry × 0.99 (−1%)</span>. These are shown in the trade table.</span>
+      </li>
+      <li>
+        <span class="tip-icon">4️⃣</span>
+        <span><strong>First-to-hit detection</strong> — on every page load, the app scans the stock's 7-day intraday CSV tick by tick from your entry timestamp forward. It records the exact moment either the target or the stop was first touched. Whichever comes first wins — just like a real bracket order.</span>
+      </li>
+      <li>
+        <span class="tip-icon">5️⃣</span>
+        <span><strong>T+7 close price</strong> — after exactly 7 calendar days, the app also records the closing price from the History CSV. This tells you where the stock ended up regardless of whether target/stop triggered — useful for seeing the full move.</span>
+      </li>
+      <li>
+        <span class="tip-icon">6️⃣</span>
+        <span><strong>Trade closes</strong> — once T+7 has passed the trade moves from <span style="color:#0052cc; font-weight:bold;">Open</span> to Closed, and the outcome (✓ Target hit / ✗ Stop hit / Timeout) is locked in.</span>
+      </li>
+    </ul>
+
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Reading the results table</div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-card-title" style="color:#16c784;">✓ Target hit</div>
+        <div class="feature-card-desc">Price reached +2% before −1%. Counted as a <strong>win</strong>. The exact candle where it triggered is recorded.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title" style="color:#ea3943;">✗ Stop hit</div>
+        <div class="feature-card-desc">Price fell to −1% before reaching +2%. Counted as a <strong>loss</strong>. Your downside was limited to 1% of entry.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Timeout</div>
+        <div class="feature-card-desc">Neither target nor stop was hit in 7 days. The T+7 closing price determines win/loss — if it's above entry it's a win, below it's a loss.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">T+7 P&amp;L %</div>
+        <div class="feature-card-desc">The percentage change from entry to the T+7 close price. Shows the full move independent of target/stop — useful for seeing how far the stock actually ran.</div>
+      </div>
+    </div>
+
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Stats bar</div>
+    <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
+      The stats bar at the top of the Simulation tab gives you a running scorecard across all closed trades:
+    </p>
+    <ul class="tip-list">
+      <li><span class="tip-icon">📊</span><span><strong>Win rate</strong> — percentage of closed trades that hit target or ended above entry at T+7. The backtested strategy achieves ~40.9% — anything above 40% over 20+ trades is on track.</span></li>
+      <li><span class="tip-icon">💰</span><span><strong>Avg P&L %</strong> — average T+7 percentage return across all closed trades. Because the reward (+2%) is twice the risk (−1%), a 40% win rate is still profitable in expectation.</span></li>
+      <li><span class="tip-icon">🏆</span><span><strong>Best / Worst</strong> — your highest and lowest T+7 P&L across all closed trades. Good for spotting outliers.</span></li>
+    </ul>
+
+    <div class="highlight-box green">
+      <strong>Why use the simulation before trading real money?</strong><br>
+      Running 20–30 paper trades first lets you see how the strategy actually performs on live forward data —
+      not just backtest data. It also builds confidence and helps you understand how often trades timeout vs hit target vs stop.
+      The backtested 40.9% win rate is a long-run average; short runs of 10–15 trades will vary widely.
+    </div>
+  </div>
+
+
+  <!-- Stock Page -->
+  <div class="section" id="stock-page">
+    <div class="section-title">
+      <div class="section-icon icon-blue">📈</div>
+      Stock Page
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
+      Click any stock card to open its dedicated page with a full interactive chart, order book, analyst recommendations, news, and recent trades.
+    </p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-card-title">Price &amp; change display</div>
+        <div class="feature-card-desc">The change shown at the top always reflects the <em>current view range</em> — switch to 1D/7D/1M and the number updates accordingly.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Full history</div>
+        <div class="feature-card-desc">Click <strong>Full History</strong> to load daily closes from IPO. The chart switches to the long-term view automatically.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Refresh Now</div>
+        <div class="feature-card-desc">Fetches the latest data from Millistream immediately for this stock only, without waiting for the next auto-update.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Quote &amp; fundamentals</div>
+        <div class="feature-card-desc">Scroll down to see P/E, P/S, EPS, dividend yield, market cap, gross/operating margins, and company description.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Chart Controls -->
+  <div class="section" id="chart">
+    <div class="section-title">
+      <div class="section-icon icon-blue">🖱️</div>
+      Chart Controls
+    </div>
+    <ul class="tip-list">
+      <li>
+        <span class="tip-icon">📅</span>
+        <span><strong>Range buttons</strong> (1D / 3D / 7D / 1M / 3M / 6M / 1Y) — snap the view to the last N trading days. The price change at the top updates to match the selected range.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🔍</span>
+        <span><strong>Scroll to zoom</strong> — mouse wheel zooms in/out centred on your cursor position. Zoom in to see individual ticks, zoom out for the big picture.</span>
+      </li>
+      <li>
+        <span class="tip-icon">📏</span>
+        <span><strong>Drag to measure</strong> — click and drag on the chart to measure any segment. A floating box shows the <span style="color:#16c784;">+change</span> / <span style="color:#ea3943;">−change</span>, percentage, and the exact date range. Click anywhere to clear it.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🕯️</span>
+        <span><strong>Candles</strong> — switches from a line chart to candlestick view. Use the candle size selector (Auto / 5m / 15m / 1H / 4H / 1D) to control the timeframe of each candle.</span>
+      </li>
+      <li>
+        <span class="tip-icon">📊</span>
+        <span><strong>Volume</strong> — toggles the volume bar chart below the price chart. The y-axis uses the 95th percentile as its max so closing-auction spikes don't crush the scale.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🔄</span>
+        <span><strong>Reset Zoom</strong> — returns to the full data range in one click.</span>
+      </li>
+    </ul>
+  </div>
+
+
+  <!-- Moving Averages -->
+  <div class="section" id="ma">
+    <div class="section-title">
+      <div class="section-icon icon-orange">〰️</div>
+      Moving Averages (MA20 / MA50 / MA200)
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 12px;">
+      Toggle any combination of moving average overlays directly on the price or candlestick chart.
+    </p>
+    <ul class="tip-list">
+      <li>
+        <span class="tip-icon" style="color:#f0a500;">━</span>
+        <span><strong>MA20</strong> <span class="badge badge-orange">20-day</span> — short-term trend. Useful for spotting momentum shifts over 3–4 weeks.</span>
+      </li>
+      <li>
+        <span class="tip-icon" style="color:#0066cc;">━</span>
+        <span><strong>MA50</strong> <span class="badge badge-blue">50-day</span> — medium-term trend. The key reference for most swing strategies. Price above MA50 = bullish bias.</span>
+      </li>
+      <li>
+        <span class="tip-icon" style="color:#cc3300;">━</span>
+        <span><strong>MA200</strong> <span class="badge badge-red">200-day</span> — long-term trend. The "golden cross" (MA50 crossing above MA200) is a classic bull signal.</span>
+      </li>
+    </ul>
+    <div class="highlight-box blue">
+      MAs are calculated as sliding windows across <em>all loaded data</em>, not just the visible range — so they stay accurate even when zoomed in.
+    </div>
+  </div>
+
+
+  <!-- RSI -->
+  <div class="section" id="rsi">
+    <div class="section-title">
+      <div class="section-icon icon-purple">📉</div>
+      RSI Indicator
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 12px;">
+      Toggle the RSI (Relative Strength Index, 14-period) panel below the volume chart using the <strong>RSI</strong> button in the controls row.
+    </p>
+    <ul class="tip-list">
+      <li><span class="tip-icon">🔴</span><span><strong>RSI &gt; 70</strong> — overbought zone. The stock may be due for a pullback. Highlighted in red.</span></li>
+      <li><span class="tip-icon">🟢</span><span><strong>RSI &lt; 30</strong> — oversold zone. Potential reversal opportunity. Highlighted in green.</span></li>
+      <li><span class="tip-icon">⚪</span><span><strong>RSI 50 line</strong> — acts as the bull/bear dividing line. Sustained RSI above 50 = bullish momentum.</span></li>
+    </ul>
+    <div class="highlight-box">
+      RSI is calculated using <strong>Wilder's smoothing</strong> (the original method), which produces smoother results than a simple average and is the industry standard.
+    </div>
+  </div>
+
+
+  <!-- Pattern Engine -->
+  <div class="section" id="patterns">
+    <div class="section-title">
+      <div class="section-icon icon-purple">🕯️</div>
+      Pattern Engine
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
+      Click <strong>Patterns</strong> in the controls row to activate the candlestick pattern detection engine.
+      It detects 60+ patterns (single, double, triple, and multi-candle formations) and projects forward probabilities.
+    </p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-card-title">Detection TF</div>
+        <div class="feature-card-desc"><strong>Auto</strong> picks the best candle size for your current zoom. Override with 5m, 15m, 1H, 4H, or 1D to lock the timeframe.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Forecast horizon</div>
+        <div class="feature-card-desc">Select 1D / 3D / 7D / 14D / 30D. Probability decays over time — the edge halves every 5 trading days, so shorter horizons are always more reliable.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Chart markers</div>
+        <div class="feature-card-desc"><span style="color:#16c784;">▲ Green triangles</span> = bullish patterns · <span style="color:#ea3943;">▼ Red triangles</span> = bearish · <span style="color:#999;">◆ Grey diamond</span> = neutral.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Base win rate</div>
+        <div class="feature-card-desc">Each pattern has a historical base probability (50–72%). The projected % for each horizon is shown next to the pattern name.</div>
+      </div>
+    </div>
+
+    <div style="margin-top:18px; font-size:13px; font-weight:bold; color:#5a2d9c;">Context Filters</div>
+    <p style="font-size:13px; color:#444; line-height:1.5; margin:6px 0 10px;">
+      Activate one or more context filters to adjust pattern probabilities based on the current market regime.
+      Filters are independent — use any combination.
+    </p>
+    <ul class="tip-list">
+      <li>
+        <span class="tip-icon">〰️</span>
+        <span><strong>MA Trend</strong> — adjusts probability based on whether price is above/below MA50 and whether MA50 is sloping up or down. Bullish pattern above a rising MA50: ×1.12. Bullish pattern below a falling MA50: ×0.88.</span>
+      </li>
+      <li>
+        <span class="tip-icon">📉</span>
+        <span><strong>RSI</strong> — bullish patterns with RSI in the 30–55 "sweet spot" get a boost (×1.10). Overbought RSI &gt;70 reduces bullish probability (×0.85).</span>
+      </li>
+      <li>
+        <span class="tip-icon">✖️</span>
+        <span><strong>MA Cross</strong> — bull market regime (MA50 above MA200): bullish patterns boosted ×1.08. Bear regime (MA50 below MA200): bullish patterns reduced ×0.92.</span>
+      </li>
+    </ul>
+    <div class="highlight-box green">
+      When any filter is active, an amber <strong>⚡ Context filters active</strong> notice appears above the results listing which filters are on and that probabilities have been adjusted.
+      All multipliers are clamped to [50%, 95%] so no pattern appears certain.
+    </div>
+  </div>
+
+
+  <!-- Alerts -->
+  <div class="section" id="alerts">
+    <div class="section-title">
+      <div class="section-icon icon-orange">🔔</div>
+      Alerts
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 12px;">
+      Set a browser notification for a stock. Click <strong>Set Alert</strong> on any stock page.
+      Alerts fire once and are checked on each auto-refresh cycle.
+    </p>
+    <ul class="tip-list">
+      <li><span class="tip-icon">⬆️</span><span><strong>Price above X</strong> — fires when the latest price crosses above a fixed level.</span></li>
+      <li><span class="tip-icon">⬇️</span><span><strong>Price below X</strong> — fires when the latest price drops below a fixed level.</span></li>
+      <li><span class="tip-icon">📈</span><span><strong>Intraday rise ≥ X%</strong> — compares the current price to today's opening price. Fires when the intraday gain reaches your threshold.</span></li>
+      <li><span class="tip-icon">📉</span><span><strong>Intraday drop ≥ X%</strong> — same but for intraday losses.</span></li>
+    </ul>
+    <div class="highlight-box">
+      Browser notifications must be allowed for <strong>localhost:8765</strong>. If you don't see a permission prompt, check your browser's site settings.
+    </div>
+  </div>
+
+
+  <!-- Market Panel -->
+  <div class="section" id="market-panel">
+    <div class="section-title">
+      <div class="section-icon icon-gray">📋</div>
+      Right Market Panel
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 12px;">
+      The panel on the right side of the stock chart contains live market data for the current stock.
+    </p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-card-title">Open / High / Low / Volume</div>
+        <div class="feature-card-desc">Statistics for the current view range — these update when you change the date range.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Order Book</div>
+        <div class="feature-card-desc">Live bid/ask levels from Millistream. Shows up to 5 levels on each side with price and quantity. Trade state shown (Open / Pre-open / Closed / Halted).</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">Analyst Recommendations</div>
+        <div class="feature-card-desc">Consensus bar showing Buy / Hold / Sell counts plus the average, min, and max 12-month price targets.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-title">News</div>
+        <div class="feature-card-desc">Last 90 days of news. Click any headline to expand the full article. Badge colours: <span class="badge badge-blue">Analyst</span> <span class="badge badge-green">Press</span> <span class="badge badge-orange">Regulatory</span></div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Settings -->
+  <div class="section" id="settings">
+    <div class="section-title">
+      <div class="section-icon icon-gray">⚙️</div>
+      Settings
+    </div>
+    <ul class="tip-list">
+      <li>
+        <span class="tip-icon">🔁</span>
+        <span><strong>Stock page auto-refresh</strong> — how often the chart updates while you're viewing a stock. Set to <em>Manual only</em> to disable.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🗓️</span>
+        <span><strong>Auto-update schedule</strong> — the server refreshes all stocks automatically: every 15 min during market hours (9–17), every 60 min off-hours, every 4 hours on weekends.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🔇</span>
+        <span><strong>Disable auto-updates locally</strong> — uncheck "Enable automatic background updates" to stop the scheduler and startup refresh from running. Useful when developing locally so the server doesn't hammer the API. The server's own setting is independent.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🎯</span>
+        <span><strong>Update All scope</strong> — the nav bar "Update All" button only refreshes instrument types and currencies that are checked in Settings. "Update Everything" always refreshes all stocks regardless.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🔢</span>
+        <span><strong>Trades list limit</strong> — how many recent trades to show in the trades table on each stock page (10–50).</span>
+      </li>
+    </ul>
+  </div>
+
+
+  <!-- Quick Tips -->
+  <div class="section" id="tips">
+    <div class="section-title">
+      <div class="section-icon icon-green">💡</div>
+      Quick Tips
+    </div>
+    <ul class="tip-list">
+      <li><span class="tip-icon">💡</span><span>Use the <strong>Heatmap</strong> view on the dashboard for a fast overview of which sectors are moving — size = % magnitude.</span></li>
+      <li><span class="tip-icon">💡</span><span>Zoom into a 1-day range and enable <strong>Candles + MA20</strong> to see intraday momentum relative to the short-term average.</span></li>
+      <li><span class="tip-icon">💡</span><span>Enable <strong>RSI + MA Trend context filter</strong> on the pattern engine for higher-quality signals — sweet-spot RSI (30–55) with price above MA50 is the strongest bullish setup.</span></li>
+      <li><span class="tip-icon">💡</span><span>The <strong>measure tool</strong> (drag on chart) is great for quickly checking how much a stock moved between two specific dates or price levels.</span></li>
+      <li><span class="tip-icon">💡</span><span>Star your top watchlist stocks then use the <strong>Favorites tab</strong> as your daily starting point instead of the full OMXS30.</span></li>
+      <li><span class="tip-icon">💡</span><span>The <strong>Strategy ★ tab</strong> is most useful 30–60 min after market open when the DoD move is confirmed. Early morning picks can still reverse.</span></li>
+      <li><span class="tip-icon">💡</span><span>Use the <strong>Simulation tab</strong> to validate picks from the Strategy tab before committing real capital — run it for a few weeks to see how the strategy performs live.</span></li>
+      <li><span class="tip-icon">💡</span><span><strong>Full History</strong> + MA200 is the fastest way to see if a stock is in a long-term bull or bear trend.</span></li>
+    </ul>
+  </div>
+
+  <script src="/nav.js"></script>
+</body>
+</html>

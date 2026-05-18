@@ -124,6 +124,7 @@
     <a href="/browse">Browse Folders</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
 
@@ -161,6 +162,10 @@
       <option value="14400000">4 hours</option>
       <option value="86400000">1 day</option>
     </select>
+    <button class="ctrl-btn" id="btn-ma20"  onclick="toggleMA(20)">MA20</button>
+    <button class="ctrl-btn" id="btn-ma50"  onclick="toggleMA(50)">MA50</button>
+    <button class="ctrl-btn" id="btn-ma200" onclick="toggleMA(200)">MA200</button>
+    <button class="ctrl-btn" id="btn-rsi"   onclick="toggleRSI()">RSI</button>
     <button class="ctrl-btn" id="btn-alert" onclick="openAlertModal()">Set Alert</button>
     <button class="ctrl-btn" id="btn-refresh" onclick="refreshData()">Refresh Now</button>
     <button class="ctrl-btn" id="btn-patterns" onclick="togglePatternMode()">Patterns</button>
@@ -187,6 +192,13 @@
       <button class="ctrl-btn pat-hz-btn"        data-days="30" onclick="setPatternHorizon(30)">30D</button>
       <span style="font-size:11px; color:#ccc; margin-left:4px;">Probability decays with distance — edge halves every 5 trading days</span>
     </div>
+    <div class="pat-row">
+      <span class="pat-label">Context filters</span>
+      <button class="ctrl-btn pat-flt-btn" data-filter="maTrend"  onclick="setPatternFilter('maTrend')">MA Trend</button>
+      <button class="ctrl-btn pat-flt-btn" data-filter="rsi"      onclick="setPatternFilter('rsi')">RSI</button>
+      <button class="ctrl-btn pat-flt-btn" data-filter="maRegime" onclick="setPatternFilter('maRegime')">MA Cross</button>
+      <span style="font-size:11px; color:#ccc; margin-left:4px;">Adjust pattern probabilities based on market context</span>
+    </div>
     <div id="pattern-results"></div>
   </div>
 
@@ -196,7 +208,8 @@
     <div style="flex:1; min-width:0;">
       <canvas id="price-chart"  height="320"></canvas>
       <canvas id="volume-chart" height="80"></canvas>
-      <div id="chart-hint">Scroll to zoom &nbsp;&middot;&nbsp; Drag to pan</div>
+      <canvas id="rsi-chart"    height="80" style="display:none; margin-top:4px;"></canvas>
+      <div id="chart-hint">Scroll to zoom &nbsp;&middot;&nbsp; Drag to measure</div>
     </div>
 
     <!-- Right market panel -->
@@ -277,8 +290,10 @@
       <h3>Price Alert — {{NAME}}</h3>
       <div class="alert-form">
         <select id="alert-cond">
-          <option value="above">Above</option>
-          <option value="below">Below</option>
+          <option value="above">Price above</option>
+          <option value="below">Price below</option>
+          <option value="pct_rise">Intraday rise ≥ %</option>
+          <option value="pct_drop">Intraday drop ≥ %</option>
         </select>
         <input type="number" id="alert-price" placeholder="Target price" step="0.01" min="0">
       </div>

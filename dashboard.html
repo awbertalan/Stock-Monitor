@@ -92,8 +92,15 @@
       letter-spacing: -0.5px; line-height: 1.1;
     }
     .card-change { font-size: 12px; font-weight: bold; margin-top: 3px; }
+    .card-age    { font-size: 10px; color: #bbb; margin-top: 5px; }
     .up   { color: #16c784; }
     .down { color: #ea3943; }
+
+    .screener-note {
+      background: #fffbe6; border: 1px solid #f0d060; border-radius: 8px;
+      padding: 10px 16px; font-size: 12.5px; color: #7a5800;
+      margin-bottom: 16px; display: none;
+    }
 
     .sparkline-wrap { margin-top: 10px; height: 40px; }
     .sparkline { display: block; width: 100%; height: 40px; overflow: visible; }
@@ -122,6 +129,46 @@
     }
     .heat-pct   { font-size: 18px; font-weight: bold; margin-top: 6px; }
     .heat-price { font-size: 11px; opacity: 0.82; }
+
+    /* Simulation panel */
+    #sim-panel { display: none; }
+    .sim-stats {
+      display: flex; gap: 16px; flex-wrap: wrap;
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      padding: 16px 20px; margin-bottom: 18px;
+    }
+    .sim-stat { text-align: center; min-width: 80px; }
+    .sim-stat-val { font-size: 22px; font-weight: bold; color: #1a1f36; letter-spacing: -0.5px; }
+    .sim-stat-lbl { font-size: 10px; color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px; }
+    .sim-section-title {
+      font-size: 11px; font-weight: bold; color: #8a94a6;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 0 8px;
+    }
+    .sim-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sim-table th {
+      text-align: left; padding: 6px 10px; font-size: 10px; font-weight: bold;
+      color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px;
+      border-bottom: 1px solid #e8ecf5;
+    }
+    .sim-table td { padding: 8px 10px; border-bottom: 1px solid #f4f6fb; color: #1a1f36; }
+    .sim-table tr:last-child td { border-bottom: none; }
+    .sim-table tr:hover td { background: #f8faff; }
+    .sim-win  { color: #16c784; font-weight: bold; }
+    .sim-loss { color: #ea3943; font-weight: bold; }
+    .sim-open { color: #0052cc; }
+    .sim-remove-btn {
+      background: none; border: none; color: #ccc; cursor: pointer;
+      font-size: 14px; padding: 0 4px; line-height: 1;
+    }
+    .sim-remove-btn:hover { color: #ea3943; }
+    .card-add-btn {
+      position: absolute; bottom: 12px; right: 12px;
+      background: #0052cc; color: #fff; border: none; border-radius: 5px;
+      font-size: 10px; font-weight: bold; padding: 3px 7px; cursor: pointer;
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .stock-card:hover .card-add-btn { opacity: 1; }
+    .card-add-btn:hover { background: #003d99; }
   </style>
 </head>
 <body>
@@ -133,6 +180,7 @@
     <a href="/browse">Browse Folders</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
 
@@ -144,9 +192,36 @@
     <button class="tab"        data-mode="small_cap"   onclick="switchTab('small_cap')">OMX Small Cap</button>
     <button class="tab"        data-mode="mid_cap"     onclick="switchTab('mid_cap')">OMX Mid Cap</button>
     <button class="tab"        data-mode="large_cap"   onclick="switchTab('large_cap')">OMX Large Cap</button>
+    <button class="tab"        data-mode="screener"    onclick="switchTab('screener')">Strategy ★</button>
+    <button class="tab"        data-mode="simulation"  onclick="switchTab('simulation')">📋 Simulation</button>
   </div>
 
-  <div class="toolbar">
+  <div class="screener-note" id="screener-note">
+    <strong>Strategy filter:</strong> DoD &gt; 1% &amp; not at 5-day high (equity only).
+    Entry rule: buy next open Mon–Thu · Target +2% · Stop −1% · Hold max 7 days.
+  </div>
+
+  <div id="sim-panel">
+    <div class="sim-stats" id="sim-stats"></div>
+    <div class="sim-section-title">Open positions</div>
+    <table class="sim-table" id="sim-open-table">
+      <thead><tr>
+        <th>Stock</th><th>Entry date</th><th>Entry</th><th>Target +2%</th><th>Stop −1%</th>
+        <th>First exit</th><th>T+7 price</th><th>T+7 P&amp;L</th><th></th>
+      </tr></thead>
+      <tbody id="sim-open-body"></tbody>
+    </table>
+    <div class="sim-section-title" style="margin-top:24px;">Closed positions</div>
+    <table class="sim-table" id="sim-closed-table">
+      <thead><tr>
+        <th>Stock</th><th>Entry date</th><th>Entry</th><th>Target +2%</th><th>Stop −1%</th>
+        <th>First exit</th><th>T+7 price</th><th>T+7 P&amp;L</th><th></th>
+      </tr></thead>
+      <tbody id="sim-closed-body"></tbody>
+    </table>
+  </div>
+
+  <div class="toolbar" id="toolbar">
     <input id="filter-box" type="text" placeholder="Filter by name…" oninput="renderGrid()">
     <select id="filter-curr" class="filter-select" onchange="renderGrid()">
       <option value="">All currencies</option>
@@ -195,13 +270,31 @@
       renderGrid();
     });
 
+    function fmtAge(ts) {
+      const m = Math.floor((Date.now() - ts) / 60000);
+      if (m < 1)  return 'just now';
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    }
+
     function switchTab(mode) {
       if (mode === activeMode) return;
       activeMode = mode;
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.mode === mode)
       );
+      document.getElementById('screener-note').style.display = mode === 'screener' ? '' : 'none';
       document.getElementById('filter-box').value = '';
+
+      const isSimulation = mode === 'simulation';
+      document.getElementById('sim-panel').style.display   = isSimulation ? '' : 'none';
+      document.getElementById('grid-wrap').style.display   = isSimulation ? 'none' : '';
+      document.getElementById('toolbar').style.display     = isSimulation ? 'none' : '';
+      document.getElementById('loading').style.display     = 'none';
+      document.getElementById('empty').style.display       = 'none';
+      if (isSimulation) { loadSimulation(); return; }
 
       if (tabCache[mode] !== undefined) {
         populateFilters(tabCache[mode]);
@@ -210,7 +303,6 @@
       }
 
       document.getElementById('loading').style.display = '';
-      document.getElementById('empty').style.display = 'none';
       document.getElementById('grid').innerHTML = '';
       document.getElementById('heatmap-grid').style.display = 'none';
 
@@ -334,9 +426,12 @@
         `<div class="card-change ${isUp ? 'up' : 'down'}">` +
           `${arrow} ${sign}${s.change.toFixed(2)} &nbsp;(${sign}${s.pct.toFixed(2)}%)` +
         `</div>` +
-        `<div class="sparkline-wrap"><svg class="sparkline" viewBox="0 0 100 40" preserveAspectRatio="none"></svg></div>`;
+        `<div class="card-age">${s.last_ts ? fmtAge(s.last_ts) : ''}</div>` +
+        `<div class="sparkline-wrap"><svg class="sparkline" viewBox="0 0 100 40" preserveAspectRatio="none"></svg></div>` +
+        `<button class="card-add-btn" title="Add to simulation">+ Sim</button>`;
 
       card.onclick = () => navigate(s);
+      card.querySelector('.card-add-btn').onclick = (evt) => addTrade(evt, s);
       drawSparkline(card.querySelector('.sparkline'), s.spark, color);
       return card;
     }
@@ -421,6 +516,116 @@
 
     function esc(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ── Simulation ────────────────────────────────────────────────────────────
+    let simTrades = [];
+
+    function loadSimulation() {
+      fetch('/paper-trades')
+        .then(r => r.json())
+        .then(data => { simTrades = data; renderSimulation(); })
+        .catch(() => {});
+    }
+
+    function renderSimulation() {
+      const open   = simTrades.filter(t => t.status === 'open');
+      const closed = simTrades.filter(t => t.status === 'closed');
+
+      // Stats
+      const total    = simTrades.length;
+      const wins     = closed.filter(t => _simResult(t) === 'win').length;
+      const losses   = closed.filter(t => _simResult(t) === 'loss').length;
+      const winRate  = closed.length ? Math.round(wins / closed.length * 100) : null;
+      const avgPnl   = closed.length
+        ? closed.reduce((s, t) => s + _simPnl(t), 0) / closed.length
+        : null;
+      const bestPnl  = closed.length ? Math.max(...closed.map(_simPnl)) : null;
+      const worstPnl = closed.length ? Math.min(...closed.map(_simPnl)) : null;
+
+      document.getElementById('sim-stats').innerHTML =
+        _simStat(total, 'Total trades') +
+        _simStat(open.length, 'Open') +
+        _simStat(closed.length, 'Closed') +
+        _simStat(winRate !== null ? winRate + '%' : '—', 'Win rate', winRate >= 40 ? '#16c784' : winRate !== null ? '#ea3943' : null) +
+        _simStat(avgPnl  !== null ? (avgPnl >= 0 ? '+' : '') + avgPnl.toFixed(2) + '%'  : '—', 'Avg P&L', avgPnl >= 0 ? '#16c784' : avgPnl !== null ? '#ea3943' : null) +
+        _simStat(bestPnl  !== null ? '+' + bestPnl.toFixed(2)  + '%' : '—', 'Best',  '#16c784') +
+        _simStat(worstPnl !== null ? worstPnl.toFixed(2) + '%' : '—', 'Worst', '#ea3943');
+
+      document.getElementById('sim-open-body').innerHTML   = open.map(_simRow).join('') || '<tr><td colspan="9" style="color:#bbb;padding:16px 10px;">No open positions.</td></tr>';
+      document.getElementById('sim-closed-body').innerHTML = closed.map(_simRow).join('') || '<tr><td colspan="9" style="color:#bbb;padding:16px 10px;">No closed positions yet.</td></tr>';
+    }
+
+    function _simStat(val, lbl, color) {
+      const style = color ? ` style="color:${color}"` : '';
+      return `<div class="sim-stat"><div class="sim-stat-val"${style}>${val}</div><div class="sim-stat-lbl">${lbl}</div></div>`;
+    }
+
+    function _simResult(t) {
+      if (!t.first_exit) return 'open';
+      if (t.first_exit === 'target') return 'win';
+      if (t.first_exit === 'stop')   return 'loss';
+      // timeout — use T+7 price vs entry
+      if (t.exit_price_t7 !== null) return t.exit_price_t7 >= t.entry_price ? 'win' : 'loss';
+      return 'open';
+    }
+
+    function _simPnl(t) {
+      const ref = t.exit_price_t7 ?? (t.first_exit === 'target' ? t.target_price : t.first_exit === 'stop' ? t.stop_price : null);
+      if (ref === null) return 0;
+      return (ref - t.entry_price) / t.entry_price * 100;
+    }
+
+    function _simRow(t) {
+      const result   = _simResult(t);
+      const resClass = result === 'win' ? 'sim-win' : result === 'loss' ? 'sim-loss' : 'sim-open';
+      const resLabel = result === 'win' ? '✓ Target hit' : result === 'loss' ? '✗ Stop hit' : t.first_exit === 'timeout' ? 'Timeout' : '—';
+      const entryDate = new Date(t.entry_ts).toLocaleDateString('sv', { month: 'short', day: 'numeric' });
+      const pnlPct = t.exit_price_t7 !== null ? ((t.exit_price_t7 - t.entry_price) / t.entry_price * 100) : null;
+      const pnlStr = pnlPct !== null
+        ? `<span class="${pnlPct >= 0 ? 'sim-win' : 'sim-loss'}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`
+        : '—';
+      return `<tr>
+        <td><a href="/view?path=${encodeURIComponent(t.rel_path)}" style="color:#0052cc;text-decoration:none;">${esc(t.name)}</a></td>
+        <td>${entryDate}</td>
+        <td>${t.entry_price.toFixed(2)}</td>
+        <td>${t.target_price.toFixed(2)}</td>
+        <td>${t.stop_price.toFixed(2)}</td>
+        <td class="${resClass}">${resLabel}</td>
+        <td>${t.exit_price_t7 !== null ? t.exit_price_t7.toFixed(2) : '—'}</td>
+        <td>${pnlStr}</td>
+        <td><button class="sim-remove-btn" onclick="removeTrade('${esc(t.id)}')" title="Remove">✕</button></td>
+      </tr>`;
+    }
+
+    function addTrade(evt, s) {
+      evt.stopPropagation();
+      fetch('/paper-trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add',
+          rel_path: s.path,
+          name: s.name,
+          insref: s.insref || '',
+          entry_price: s.price,
+          entry_ts: Date.now(),
+        })
+      })
+        .then(r => r.json())
+        .then(d => { if (d.ok) { simTrades = d.trades; alert(`Added ${s.name} to simulation @ ${s.price.toFixed(2)}`); } })
+        .catch(() => {});
+    }
+
+    function removeTrade(id) {
+      fetch('/paper-trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', id })
+      })
+        .then(r => r.json())
+        .then(d => { if (d.ok) { simTrades = d.trades; renderSimulation(); } })
+        .catch(() => {});
     }
   </script>
   <script src="/nav.js"></script>

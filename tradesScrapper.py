@@ -1,7 +1,7 @@
 from urllib.request import urlopen
 import json, os
-from dotenv import load_dotenv
-load_dotenv()
+import env_loader
+env_loader.load_env()
 
 TOKEN = os.environ["MILLISTREAM_TOKEN"]
 _BASE = "https://mws-2.millistream.com/mws.fcgi"
@@ -32,4 +32,4 @@ def fetch_trades(insref, limit=1000):
     if not data or not isinstance(data, list):
         return {"error": "no data"}
 
-    return data[0] if data else {"error": "empty response"}
+    return data[0]

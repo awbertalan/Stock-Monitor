@@ -9,6 +9,7 @@
       "SEK"
     ]
   },
+  "auto_refresh_enabled": false,
   "auto_refresh_weekend_minutes": 900,
   "auto_refresh_market_minutes": 15,
   "auto_refresh_off_hours_minutes": 240,

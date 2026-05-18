@@ -226,10 +226,9 @@ def urlinfo(page):
     clnname        = re.sub(r'[^a-zA-Z0-9]', '', raw_name)
     tradecurrency  = info[2].split(':')
     instrumenttype = info[5].split(':')
-    stock = [int(insref[1]), clnname,
-             tradecurrency[1].strip('"'), int(instrumenttype[1]), raw_name]
-    with stocklist_lock:
-        stocklist.append(stock)
+    stock = [int(insref[1]), clnname, 
+             tradecurrency[1].strip("\""), int(instrumenttype[1])]
+    stocklist.append(stock)
 
 
 def urlcheck(start_index, end_index):

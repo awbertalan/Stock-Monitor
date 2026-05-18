@@ -1,7 +1,7 @@
 from urllib.request import urlopen
 import csv, os, re, time, json, threading
-from dotenv import load_dotenv
-load_dotenv()
+import env_loader
+env_loader.load_env()
 
 _TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stock_template.html')
 _NAMES_CSV     = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stock_names.csv')
@@ -114,13 +114,20 @@ def fetch_stock(insref):
     )
     html = urlopen(url, timeout=10).read().decode("utf-8")
 
-    end = ":["
-    header = html[17: html.find(end)].split(',')
-    insref_val = int(header[0].split(':')[1])
-    raw_name = header[1].split(':')[1].strip('"')
+    end     = ":["
+    end_idx = html.find(end)
+    if end_idx < 0:
+        raise ValueError(f"fetch_stock({insref}): unexpected response format, ':[' not found")
+
+    try:
+        header     = html[17:end_idx].split(',')
+        insref_val = int(header[0].split(':')[1])
+        raw_name   = header[1].split(':')[1].strip('"')
+    except (IndexError, ValueError) as e:
+        raise ValueError(f"fetch_stock({insref}): could not parse header: {e}") from e
     name = re.sub(r'[^a-zA-Z0-9]', '', raw_name)
 
-    start = len(html[: html.find(end)]) + 3
+    start = end_idx + 3
     data_str = html[start:].removesuffix('}]}]);')
     entries = data_str.removeprefix('{').split('},{')
 

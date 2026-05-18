@@ -1,0 +1,604 @@
+========================================================================
+ Live signal run @ 2026-05-18 10:18:57 local
+========================================================================
+
+Wallet:    cash    500,000   open          0   equity    500,000  SEK
+P&L:       realized +0 SEK   open positions 0/4   closed trades 0
+
+--- LIVE QUOTES ---
+  SEB A          last   178.70  day   +0.06%  [live]  bid 178.60 / ask 178.70
+  Nordea         last   170.00  day   +0.53%  [live]  bid 169.90 / ask 170.00
+  SKF B          last   227.40  day   +0.22%  [live]  bid 227.30 / ask 227.40
+  Electrolux B   last    49.85  day   -0.54%  [live]  bid 49.85 / ask 49.90
+
+--- NO NEW SIGNALS THIS RUN ---
+
+--- FILTER DIAGNOSTIC ---
+  SEB A          filtered: RSI<35 (got 51.0)
+  Nordea         filtered: 2-day down; bot20% 5d (got 77%); RSI<35 (got 51.0)
+  SKF B          filtered: RSI<35 (got 45.9)
+  Electrolux B   filtered: 2-day down; RSI<35 (got 65.1); 20d ret>-10% (got -22.1%)
+
+State -> /Users/alexanderb/Desktop/Private Project/live_portfolio.json
+========================================================================
+ Live signal run @ 2026-05-18 10:33:57 local
+========================================================================
+
+Wallet:    cash    500,000   open          0   equity    500,000  SEK
+P&L:       realized +0 SEK   open positions 0/4   closed trades 0
+
+--- LIVE QUOTES ---
+  SEB A          last   178.50  day   -0.06%  [live]  bid 178.50 / ask 178.60
+  Nordea         last   169.70  day   +0.35%  [live]  bid 169.65 / ask 169.70
+  SKF B          last   227.10  day   +0.09%  [live]  bid 227.20 / ask 227.30
+  Electrolux B   last    49.86  day   -0.52%  [live]  bid 49.82 / ask 49.86
+
+--- NO NEW SIGNALS THIS RUN ---
+
+--- FILTER DIAGNOSTIC ---
+  SEB A          filtered: RSI<35 (got 50.4)
+  Nordea         filtered: bot20% 5d (got 50%); RSI<35 (got 49.8)
+  SKF B          filtered: RSI<35 (got 45.5)
+  Electrolux B   filtered: 2-day down; RSI<35 (got 65.1); 20d ret>-10% (got -22.1%)
+
+State -> /Users/alexanderb/Desktop/Private Project/live_portfolio.json
+========================================================================
+ Live signal run @ 2026-05-18 10:48:58 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    499,722   equity    500,207  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 6 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: Bufab                  (low cash 484)
+  ... +3 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 171.60   P&L +87 SEK (+0.09%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.80   P&L +120 SEK (+0.12%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.65   P&L +65 SEK (+0.07%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 300.80   P&L -66 SEK (-0.07%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 42.35   P&L +0 SEK (+0.00%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 127 primary) ---
+  SkiStar B                  fails: 20d:-10.0%
+  Sagax A                    fails: 20d:-10.1%
+  Husqvarna B                fails: RSI:35.3
+  SCA B                      fails: 20d:-10.9%
+  Sagax B                    fails: 20d:-10.9%
+========================================================================
+ Live signal run @ 2026-05-18 11:04:01 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    499,747   equity    500,231  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 6 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: Bufab                  (low cash 484)
+  ... +3 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 172.00   P&L +321 SEK (+0.32%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.90   P&L +150 SEK (+0.15%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.95   P&L +262 SEK (+0.26%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 300.20   P&L -266 SEK (-0.27%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 42.25   P&L -236 SEK (-0.24%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 127 primary) ---
+  SkiStar B                  fails: 20d:-10.0%
+  Sagax A                    fails: 20d:-10.1%
+  SCA B                      fails: 20d:-10.9%
+  Sandvik                    fails: 20d:-10.9%
+  Sagax B                    fails: 20d:-11.0%
+========================================================================
+ Live signal run @ 2026-05-18 11:19:03 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    500,102   equity    500,586  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 6 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +3 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 172.10   P&L +379 SEK (+0.38%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.50   P&L +30 SEK (+0.03%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 153.00   P&L +295 SEK (+0.29%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.00   P&L +0 SEK (+0.00%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 42.30   P&L -118 SEK (-0.12%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 127 primary) ---
+  Sagax A                    fails: 20d:-10.1%
+  SCA B                      fails: 20d:-10.8%
+  Sagax B                    fails: 20d:-10.9%
+  Sandvik                    fails: 20d:-10.9%
+  Husqvarna B                fails: RSI:35.3
+========================================================================
+ Live signal run @ 2026-05-18 11:34:06 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    499,107   equity    499,591  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 8 skipped) ---
+  skipped: Vitrolife              (low cash 484)
+  skipped: Kinnevik A             (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 172.20   P&L +437 SEK (+0.44%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.20   P&L -60 SEK (-0.06%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 153.05   P&L +328 SEK (+0.33%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.20   P&L +66 SEK (+0.07%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.85   P&L -1,180 SEK (-1.18%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  Sagax A                    fails: 20d:-10.1%
+  SCA B                      fails: 20d:-10.6%
+  Sandvik                    fails: 20d:-10.8%
+  Sagax B                    fails: 20d:-10.9%
+  SCA A                      fails: 20d:-11.0%
+========================================================================
+ Live signal run @ 2026-05-18 11:49:08 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    498,916   equity    499,400  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 7 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +4 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 172.25   P&L +466 SEK (+0.47%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.10   P&L -90 SEK (-0.09%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 153.20   P&L +426 SEK (+0.43%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.40   P&L +133 SEK (+0.13%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.70   P&L -1,535 SEK (-1.53%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 126 primary) ---
+  Sagax A                    fails: 20d:-10.1%
+  SCA B                      fails: 20d:-10.6%
+  Sandvik                    fails: 20d:-10.8%
+  SCA A                      fails: 20d:-11.0%
+  Sagax B                    fails: 20d:-11.0%
+========================================================================
+ Live signal run @ 2026-05-18 12:04:11 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    498,376   equity    498,860  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 7 skipped) ---
+  skipped: Vitrolife              (low cash 484)
+  skipped: Kinnevik A             (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +4 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 172.15   P&L +408 SEK (+0.41%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.00   P&L -120 SEK (-0.12%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.95   P&L +262 SEK (+0.26%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.60   P&L +199 SEK (+0.20%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.55   P&L -1,889 SEK (-1.89%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 126 primary) ---
+  Sagax A                    fails: 20d:-10.1%
+  SCA B                      fails: 20d:-10.5%
+  Sagax B                    fails: 20d:-10.7%
+  Sandvik                    fails: 20d:-10.8%
+  SCA A                      fails: 20d:-11.0%
+========================================================================
+ Live signal run @ 2026-05-18 12:19:14 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    498,585   equity    499,069  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 7 skipped) ---
+  skipped: Vitrolife              (low cash 484)
+  skipped: Kinnevik A             (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +4 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 171.95   P&L +292 SEK (+0.29%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 331.90   P&L -150 SEK (-0.15%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.85   P&L +196 SEK (+0.20%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.80   P&L +266 SEK (+0.27%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.70   P&L -1,535 SEK (-1.53%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 126 primary) ---
+  Sagax A                    fails: 20d:-10.1%
+  Sagax B                    fails: 20d:-10.2%
+  SCA B                      fails: 20d:-10.4%
+  SCA A                      fails: 20d:-10.8%
+  Sandvik                    fails: 20d:-10.8%
+========================================================================
+ Live signal run @ 2026-05-18 12:34:16 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    497,643   equity    498,127  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 8 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 171.60   P&L +87 SEK (+0.09%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 331.50   P&L -270 SEK (-0.27%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.65   P&L +65 SEK (+0.07%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.40   P&L +133 SEK (+0.13%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.55   P&L -1,889 SEK (-1.89%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  SCA B                      fails: 20d:-10.5%
+  Sagax B                    fails: 20d:-10.6%
+  SCA A                      fails: 20d:-10.8%
+  Sandvik                    fails: 20d:-11.1%
+  Fenix Outdoor B            fails: 20d:-11.6%
+========================================================================
+ Live signal run @ 2026-05-18 12:49:19 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    497,978   equity    498,462  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 8 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 171.95   P&L +292 SEK (+0.29%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 331.50   P&L -270 SEK (-0.27%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.85   P&L +196 SEK (+0.20%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.40   P&L +133 SEK (+0.13%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.55   P&L -1,889 SEK (-1.89%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  Sagax B                    fails: 20d:-10.4%
+  SCA B                      fails: 20d:-10.5%
+  SCA A                      fails: 20d:-10.6%
+  Sandvik                    fails: 20d:-11.0%
+  Fenix Outdoor B            fails: 20d:-11.6%
+========================================================================
+ Live signal run @ 2026-05-18 13:04:21 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    498,497   equity    498,981  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 8 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: SkiStar B              (low cash 484)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 172.15   P&L +408 SEK (+0.41%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 331.90   P&L -150 SEK (-0.15%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 153.00   P&L +295 SEK (+0.29%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.60   P&L +199 SEK (+0.20%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.60   P&L -1,771 SEK (-1.77%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  SCA B                      fails: 20d:-10.5%
+  Sagax B                    fails: 20d:-10.5%
+  SCA A                      fails: 20d:-10.8%
+  Sandvik                    fails: 20d:-11.2%
+  Fenix Outdoor B            fails: 20d:-11.6%
+========================================================================
+ Live signal run @ 2026-05-18 13:19:24 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash        484   open    497,679   equity    498,163  SEK
+P&L:       realized +0 SEK   open positions 5   closed trades 0
+
+--- NEW SIGNALS (0 entered, 8 skipped) ---
+  skipped: Kinnevik A             (low cash 484)
+  skipped: Vitrolife              (low cash 484)
+  skipped: Bufab                  (low cash 484)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 171.50   P&L +29 SEK (+0.03%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 331.40   P&L -300 SEK (-0.30%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.40   P&L -98 SEK (-0.10%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.20   P&L +66 SEK (+0.07%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Husqvarna A             2361 sh   entered 2026-05-18 @ 42.35   now 41.70   P&L -1,535 SEK (-1.53%)
+                          TP 42.56   SL 41.50   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  SkiStar B                  fails: 20d:-10.0%
+  SCA B                      fails: 20d:-10.6%
+  Sagax B                    fails: 20d:-10.7%
+  SCA A                      fails: 20d:-11.0%
+  Sandvik                    fails: 20d:-11.3%
+========================================================================
+ Live signal run @ 2026-05-18 13:34:26 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash         16   open    497,427   equity    497,443  SEK
+P&L:       realized -2,007 SEK   open positions 5   closed trades 1
+
+--- CLOSED THIS RUN (1) ---
+  Husqvarna A            SL      @ 41.50   P&L -2,007 SEK (-2.01%)   opened 2026-05-18
+
+--- NEW SIGNALS (1 entered, 8 skipped) ---
+  BUY Kinnevik A           1663 sh @ 59.20  =    98,450 SEK
+      target exit 59.50 (+0.50%)   stop 58.02 (-2.00%)   exit by 2026-05-25
+      signal:  RSI 23.3   bottom 0% of 5d range   20d ret -7.1%
+  skipped: Vitrolife              (low cash 16)
+  skipped: SkiStar B              (low cash 16)
+  skipped: Husqvarna A            (low cash 16)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 171.95   P&L +292 SEK (+0.29%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 331.60   P&L -240 SEK (-0.24%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 152.80   P&L +164 SEK (+0.16%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.20   P&L +66 SEK (+0.07%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Kinnevik A              1663 sh   entered 2026-05-18 @ 59.20   now 58.70   P&L -832 SEK (-0.84%)
+                          TP 59.50   SL 58.02   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  Sagax B                    fails: 20d:-10.3%
+  SCA B                      fails: 20d:-10.5%
+  SCA A                      fails: 20d:-10.8%
+  Sandvik                    fails: 20d:-11.2%
+  Fenix Outdoor B            fails: 20d:-12.3%
+========================================================================
+ Live signal run @ 2026-05-18 13:49:29 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash         16   open    498,019   equity    498,035  SEK
+P&L:       realized -2,007 SEK   open positions 5   closed trades 1
+
+--- NEW SIGNALS (0 entered, 8 skipped) ---
+  skipped: Vitrolife              (low cash 16)
+  skipped: Husqvarna A            (low cash 16)
+  skipped: SkiStar B              (low cash 16)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Atlas Copco A            583 sh   entered 2026-05-18 @ 171.45   now 172.25   P&L +466 SEK (+0.47%)
+                          TP 172.31   SL 168.02   exit by 2026-05-25
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.00   P&L -120 SEK (-0.12%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Atlas Copco B            655 sh   entered 2026-05-18 @ 152.55   now 153.05   P&L +328 SEK (+0.33%)
+                          TP 153.31   SL 149.50   exit by 2026-05-25
+  Holmen B                 332 sh   entered 2026-05-18 @ 301.00   now 301.60   P&L +199 SEK (+0.20%)
+                          TP 302.50   SL 294.98   exit by 2026-05-25
+  Kinnevik A              1663 sh   entered 2026-05-18 @ 59.20   now 58.70   P&L -832 SEK (-0.84%)
+                          TP 59.50   SL 58.02   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  SCA B                      fails: 20d:-10.5%
+  Sagax B                    fails: 20d:-10.6%
+  SCA A                      fails: 20d:-10.8%
+  Sandvik                    fails: 20d:-10.9%
+  Fenix Outdoor B            fails: 20d:-12.1%
+========================================================================
+ Live signal run @ 2026-05-18 14:04:31 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash      2,478   open    498,135   equity    500,613  SEK
+P&L:       realized +561 SEK   open positions 5   closed trades 4
+
+--- CLOSED THIS RUN (3) ---
+  Atlas Copco A          TP      @ 173.20   P&L +1,020 SEK (+1.02%)   opened 2026-05-18
+  Atlas Copco B          TP      @ 153.95   P&L +917 SEK (+0.92%)   opened 2026-05-18
+  Holmen B               TP      @ 302.90   P&L +631 SEK (+0.63%)   opened 2026-05-18
+
+--- NEW SIGNALS (3 entered, 8 skipped) ---
+  BUY Vitrolife             961 sh @ 104.00  =    99,944 SEK
+      target exit 104.52 (+0.50%)   stop 101.92 (-2.00%)   exit by 2026-05-25
+      signal:  RSI 24.5   bottom 0% of 5d range   20d ret -3.0%
+  BUY Holmen B              330 sh @ 303.00  =    99,990 SEK
+      target exit 304.51 (+0.50%)   stop 296.94 (-2.00%)   exit by 2026-05-25
+      signal:  RSI 25.9   bottom 0% of 5d range   20d ret -7.9%
+  BUY Husqvarna A          2389 sh @ 41.85  =    99,980 SEK
+      target exit 42.06 (+0.50%)   stop 41.01 (-2.00%)   exit by 2026-05-25
+      signal:  RSI 28.0   bottom 0% of 5d range   20d ret +0.8%
+  skipped: SkiStar B              (low cash 2478)
+  skipped: Bufab                  (low cash 2478)
+  skipped: Sagax B                (low cash 2478)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 333.40   P&L +300 SEK (+0.30%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Kinnevik A              1663 sh   entered 2026-05-18 @ 59.20   now 59.20   P&L +0 SEK (+0.00%)
+                          TP 59.50   SL 58.02   exit by 2026-05-25
+  Vitrolife                961 sh   entered 2026-05-18 @ 104.00   now 103.90   P&L -96 SEK (-0.10%)
+                          TP 104.52   SL 101.92   exit by 2026-05-25
+  Holmen B                 330 sh   entered 2026-05-18 @ 303.00   now 302.90   P&L -33 SEK (-0.03%)
+                          TP 304.51   SL 296.94   exit by 2026-05-25
+  Husqvarna A             2389 sh   entered 2026-05-18 @ 41.85   now 41.80   P&L -119 SEK (-0.12%)
+                          TP 42.06   SL 41.01   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  SCA B                      fails: 20d:-10.1%
+  Sandvik                    fails: 20d:-10.3%
+  SCA A                      fails: 20d:-10.5%
+  Atlas Copco B              fails: RSI:35.6
+  Fenix Outdoor B            fails: 20d:-12.1%
+========================================================================
+ Live signal run @ 2026-05-18 14:19:35 local
+========================================================================
+ Universe: 138 large cap (tradable)  |  198 mid+small cap (watchlist only)
+
+Wallet:    cash      2,478   open    498,508   equity    500,986  SEK
+P&L:       realized +561 SEK   open positions 5   closed trades 4
+
+--- NEW SIGNALS (0 entered, 8 skipped) ---
+  skipped: SkiStar B              (low cash 2478)
+  skipped: Bufab                  (low cash 2478)
+  skipped: Sagax B                (low cash 2478)
+  ... +5 more skipped
+
+--- WATCHLIST SIGNALS (2) — monitor only, do NOT trade ---
+  Elanders B                   last   47.00   RSI 31.3   bot 0%   20d -0.6%
+  Volati                       last   80.80   RSI 29.6   bot 0%   20d -9.0%
+
+--- OPEN POSITIONS (5) ---
+  Assa Abloy B             300 sh   entered 2026-05-18 @ 332.40   now 332.80   P&L +120 SEK (+0.12%)
+                          TP 334.06   SL 325.75   exit by 2026-05-25
+  Kinnevik A              1663 sh   entered 2026-05-18 @ 59.20   now 59.20   P&L +0 SEK (+0.00%)
+                          TP 59.50   SL 58.02   exit by 2026-05-25
+  Vitrolife                961 sh   entered 2026-05-18 @ 104.00   now 104.00   P&L +0 SEK (+0.00%)
+                          TP 104.52   SL 101.92   exit by 2026-05-25
+  Holmen B                 330 sh   entered 2026-05-18 @ 303.00   now 303.20   P&L +66 SEK (+0.07%)
+                          TP 304.51   SL 296.94   exit by 2026-05-25
+  Husqvarna A             2389 sh   entered 2026-05-18 @ 41.85   now 41.95   P&L +239 SEK (+0.24%)
+                          TP 42.06   SL 41.01   exit by 2026-05-25
+
+--- CLOSEST TO SIGNAL (top 5 of 125 primary) ---
+  SCA B                      fails: 20d:-10.1%
+  Sandvik                    fails: 20d:-10.2%
+  SCA A                      fails: 20d:-10.5%
+  Atlas Copco B              fails: RSI:35.5
+  Peab B                     fails: 20d:-13.1%

@@ -4,3 +4,4 @@
 Instrumenttype/
 __pycache__/
 *.pyc
+.vscode/

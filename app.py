@@ -32,6 +32,7 @@ SETTINGS_PATH  = os.path.join(BASE_DIR, "settings.json")
 WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
 ALERTS_PATH    = os.path.join(BASE_DIR, "alerts.json")
 NAMES_CSV_PATH = os.path.join(BASE_DIR, "stock_names.csv")
+PAPER_TRADES_PATH = os.path.join(BASE_DIR, "paper_trades.json")
 
 
 def _load_names():
@@ -55,6 +56,7 @@ def _load_names():
 
 _watchlist_lock     = threading.Lock()
 _alerts_lock        = threading.Lock()
+_paper_trades_lock  = threading.Lock()
 _dashboard_cache    = {}
 _dashboard_cache_lock = threading.Lock()
 
@@ -84,10 +86,119 @@ def _write_alerts(alerts):
     with open(ALERTS_PATH, 'w', encoding='utf-8') as f:
         json.dump(alerts, f, ensure_ascii=False, indent=2)
 
+
+def _read_paper_trades():
+    try:
+        with open(PAPER_TRADES_PATH, encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _write_paper_trades(trades):
+    with open(PAPER_TRADES_PATH, 'w', encoding='utf-8') as f:
+        json.dump(trades, f, ensure_ascii=False, indent=2)
+
+
+def _evaluate_paper_trades(trades):
+    """Scan open paper trades and fill in exit data from CSV files."""
+    now_ms = int(time.time() * 1000)
+    T7_MS  = 7 * 24 * 3600 * 1000
+    TARGET_MULT = 1.02
+    STOP_MULT   = 0.99
+
+    changed = False
+    for t in trades:
+        if t.get('status') == 'closed':
+            continue
+
+        entry_ts    = t['entry_ts']
+        entry_price = t['entry_price']
+        target      = entry_price * TARGET_MULT
+        stop        = entry_price * STOP_MULT
+        t7_ts       = entry_ts + T7_MS
+
+        # Read intraday 7d CSV for first-to-hit detection
+        rel_path = t.get('rel_path', '')
+        stock_dir = os.path.normpath(os.path.join(INST_DIR, rel_path))
+        folder = os.path.basename(stock_dir)
+        try:
+            sep    = folder.index('_')
+            cname  = folder[sep + 1:]
+            insref = folder[:sep]
+        except ValueError:
+            continue
+
+        csv7d = os.path.join(stock_dir, f'{cname}_{insref}_7d.csv')
+        hist  = os.path.join(stock_dir, f'{cname}_{insref}_History.csv')
+
+        # Scan intraday for first-to-hit
+        first_exit = t.get('first_exit')
+        exit_ts_target = t.get('exit_ts_target')
+        exit_ts_stop   = t.get('exit_ts_stop')
+
+        if first_exit is None and os.path.exists(csv7d):
+            try:
+                with open(csv7d, newline='', encoding='utf-8') as f:
+                    rows = [(int(r[0]), float(r[1])) for r in csv.reader(f) if len(r) >= 2]
+                for ts, price in rows:
+                    if ts <= entry_ts:
+                        continue
+                    if exit_ts_target is None and price >= target:
+                        exit_ts_target = ts
+                    if exit_ts_stop is None and price <= stop:
+                        exit_ts_stop = ts
+                # Determine which triggered first
+                if exit_ts_target and exit_ts_stop:
+                    first_exit = 'target' if exit_ts_target <= exit_ts_stop else 'stop'
+                elif exit_ts_target:
+                    first_exit = 'target'
+                elif exit_ts_stop:
+                    first_exit = 'stop'
+                t['exit_ts_target'] = exit_ts_target
+                t['exit_ts_stop']   = exit_ts_stop
+                t['first_exit']     = first_exit
+                changed = True
+            except Exception:
+                pass
+
+        # T+7 evaluation — use History CSV (daily close) once T+7 has passed
+        if t.get('exit_price_t7') is None and now_ms >= t7_ts:
+            price_t7 = None
+            if os.path.exists(hist):
+                try:
+                    with open(hist, newline='', encoding='utf-8') as f:
+                        rows = [(int(r[0]), float(r[1])) for r in csv.reader(f) if len(r) >= 2]
+                    candidates = [(ts, p) for ts, p in rows if ts >= t7_ts]
+                    if candidates:
+                        price_t7 = candidates[0][1]
+                except Exception:
+                    pass
+            if price_t7 is None and os.path.exists(csv7d):
+                try:
+                    with open(csv7d, newline='', encoding='utf-8') as f:
+                        rows = [(int(r[0]), float(r[1])) for r in csv.reader(f) if len(r) >= 2]
+                    candidates = [(ts, p) for ts, p in rows if ts >= t7_ts]
+                    if candidates:
+                        price_t7 = candidates[0][1]
+                except Exception:
+                    pass
+            if price_t7 is not None:
+                t['exit_price_t7'] = price_t7
+                t['exit_ts_t7']    = t7_ts
+                if first_exit is None:
+                    t['first_exit'] = 'timeout'
+                t['status'] = 'closed'
+                changed = True
+
+    return changed
+
+
 _DEFAULT_SETTINGS = {
     "refresh_interval_s": 30,
     "trades_limit": 25,
     "update_filter": {"types": None, "currencies": None},
+    "auto_refresh_enabled": True,
     "auto_refresh_weekend_minutes": 240,
     "auto_refresh_market_minutes": 15,
     "auto_refresh_off_hours_minutes": 60,
@@ -104,6 +215,7 @@ def _load_settings():
         return dict(_DEFAULT_SETTINGS)
 
 _index_lock          = threading.Lock()
+_refresh_status_lock = threading.Lock()
 _refresh_all_status  = {"running": False, "done": 0, "total": 0}
 _backfill_status     = {"running": False, "done": 0, "total": 0, "fetched": 0, "skipped": 0, "errors": 0, "message": ""}
 _isin_status         = {"running": False, "done": 0, "total": 0, "updated": 0, "failed": 0, "elapsed_s": 0, "message": ""}
@@ -376,6 +488,8 @@ def _do_refresh_one(rel_path, inst_type, currency, stock_dir, insref, name):
         webScrapper.upsert_name_csv(insref, raw_name)
         _upsert_index({"insref": insref, "name": name, "type": inst_type,
                        "currency": currency, "path": rel_path})
+        with _dashboard_cache_lock:
+            _dashboard_cache.clear()
     except Exception:
         pass
 
@@ -390,6 +504,7 @@ STATIC = {
     "/browse":         ("text/html; charset=utf-8",          "browse.html"),
     "/stocksearch":    ("text/html; charset=utf-8",          "stocksearch.html"),
     "/settings":       ("text/html; charset=utf-8",          "settings.html"),
+    "/help":           ("text/html; charset=utf-8",          "help.html"),
 }
 
 
@@ -481,6 +596,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(tradesScrapper.fetch_trades(insref, limit=limit))
             else:
                 self._json({"error": "missing insref"})
+        elif parsed.path == "/paper-trades":
+            with _paper_trades_lock:
+                trades = _read_paper_trades()
+                changed = _evaluate_paper_trades(trades)
+                if changed:
+                    _write_paper_trades(trades)
+            self._json(trades)
         elif parsed.path in STATIC:
             mime, filename = STATIC[parsed.path]
             self._file(mime, os.path.join(BASE_DIR, filename))
@@ -538,6 +660,42 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json({"error": str(e)})
             return
+        if self.path == "/paper-trades":
+            try:
+                data   = json.loads(raw.decode())
+                action = data.get("action", "add")
+                with _paper_trades_lock:
+                    trades = _read_paper_trades()
+                    if action == "remove":
+                        trade_id = str(data.get("id", ""))
+                        trades = [t for t in trades if t.get("id") != trade_id]
+                    elif action == "add":
+                        entry_price = float(data["entry_price"])
+                        entry_ts    = int(data.get("entry_ts", time.time() * 1000))
+                        trade_id    = f"{entry_ts}_{data.get('insref', '')}"
+                        trades.append({
+                            "id":            trade_id,
+                            "rel_path":      str(data.get("rel_path", "")),
+                            "name":          str(data.get("name", "")),
+                            "insref":        str(data.get("insref", "")),
+                            "entry_price":   entry_price,
+                            "entry_ts":      entry_ts,
+                            "target_price":  round(entry_price * 1.02, 4),
+                            "stop_price":    round(entry_price * 0.99, 4),
+                            "exit_ts_target": None,
+                            "exit_ts_stop":   None,
+                            "first_exit":     None,
+                            "exit_price_t7":  None,
+                            "exit_ts_t7":     None,
+                            "status":         "open",
+                        })
+                    elif action == "evaluate":
+                        _evaluate_paper_trades(trades)
+                    _write_paper_trades(trades)
+                self._json({"ok": True, "trades": trades})
+            except Exception as e:
+                self._json({"error": str(e)})
+            return
         if self.path == "/update-isins":
             if not _isin_status["running"]:
                 threading.Thread(target=_do_update_isins, daemon=True).start()
@@ -571,31 +729,35 @@ class Handler(BaseHTTPRequestHandler):
             _do_refresh_indices()
             self._json({"ok": True, "count": len(MARKET_INDICES)})
         elif self.path == "/refresh-all":
-            if not _refresh_all_status["running"]:
+            with _refresh_status_lock:
+                if _refresh_all_status["running"]:
+                    self._json({"error": "already running"})
+                    return
                 uf = _load_settings().get("update_filter")
                 update_filter = uf if isinstance(uf, dict) else None
                 _refresh_all_status["running"] = True
                 _refresh_all_status["done"]    = 0
                 _refresh_all_status["total"]   = 0
                 threading.Thread(target=_do_refresh_all, args=(update_filter,), daemon=True).start()
-                self._json({"started": True})
-            else:
-                self._json({"error": "already running"})
+            self._json({"started": True})
         elif self.path == "/refresh-all-full":
-            if not _refresh_all_status["running"]:
+            with _refresh_status_lock:
+                if _refresh_all_status["running"]:
+                    self._json({"error": "already running"})
+                    return
                 _refresh_all_status["running"] = True
                 _refresh_all_status["done"]    = 0
                 _refresh_all_status["total"]   = 0
                 threading.Thread(target=_do_refresh_all, args=(None,), daemon=True).start()
-                self._json({"started": True})
-            else:
-                self._json({"error": "already running"})
+            self._json({"started": True})
         elif self.path == "/backfill-history":
-            if not _backfill_status["running"]:
+            with _refresh_status_lock:
+                if _backfill_status["running"]:
+                    self._json({"error": "already running"})
+                    return
+                _backfill_status["running"] = True
                 threading.Thread(target=_do_backfill, daemon=True).start()
-                self._json({"started": True})
-            else:
-                self._json({"error": "already running"})
+            self._json({"started": True})
         else:
             self.send_response(200)
             self.end_headers()
@@ -639,6 +801,8 @@ class Handler(BaseHTTPRequestHandler):
                 }
             else:
                 validated["update_filter"] = {"types": None, "currencies": None}
+        if "auto_refresh_enabled" in new_settings:
+            validated["auto_refresh_enabled"] = bool(new_settings["auto_refresh_enabled"])
         if "auto_refresh_weekend_minutes" in new_settings:
             validated["auto_refresh_weekend_minutes"] = max(1, int(new_settings["auto_refresh_weekend_minutes"]))
         if "auto_refresh_market_minutes" in new_settings:
@@ -715,7 +879,8 @@ class Handler(BaseHTTPRequestHandler):
             csv7d = stock.get('csv7d', '')
             if csv7d:
                 csv_hist_rel = csv7d.replace('_7d.csv', '_History.csv')
-                if os.path.isfile(os.path.join(INST_DIR, csv_hist_rel)):
+                csv_hist_abs = os.path.normpath(os.path.join(INST_DIR, csv_hist_rel))
+                if csv_hist_abs.startswith(INST_DIR) and os.path.isfile(csv_hist_abs):
                     stock['csvHist'] = csv_hist_rel
 
             stock_json  = json.dumps(stock)
@@ -814,6 +979,9 @@ class Handler(BaseHTTPRequestHandler):
                         mlist = names.get(insref_int, ("", "", ""))[2].lower() if insref_int >= 0 else ""
                         if _LIST_MODES[mode] not in mlist:
                             continue
+                    elif mode == 'screener':
+                        if inst_type != 'Equity':
+                            continue
 
                     seven_d = next(
                         (f for f in sorted(os.listdir(stock_dir)) if f.endswith('_7d.csv')),
@@ -821,25 +989,53 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     if not seven_d:
                         continue
-                    prices = []
+                    rows_ts = []
                     try:
                         with open(os.path.join(stock_dir, seven_d), newline='', encoding='utf-8') as f:
                             for row in csv.reader(f):
                                 if len(row) >= 2:
                                     try:
-                                        prices.append(float(row[1]))
+                                        rows_ts.append((float(row[0]), float(row[1])))
                                     except ValueError:
                                         pass
                     except OSError:
                         continue
-                    if not prices:
+                    if not rows_ts:
                         continue
-                    first_p = prices[0]
-                    last_p  = prices[-1]
-                    change  = last_p - first_p
-                    pct     = (change / first_p * 100) if first_p else 0
-                    step    = max(1, len(prices) // 30)
-                    spark   = prices[::step]
+                    rec_ts   = rows_ts[-1][0]
+                    cutoff   = rec_ts - 24 * 3600 * 1000
+                    day_rows = [(ts, p) for ts, p in rows_ts if ts >= cutoff]
+                    if not day_rows:
+                        day_rows = rows_ts[-1:]
+                    prices   = [p for _, p in rows_ts]
+                    first_p  = day_rows[0][1]
+                    last_p   = rows_ts[-1][1]
+                    change   = last_p - first_p
+                    pct      = (change / first_p * 100) if first_p else 0
+
+                    if mode == 'screener':
+                        import datetime as _dt
+                        _UTC = _dt.timezone.utc
+                        day_map = {}
+                        for ts, p in rows_ts:
+                            d = _dt.datetime.fromtimestamp(ts / 1000, tz=_UTC).date()
+                            if d not in day_map:
+                                day_map[d] = []
+                            day_map[d].append(p)
+                        sorted_days = sorted(day_map.keys())
+                        if len(sorted_days) < 2:
+                            continue
+                        prev_close = day_map[sorted_days[-2]][-1]
+                        dod_pct    = (last_p - prev_close) / prev_close * 100 if prev_close else 0
+                        last_5     = sorted_days[-5:]
+                        high_5d    = max(p for d in last_5 for p in day_map[d])
+                        if dod_pct <= 1.0 or last_p >= high_5d * 0.995:
+                            continue
+                        change = last_p - prev_close
+                        pct    = dod_pct
+
+                    step  = max(1, len(prices) // 30)
+                    spark = prices[::step]
                     if spark[-1] != prices[-1]:
                         spark.append(prices[-1])
 
@@ -854,6 +1050,7 @@ class Handler(BaseHTTPRequestHandler):
                         'change':   change,
                         'pct':      pct,
                         'spark':    spark,
+                        'last_ts':  rec_ts,
                     })
         with _dashboard_cache_lock:
             _dashboard_cache[cache_key] = results
@@ -935,6 +1132,9 @@ def _auto_refresh_loop():
     import datetime as _dt
     while True:
         settings = _load_settings()
+        if not settings.get("auto_refresh_enabled", True):
+            time.sleep(60)
+            continue
         now = _dt.datetime.now()
         if now.weekday() >= 5:          # Saturday=5, Sunday=6
             interval = settings.get("auto_refresh_weekend_minutes", 240) * 60
@@ -958,6 +1158,9 @@ def _auto_refresh_loop():
 
 
 def _startup_refresh():
+    if not _load_settings().get("auto_refresh_enabled", True):
+        print("[startup] Auto-refresh disabled — skipping startup update.")
+        return
     print("[startup] Starting full update of all stocks…")
     _refresh_all_status["running"] = True
     _refresh_all_status["done"]    = 0
