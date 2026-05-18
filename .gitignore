@@ -5,3 +5,5 @@ Instrumenttype/
 __pycache__/
 *.pyc
 .vscode/
+live_portfolio.json
+live_signals.log
