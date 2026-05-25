@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{NAME}} — Stock Ticker</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 1100px; }
+    .stock-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+    h2   { margin: 0; font-size: 28px; letter-spacing: -0.5px; color: var(--text); }
+    .star-page-btn {
+      font-size: 26px; background: none; border: none; cursor: pointer;
+      color: #ddd; padding: 0; line-height: 1; transition: color 0.15s;
+    }
+    .star-page-btn:hover   { color: var(--star); }
+    .star-page-btn.starred { color: var(--star); }
+    .badges { margin: 6px 0 18px; }
+    .badge {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      border-radius: var(--radius-sm); padding: 3px 8px; margin-right: 6px;
+      text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .badge-insref { background: var(--surface-alt); color: var(--text-muted); border: 1px solid var(--border); }
+    .badge-type   { background: var(--surface-alt); color: var(--text-subtle); border: 1px solid var(--border); }
+    .badge-curr   { background: var(--accent-soft); color: var(--accent); }
+
+    /* Header card containing price + controls */
+    .stock-header {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 20px 24px; margin-bottom: 16px;
+    }
+    #price  { display: block; font-size: 42px; font-weight: bold; letter-spacing: -1px; line-height: 1; color: var(--text); }
+    #change { font-size: 18px; font-weight: bold; }
+    .stat       { display: flex; flex-direction: column; }
+    .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+    .stat-val   { font-size: 14px; font-weight: bold; color: var(--text); }
+
+    /* Right market panel */
+    .market-panel {
+      width: 200px; flex-shrink: 0;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-md); padding: 14px 16px;
+    }
+    .mp-section { font-size: 10px; font-weight: bold; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin: 14px 0 6px; }
+    .mp-section:first-child { margin-top: 0; }
+    .mp-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+    .mp-row:last-child { border-bottom: none; }
+    .mp-label { color: var(--text-muted); }
+    .mp-val   { font-weight: 600; color: var(--text); }
+
+    /* Chart card */
+    .chart-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 18px 22px; margin-bottom: 16px;
+    }
+
+    .controls   { display: flex; gap: 8px; margin: 0 0 12px; align-items: center; flex-wrap: wrap; }
+    .ctrl-btn {
+      padding: 6px 14px; border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      background: var(--surface); cursor: pointer; font-size: 13px;
+      font-family: Arial, sans-serif; color: var(--text-subtle); font-weight: 500;
+    }
+    .ctrl-btn:hover     { background: var(--surface-hover); border-color: var(--accent); color: var(--accent); }
+    .ctrl-btn.active    { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .ctrl-btn:disabled  { opacity: 0.5; cursor: not-allowed; }
+    .ctrl-btn.alert-set { background: var(--warning-soft); border-color: var(--star); color: var(--warning); }
+    .ctrl-select {
+      padding: 6px 10px; border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      background: var(--surface); font-size: 13px; font-family: Arial, sans-serif;
+      color: var(--text-subtle); cursor: pointer;
+    }
+    .ctrl-select:disabled { opacity: 0.4; cursor: not-allowed; }
+    #price-chart  { width: 100%; display: block; cursor: crosshair; }
+    #volume-chart { width: 100%; display: none;  cursor: crosshair; margin-top: 4px; }
+    #chart-hint   { font-size: 11px; color: var(--text-muted); text-align: right; margin-top: 6px; }
+
+    /* Detail sections (fundamentals, analyst, news, trades) */
+    .detail-section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 18px 22px; margin-bottom: 16px;
+    }
+    .detail-title {
+      font-size: 11px; font-weight: bold; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 12px;
+    }
+
+    /* Alert modal */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(26,31,54,0.32); z-index: 100;
+    }
+    .modal-box {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 24px; z-index: 101;
+      width: 280px; box-shadow: 0 12px 36px rgba(26,31,54,0.18);
+    }
+    .modal-box h3 { margin: 0 0 16px; font-size: 16px; color: var(--text); }
+    .alert-form { display: flex; gap: 8px; margin-bottom: 16px; }
+    .alert-form select, .alert-form input {
+      padding: 8px 10px; border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      font-size: 14px; font-family: Arial, sans-serif; box-sizing: border-box;
+      background: var(--surface); color: var(--text);
+    }
+    .alert-form select:focus, .alert-form input:focus { outline: none; border-color: var(--accent); }
+    .alert-form select { width: 130px; }
+    .alert-form input  { flex: 1; min-width: 0; }
+    .modal-actions { display: flex; gap: 8px; }
+    .modal-actions button {
+      flex: 1; padding: 9px; border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      font-size: 13px; font-family: Arial, sans-serif; cursor: pointer;
+      background: var(--surface); color: var(--text-subtle); font-weight: 500;
+    }
+    .modal-actions .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .modal-actions .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .modal-actions .btn-danger  { color: var(--negative); border-color: var(--negative); }
+    .modal-actions .btn-danger:hover { background: var(--negative-soft); }
+
+    /* News */
+    .news-item { padding: 11px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .news-item:last-child { border-bottom: none; }
+    .news-headline { font-size: 13px; font-weight: bold; color: var(--text); line-height: 1.4; margin-bottom: 4px; }
+    .news-meta { font-size: 11px; color: var(--text-muted); }
+    .news-badge {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      border-radius: 3px; padding: 2px 6px; margin-right: 5px;
+      text-transform: uppercase; letter-spacing: 0.3px;
+      background: var(--surface-alt); color: var(--text-subtle);
+    }
+    .news-badge-analyst  { background: var(--accent-soft);   color: var(--accent); }
+    .news-badge-press    { background: var(--positive-soft); color: var(--positive); }
+    .news-badge-reg      { background: var(--warning-soft);  color: var(--warning); }
+    .news-body {
+      display: none; margin-top: 9px;
+      font-size: 12.5px; color: var(--text-subtle); line-height: 1.7;
+      white-space: pre-wrap; border-left: 3px solid var(--border); padding-left: 10px;
+    }
+    .news-item.open .news-body { display: block; }
+    .news-item.open .news-headline { color: var(--accent); }
+
+    /* Pattern recognition panel */
+    #pattern-panel {
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 16px;
+    }
+    .pat-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .pat-row:last-child { margin-bottom: 0; }
+    .pat-label { font-size: 10px; font-weight: bold; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-right: 4px; }
+    .pat-item { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+    .pat-item:last-child { border-bottom: none; }
+    .pat-arrow { font-size: 17px; line-height: 1.2; flex-shrink: 0; }
+    .pat-name  { font-weight: 600; color: var(--text); font-size: 13px; }
+    .pat-base  { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
+    .pat-date  { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
+    .pat-probs { font-size: 11.5px; margin-top: 4px; }
+    .pat-prob  { display: inline-block; margin-right: 10px; }
+    .pat-prob-day { color: var(--text-muted); }
+
+    @media (max-width: 720px) {
+      h2 { font-size: 22px !important; }
+      #price  { font-size: 32px; }
+      #change { font-size: 16px; }
+
+      /* Chart row stacks: chart on top, market panel below at full width */
+      .chart-card > div[style*="display:flex"] {
+        flex-direction: column !important;
+      }
+      .market-panel {
+        width: 100% !important; margin-top: 12px;
+      }
+
+      /* Control buttons wrap to multiple lines on small screens */
+      .controls { gap: 6px; }
+      .ctrl-btn { padding: 5px 10px; font-size: 12px; }
+      .ctrl-select { padding: 5px 8px; font-size: 12px; }
+
+      .badge { font-size: 9px; padding: 2px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live-signals">Live Signals</a>
+    <a href="/live-patterns">Live Patterns</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="stock-heading">
+    <h2>{{NAME}}</h2>
+    <button id="btn-star" class="star-page-btn" onclick="toggleWatchlist()" title="Add to watchlist">&#9734;</button>
+  </div>
+  <div class="badges">
+    <span class="badge badge-insref">#{{INSREF}}</span>
+    {{TYPE_BADGE}}{{CURR_BADGE}}
+  </div>
+
+  <div class="stock-header">
+    <span id="price">—</span>
+    <span id="change">Loading…</span>
+  </div>
+
+  <div class="chart-card">
+  <div class="controls">
+    <button class="ctrl-btn" id="btn-1d"  onclick="setRange(1)">1D</button>
+    <button class="ctrl-btn" id="btn-3d"  onclick="setRange(3)">3D</button>
+    <button class="ctrl-btn active" id="btn-7d"  onclick="setRange(7)">7D</button>
+    <button class="ctrl-btn" id="btn-1m"  onclick="setRange(30)">1M</button>
+    <button class="ctrl-btn" id="btn-3m"  onclick="setRange(91)">3M</button>
+    <button class="ctrl-btn" id="btn-6m"  onclick="setRange(182)">6M</button>
+    <button class="ctrl-btn" id="btn-1y"  onclick="setRange(365)">1Y</button>
+    <button class="ctrl-btn" onclick="resetZoom()">Reset Zoom</button>
+    <button class="ctrl-btn" id="btn-full-hist" onclick="toggleFullHistory()">Full History</button>
+    <button class="ctrl-btn" id="btn-vol"     onclick="toggleVolume()">Volume</button>
+    <button class="ctrl-btn" id="btn-candles" onclick="toggleCandles()">Candles</button>
+    <select id="candle-size-select" class="ctrl-select" onchange="setCandleSize()" disabled title="Candle size (enable Candles mode first)">
+      <option value="">Auto</option>
+      <option value="60000">1 min</option>
+      <option value="300000">5 min</option>
+      <option value="900000">15 min</option>
+      <option value="1800000">30 min</option>
+      <option value="3600000">1 hour</option>
+      <option value="14400000">4 hours</option>
+      <option value="86400000">1 day</option>
+    </select>
+    <button class="ctrl-btn" id="btn-ma20"  onclick="toggleMA(20)">MA20</button>
+    <button class="ctrl-btn" id="btn-ma50"  onclick="toggleMA(50)">MA50</button>
+    <button class="ctrl-btn" id="btn-ma200" onclick="toggleMA(200)">MA200</button>
+    <button class="ctrl-btn" id="btn-rsi"   onclick="toggleRSI()">RSI</button>
+    <button class="ctrl-btn" id="btn-alert" onclick="openAlertModal()">Set Alert</button>
+    <button class="ctrl-btn" id="btn-refresh" onclick="refreshData()">Refresh Now</button>
+    <button class="ctrl-btn" id="btn-patterns" onclick="togglePatternMode()">Patterns</button>
+    <span id="refresh-status" style="font-size:11px; color:var(--text-muted); margin-left:2px;"></span>
+  </div>
+
+  <!-- Pattern recognition panel (hidden until toggled) -->
+  <div id="pattern-panel" style="display:none;">
+    <div class="pat-row">
+      <span class="pat-label">Detection TF</span>
+      <button class="ctrl-btn pat-tf-btn active" data-ms="auto"     onclick="setPatternTf(null)">Auto</button>
+      <button class="ctrl-btn pat-tf-btn"         data-ms="300000"   onclick="setPatternTf(300000)">5m</button>
+      <button class="ctrl-btn pat-tf-btn"         data-ms="900000"   onclick="setPatternTf(900000)">15m</button>
+      <button class="ctrl-btn pat-tf-btn"         data-ms="3600000"  onclick="setPatternTf(3600000)">1H</button>
+      <button class="ctrl-btn pat-tf-btn"         data-ms="14400000" onclick="setPatternTf(14400000)">4H</button>
+      <button class="ctrl-btn pat-tf-btn"         data-ms="86400000" onclick="setPatternTf(86400000)">1D</button>
+    </div>
+    <div class="pat-row">
+      <span class="pat-label">Forecast horizon</span>
+      <button class="ctrl-btn pat-hz-btn"        data-days="1"  onclick="setPatternHorizon(1)">1D</button>
+      <button class="ctrl-btn pat-hz-btn"        data-days="3"  onclick="setPatternHorizon(3)">3D</button>
+      <button class="ctrl-btn pat-hz-btn active" data-days="7"  onclick="setPatternHorizon(7)">7D</button>
+      <button class="ctrl-btn pat-hz-btn"        data-days="14" onclick="setPatternHorizon(14)">14D</button>
+      <button class="ctrl-btn pat-hz-btn"        data-days="30" onclick="setPatternHorizon(30)">30D</button>
+      <span style="font-size:11px; color:var(--text-muted); margin-left:4px;">Probability decays with distance — edge halves every 5 trading days</span>
+    </div>
+    <div class="pat-row">
+      <span class="pat-label">Context filters</span>
+      <button class="ctrl-btn pat-flt-btn" data-filter="maTrend"  onclick="setPatternFilter('maTrend')">MA Trend</button>
+      <button class="ctrl-btn pat-flt-btn" data-filter="rsi"      onclick="setPatternFilter('rsi')">RSI</button>
+      <button class="ctrl-btn pat-flt-btn" data-filter="maRegime" onclick="setPatternFilter('maRegime')">MA Cross</button>
+      <span style="font-size:11px; color:var(--text-muted); margin-left:4px;">Adjust pattern probabilities based on market context</span>
+    </div>
+    <div id="pattern-results"></div>
+  </div>
+
+  <div style="display:flex; gap:20px; align-items:flex-start; margin-top:0;">
+
+    <!-- Chart area -->
+    <div style="flex:1; min-width:0;">
+      <canvas id="price-chart"  height="320"></canvas>
+      <canvas id="volume-chart" height="80" style="display:none;"></canvas>
+      <canvas id="rsi-chart"    height="80" style="display:none; margin-top:4px;"></canvas>
+      <div id="chart-hint">Scroll to zoom &nbsp;&middot;&nbsp; Drag to measure</div>
+    </div>
+
+    <!-- Right market panel -->
+    <div class="market-panel">
+      <div class="mp-section">Price Data</div>
+      <div class="mp-row"><span class="mp-label">Open</span>   <span class="mp-val" id="s-open">—</span></div>
+      <div class="mp-row"><span class="mp-label">High</span>   <span class="mp-val" id="s-high">—</span></div>
+      <div class="mp-row"><span class="mp-label">Low</span>    <span class="mp-val" id="s-low">—</span></div>
+      <div class="mp-row"><span class="mp-label">Volume</span> <span class="mp-val" id="s-vol">—</span></div>
+
+      <div class="mp-section">Order Book <span id="ob-state" style="font-weight:normal; text-transform:none; letter-spacing:0; color:var(--text-muted);"></span></div>
+      <div class="mp-row">
+        <span class="mp-label">Bid</span>
+        <div id="ob-bids" style="text-align:right;"><span style="color:var(--text-muted);">—</span></div>
+      </div>
+      <div class="mp-row">
+        <span class="mp-label">Ask</span>
+        <div id="ob-asks" style="text-align:right;"><span style="color:var(--text-muted);">—</span></div>
+      </div>
+    </div>
+
+  </div>
+  </div>
+
+  <!-- Fundamentals panel -->
+  <div id="quote-section" class="detail-section" style="display:none;">
+
+    <!-- Performance returns -->
+    <div class="detail-title">Performance</div>
+    <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:18px;" id="perf-row"></div>
+
+    <!-- Fundamentals grid -->
+    <div class="detail-title">Fundamentals</div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px 24px; margin-bottom:18px;" id="fund-grid"></div>
+
+    <!-- Margins -->
+    <div class="detail-title">Margins</div>
+    <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:18px;" id="margin-row"></div>
+
+    <!-- Company info -->
+    <div class="detail-title">Company</div>
+    <div id="company-info" style="font-size:13px; color:var(--text-subtle); line-height:1.7;"></div>
+    <p id="company-desc" style="font-size:13px; color:var(--text-subtle); line-height:1.6; margin:10px 0 0;"></p>
+  </div>
+
+  <div id="analyst-section" class="detail-section" style="display:none;">
+    <div class="detail-title">
+      Analyst Consensus <span id="analyst-period" style="font-weight:normal; margin-left:6px; text-transform:none; letter-spacing:0;"></span>
+    </div>
+    <div style="display:flex; height:10px; border-radius:5px; overflow:hidden; background:var(--border); margin-bottom:8px;">
+      <div id="analyst-bar-buy"  style="background:var(--positive); transition:width 0.3s;"></div>
+      <div id="analyst-bar-hold" style="background:var(--text-muted); transition:width 0.3s;"></div>
+      <div id="analyst-bar-sell" style="background:var(--negative); transition:width 0.3s;"></div>
+    </div>
+    <div style="display:flex; gap:16px; font-size:12px; margin-bottom:10px;">
+      <span><span style="color:var(--positive); font-weight:bold;" id="analyst-buy-n">—</span> <span style="color:var(--text-muted);">Buy</span></span>
+      <span><span style="color:var(--text-muted); font-weight:bold;" id="analyst-hold-n">—</span> <span style="color:var(--text-muted);">Hold</span></span>
+      <span><span style="color:var(--negative); font-weight:bold;" id="analyst-sell-n">—</span> <span style="color:var(--text-muted);">Sell</span></span>
+    </div>
+    <div id="analyst-target" style="font-size:13px; color:var(--text);"></div>
+  </div>
+
+  <!-- News -->
+  <div id="news-section" class="detail-section" style="display:none;">
+    <div class="detail-title">News</div>
+    <div id="news-list"></div>
+  </div>
+
+  <!-- Trades -->
+  <div id="trades-section" class="detail-section" style="display:none;">
+    <div class="detail-title">Recent Trades</div>
+    <div id="trades-list" style="font-size:12px; max-height:400px; overflow-y:auto;"></div>
+  </div>
+
+  <!-- Alert modal -->
+  <div id="alert-modal" style="display:none">
+    <div class="modal-backdrop" onclick="closeAlertModal()"></div>
+    <div class="modal-box">
+      <h3>Price Alert — {{NAME}}</h3>
+      <div class="alert-form">
+        <select id="alert-cond">
+          <option value="above">Price above</option>
+          <option value="below">Price below</option>
+          <option value="pct_rise">Intraday rise ≥ %</option>
+          <option value="pct_drop">Intraday drop ≥ %</option>
+        </select>
+        <input type="number" id="alert-price" placeholder="Target price" step="0.01" min="0">
+      </div>
+      <div class="modal-actions">
+        <button class="btn-primary" onclick="saveAlert()">Set Alert</button>
+        <button class="btn-danger"  onclick="removeAlert()">Remove</button>
+        <button onclick="closeAlertModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>const STOCK = {{STOCK_JSON}};</script>
+  <script src="/pattern_engine.js"></script>
+  <script src="/stock_page.js"></script>
+  <script src="/nav.js"></script>
+</body>
+</html>

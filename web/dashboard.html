@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Market Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: #f0f3fa; max-width: 1100px; }
+
+    h2 { color: #1a1f36; letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #8a94a6; margin-bottom: 20px; }
+
+    /* Tab bar */
+    .tab-bar {
+      display: flex;
+      border-bottom: 2px solid #e8ecf5;
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .tab-bar::-webkit-scrollbar { height: 0; }
+    .tab {
+      padding: 9px 16px; border: none; background: none;
+      cursor: pointer; font-size: 13px; font-weight: 600;
+      color: #8a94a6; border-bottom: 2px solid transparent;
+      margin-bottom: -2px; font-family: Arial, sans-serif;
+      white-space: nowrap; transition: color 0.12s; flex-shrink: 0;
+    }
+    .tab:hover { color: #1a1f36; }
+    .tab.active { color: #0052cc; border-bottom-color: #0052cc; }
+
+    .toolbar {
+      display: flex; gap: 8px; align-items: center;
+      margin-bottom: 20px; flex-wrap: wrap;
+    }
+    #filter-box {
+      flex: 1; min-width: 160px; padding: 7px 12px; font-size: 14px;
+      border: 1px solid #dde1ec; border-radius: 6px;
+      box-sizing: border-box; background: #fff; color: #1a1f36;
+      font-family: Arial, sans-serif;
+    }
+    #filter-box:focus { outline: none; border-color: #0052cc; }
+
+    .filter-select {
+      padding: 7px 10px; font-size: 13px; border: 1px solid #dde1ec;
+      border-radius: 6px; background: #fff; color: #555;
+      font-family: Arial, sans-serif; cursor: pointer;
+    }
+    .filter-select:focus { outline: none; border-color: #0052cc; }
+
+    .sort-group { display: flex; border: 1px solid #dde1ec; border-radius: 6px; overflow: hidden; background: #fff; }
+    .sort-btn {
+      padding: 6px 13px; border: none; border-right: 1px solid #dde1ec;
+      background: #fff; cursor: pointer; font-size: 12px;
+      font-family: Arial, sans-serif; color: #555; white-space: nowrap;
+    }
+    .sort-btn:last-child { border-right: none; }
+    .sort-btn:hover  { background: #f0f3fa; }
+    .sort-btn.active { background: #0052cc; color: #fff; }
+
+    .stock-count { font-size: 12px; color: #8a94a6; margin-left: auto; white-space: nowrap; }
+
+    .stock-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 12px;
+    }
+    .stock-card {
+      position: relative;
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      padding: 16px; cursor: pointer;
+      transition: box-shadow 0.15s, border-color 0.15s, transform 0.1s;
+    }
+    .stock-card:hover {
+      box-shadow: 0 4px 16px rgba(0,82,204,0.10);
+      border-color: #c0ccee; transform: translateY(-1px);
+    }
+    .card-name {
+      font-size: 14px; font-weight: bold; color: #1a1f36;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      margin-bottom: 4px; padding-right: 22px;
+    }
+    .card-badges { margin-bottom: 10px; }
+    .card-badge {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      border-radius: 3px; padding: 1px 6px; margin-right: 4px;
+    }
+    .b-curr { background: #e8f0fe; color: #0052cc; }
+    .b-type { background: #f0f0f5; color: #666; }
+
+    .card-price {
+      font-size: 22px; font-weight: bold; color: #1a1f36;
+      letter-spacing: -0.5px; line-height: 1.1;
+    }
+    .card-change { font-size: 12px; font-weight: bold; margin-top: 3px; }
+    .card-age    { font-size: 10px; color: #bbb; margin-top: 5px; }
+    .up   { color: #16c784; }
+    .down { color: #ea3943; }
+
+    .screener-note {
+      background: #fffbe6; border: 1px solid #f0d060; border-radius: 8px;
+      padding: 10px 16px; font-size: 12.5px; color: #7a5800;
+      margin-bottom: 16px; display: none;
+    }
+
+    .sparkline-wrap { margin-top: 10px; height: 40px; }
+    .sparkline { display: block; width: 100%; height: 40px; overflow: visible; }
+
+    #empty {
+      text-align: center; color: #8a94a6; font-size: 15px;
+      margin: 60px 0; display: none;
+    }
+    #loading { text-align: center; color: #8a94a6; font-size: 14px; margin: 60px 0; display: none; }
+
+    #heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 6px;
+    }
+    .heat-tile {
+      border-radius: 8px; padding: 12px 10px; cursor: pointer;
+      color: #fff; min-height: 64px;
+      display: flex; flex-direction: column; justify-content: space-between;
+      transition: filter 0.12s;
+    }
+    .heat-tile:hover { filter: brightness(1.12); }
+    .heat-name {
+      font-size: 13px; font-weight: bold;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .heat-pct   { font-size: 18px; font-weight: bold; margin-top: 6px; }
+    .heat-price { font-size: 11px; opacity: 0.82; }
+
+    /* Simulation panel */
+    #sim-panel { display: none; }
+    .sim-stats {
+      display: flex; gap: 16px; flex-wrap: wrap;
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      padding: 16px 20px; margin-bottom: 18px;
+    }
+    .sim-stat { text-align: center; min-width: 80px; }
+    .sim-stat-val { font-size: 22px; font-weight: bold; color: #1a1f36; letter-spacing: -0.5px; }
+    .sim-stat-lbl { font-size: 10px; color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px; }
+    .sim-section-title {
+      font-size: 11px; font-weight: bold; color: #8a94a6;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 0 8px;
+    }
+    .sim-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sim-table th {
+      text-align: left; padding: 6px 10px; font-size: 10px; font-weight: bold;
+      color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px;
+      border-bottom: 1px solid #e8ecf5;
+    }
+    .sim-table td { padding: 8px 10px; border-bottom: 1px solid #f4f6fb; color: #1a1f36; }
+    .sim-table tr:last-child td { border-bottom: none; }
+    .sim-table tr:hover td { background: #f8faff; }
+    .sim-win  { color: #16c784; font-weight: bold; }
+    .sim-loss { color: #ea3943; font-weight: bold; }
+    .sim-open { color: #0052cc; }
+    .sim-remove-btn {
+      background: none; border: none; color: #ccc; cursor: pointer;
+      font-size: 14px; padding: 0 4px; line-height: 1;
+    }
+    .sim-remove-btn:hover { color: #ea3943; }
+    .card-add-btn {
+      position: absolute; bottom: 12px; right: 12px;
+      background: #0052cc; color: #fff; border: none; border-radius: 5px;
+      font-size: 10px; font-weight: bold; padding: 3px 7px; cursor: pointer;
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .stock-card:hover .card-add-btn { opacity: 1; }
+    .card-add-btn:hover { background: #003d99; }
+  </style>
+</head>
+<body>
+  <h2>Market Dashboard</h2>
+  <p class="subtitle">Millistream data</p>
+  <nav>
+    <a href="/" class="active">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live-signals">Live Signals</a>
+    <a href="/live-patterns">Live Patterns</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="tab-bar">
+    <button class="tab active" data-mode="omxs30"      onclick="switchTab('omxs30')">OMXS30</button>
+    <button class="tab"        data-mode="favorites"   onclick="switchTab('favorites')">Favorites</button>
+    <button class="tab"        data-mode="spotlight"   onclick="switchTab('spotlight')">Spotlight</button>
+    <button class="tab"        data-mode="first_north" onclick="switchTab('first_north')">First North</button>
+    <button class="tab"        data-mode="small_cap"   onclick="switchTab('small_cap')">OMX Small Cap</button>
+    <button class="tab"        data-mode="mid_cap"     onclick="switchTab('mid_cap')">OMX Mid Cap</button>
+    <button class="tab"        data-mode="large_cap"   onclick="switchTab('large_cap')">OMX Large Cap</button>
+    <button class="tab"        data-mode="screener"    onclick="switchTab('screener')">Strategy ★</button>
+    <button class="tab"        data-mode="simulation"  onclick="switchTab('simulation')">📋 Simulation</button>
+  </div>
+
+  <div class="screener-note" id="screener-note">
+    <strong>Strategy filter:</strong> DoD &gt; 1% &amp; not at 5-day high (equity only).
+    Entry rule: buy next open Mon–Thu · Target +2% · Stop −1% · Hold max 7 days.
+  </div>
+
+  <div id="sim-panel">
+    <div class="sim-stats" id="sim-stats"></div>
+    <div class="sim-section-title">Open positions</div>
+    <table class="sim-table" id="sim-open-table">
+      <thead><tr>
+        <th>Stock</th><th>Entry date</th><th>Entry</th><th>Target +2%</th><th>Stop −1%</th>
+        <th>First exit</th><th>T+7 price</th><th>T+7 P&amp;L</th><th></th>
+      </tr></thead>
+      <tbody id="sim-open-body"></tbody>
+    </table>
+    <div class="sim-section-title" style="margin-top:24px;">Closed positions</div>
+    <table class="sim-table" id="sim-closed-table">
+      <thead><tr>
+        <th>Stock</th><th>Entry date</th><th>Entry</th><th>Target +2%</th><th>Stop −1%</th>
+        <th>First exit</th><th>T+7 price</th><th>T+7 P&amp;L</th><th></th>
+      </tr></thead>
+      <tbody id="sim-closed-body"></tbody>
+    </table>
+  </div>
+
+  <div class="toolbar" id="toolbar">
+    <input id="filter-box" type="text" placeholder="Filter by name…" oninput="renderGrid()">
+    <select id="filter-curr" class="filter-select" onchange="renderGrid()">
+      <option value="">All currencies</option>
+    </select>
+    <select id="filter-type" class="filter-select" onchange="renderGrid()">
+      <option value="">All types</option>
+    </select>
+    <div class="sort-group">
+      <button class="sort-btn active" id="sort-name"   onclick="setSort('name')"   title="Sort alphabetically by stock name">Name ▲</button>
+      <button class="sort-btn"        id="sort-price"  onclick="setSort('price')"  title="Sort by current market price">Price</button>
+      <button class="sort-btn"        id="sort-change" onclick="setSort('change')" title="Sort by today's price movement in currency">Change</button>
+      <button class="sort-btn"        id="sort-pct"    onclick="setSort('pct')"    title="Sort by today's percentage change">% Chg</button>
+      <button class="sort-btn"        id="sort-heat"   onclick="setSort('heat')"   title="Colour-coded heatmap by % change">Heatmap</button>
+    </div>
+    <span class="stock-count" id="stock-count"></span>
+  </div>
+
+  <div id="loading">Loading…</div>
+  <div id="empty">No stocks found for this view.</div>
+
+  <div id="grid-wrap">
+    <div class="stock-grid" id="grid"></div>
+    <div id="heatmap-grid" style="display:none"></div>
+  </div>
+
+  <script>
+    let tabCache   = {};
+    let watchlist  = [];
+    let activeMode = 'omxs30';
+    let sortKey    = 'name';
+    let sortAsc    = true;
+
+    const SORT_DEFAULT_ASC = { name: true, price: false, change: false, pct: false, heat: false };
+    const SORT_LABELS      = { name: 'Name', price: 'Price', change: 'Change', pct: '% Chg', heat: 'Heatmap' };
+
+    document.getElementById('loading').style.display = '';
+
+    Promise.all([
+      fetch('/dashboard-data?mode=omxs30').then(r => r.json()),
+      fetch('/watchlist').then(r => r.json()).catch(() => [])
+    ]).then(([data, wl]) => {
+      watchlist = wl;
+      tabCache['omxs30'] = data;
+      document.getElementById('loading').style.display = 'none';
+      populateFilters(data);
+      renderGrid();
+    });
+
+    function fmtAge(ts) {
+      const m = Math.floor((Date.now() - ts) / 60000);
+      if (m < 1)  return 'just now';
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    }
+
+    function switchTab(mode) {
+      if (mode === activeMode) return;
+      activeMode = mode;
+      document.querySelectorAll('.tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.mode === mode)
+      );
+      document.getElementById('screener-note').style.display = mode === 'screener' ? '' : 'none';
+      document.getElementById('filter-box').value = '';
+
+      const isSimulation = mode === 'simulation';
+      document.getElementById('sim-panel').style.display   = isSimulation ? '' : 'none';
+      document.getElementById('grid-wrap').style.display   = isSimulation ? 'none' : '';
+      document.getElementById('toolbar').style.display     = isSimulation ? 'none' : '';
+      document.getElementById('loading').style.display     = 'none';
+      document.getElementById('empty').style.display       = 'none';
+      if (isSimulation) { loadSimulation(); return; }
+
+      if (tabCache[mode] !== undefined) {
+        populateFilters(tabCache[mode]);
+        renderGrid();
+        return;
+      }
+
+      document.getElementById('loading').style.display = '';
+      document.getElementById('grid').innerHTML = '';
+      document.getElementById('heatmap-grid').style.display = 'none';
+
+      fetch('/dashboard-data?mode=' + mode)
+        .then(r => r.json())
+        .then(data => {
+          tabCache[mode] = data;
+          document.getElementById('loading').style.display = 'none';
+          populateFilters(data);
+          renderGrid();
+        })
+        .catch(() => { document.getElementById('loading').style.display = 'none'; });
+    }
+
+    function populateFilters(stocks) {
+      const currencies = [...new Set(stocks.map(s => s.currency))].sort();
+      const types      = [...new Set(stocks.map(s => s.type))].sort();
+      const currSel    = document.getElementById('filter-curr');
+      const typeSel    = document.getElementById('filter-type');
+      currSel.innerHTML = '<option value="">All currencies</option>';
+      typeSel.innerHTML = '<option value="">All types</option>';
+      currencies.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; currSel.appendChild(o); });
+      types.forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t; typeSel.appendChild(o); });
+    }
+
+    function setSort(key) {
+      if (sortKey === key && key !== 'heat') {
+        sortAsc = !sortAsc;
+      } else {
+        sortKey = key;
+        sortAsc = SORT_DEFAULT_ASC[key];
+      }
+      updateSortButtons();
+      renderGrid();
+    }
+
+    function updateSortButtons() {
+      Object.keys(SORT_LABELS).forEach(key => {
+        const btn = document.getElementById('sort-' + key);
+        if (!btn) return;
+        const isActive = key === sortKey;
+        btn.classList.toggle('active', isActive);
+        if (key === 'heat') {
+          btn.textContent = 'Heatmap';
+        } else if (isActive) {
+          btn.textContent = SORT_LABELS[key] + (sortAsc ? ' ▲' : ' ▼');
+        } else {
+          btn.textContent = SORT_LABELS[key];
+        }
+      });
+    }
+
+    function renderGrid() {
+      const stocks  = tabCache[activeMode] || [];
+      const grid    = document.getElementById('grid');
+      const heatDiv = document.getElementById('heatmap-grid');
+      const empty   = document.getElementById('empty');
+      const q       = document.getElementById('filter-box').value.trim().toLowerCase();
+      const curr    = document.getElementById('filter-curr').value;
+      const type    = document.getElementById('filter-type').value;
+
+      let filtered = stocks;
+      if (q)    filtered = filtered.filter(s => s.name.toLowerCase().includes(q));
+      if (curr) filtered = filtered.filter(s => s.currency === curr);
+      if (type) filtered = filtered.filter(s => s.type === type);
+      filtered = sortStocks(filtered);
+
+      document.getElementById('stock-count').textContent =
+        filtered.length + ' stock' + (filtered.length !== 1 ? 's' : '');
+
+      if (!filtered.length) {
+        empty.style.display = '';
+        grid.innerHTML = '';
+        heatDiv.innerHTML = '';
+        heatDiv.style.display = 'none';
+        grid.style.display = '';
+        return;
+      }
+      empty.style.display = 'none';
+
+      if (sortKey === 'heat') {
+        grid.style.display    = 'none';
+        heatDiv.style.display = '';
+        renderHeatmap(filtered, heatDiv);
+      } else {
+        heatDiv.style.display = 'none';
+        grid.style.display    = '';
+        grid.innerHTML = '';
+        filtered.forEach(s => grid.appendChild(createCard(s)));
+      }
+    }
+
+    function sortStocks(stocks) {
+      const dir = sortAsc ? 1 : -1;
+      if (sortKey === 'name')   return [...stocks].sort((a, b) => dir * a.name.localeCompare(b.name));
+      if (sortKey === 'price')  return [...stocks].sort((a, b) => dir * (a.price - b.price));
+      if (sortKey === 'change') return [...stocks].sort((a, b) => dir * (a.change - b.change));
+      if (sortKey === 'pct')    return [...stocks].sort((a, b) => dir * (a.pct - b.pct));
+      return [...stocks].sort((a, b) => b.pct - a.pct);
+    }
+
+    function createCard(s) {
+      const isUp    = s.change >= 0;
+      const color   = isUp ? '#16c784' : '#ea3943';
+      const arrow   = isUp ? '▲' : '▼';
+      const sign    = isUp ? '+' : '';
+      const starred = watchlist.includes(s.path);
+
+      const card = document.createElement('div');
+      card.className = 'stock-card';
+      card.innerHTML =
+        `<button class="card-star-btn${starred ? ' starred' : ''}" data-path="${esc(s.path)}" title="Watchlist" onclick="toggleStar(event,this,'${esc(s.path)}')">` +
+          (starred ? '&#9733;' : '&#9734;') +
+        `</button>` +
+        `<div class="card-name" title="${esc(s.name)}">${esc(s.name)}</div>` +
+        `<div class="card-badges">` +
+          `<span class="card-badge b-curr">${esc(s.currency)}</span>` +
+          `<span class="card-badge b-type">${esc(s.type)}</span>` +
+        `</div>` +
+        `<div class="card-price">${s.price.toFixed(2)}</div>` +
+        `<div class="card-change ${isUp ? 'up' : 'down'}">` +
+          `${arrow} ${sign}${s.change.toFixed(2)} &nbsp;(${sign}${s.pct.toFixed(2)}%)` +
+        `</div>` +
+        `<div class="card-age">${s.last_ts ? fmtAge(s.last_ts) : ''}</div>` +
+        `<div class="sparkline-wrap"><svg class="sparkline" viewBox="0 0 100 40" preserveAspectRatio="none"></svg></div>` +
+        `<button class="card-add-btn" title="Add to simulation">+ Sim</button>`;
+
+      card.onclick = () => navigate(s);
+      card.querySelector('.card-add-btn').onclick = (evt) => addTrade(evt, s);
+      drawSparkline(card.querySelector('.sparkline'), s.spark, color);
+      return card;
+    }
+
+    function renderHeatmap(stocks, container) {
+      container.innerHTML = '';
+      const maxAbs = Math.max(...stocks.map(s => Math.abs(s.pct)), 0.01);
+      stocks.forEach(s => {
+        const pct  = s.pct;
+        const frac = Math.min(Math.abs(pct) / maxAbs, 1);
+        const bg   = pct >= 0
+          ? `hsl(152, ${40 + Math.round(frac * 55)}%, ${48 - Math.round(frac * 18)}%)`
+          : `hsl(355, ${40 + Math.round(frac * 55)}%, ${52 - Math.round(frac * 16)}%)`;
+        const sign = pct >= 0 ? '+' : '';
+        const tile = document.createElement('div');
+        tile.className = 'heat-tile';
+        tile.style.background = bg;
+        tile.innerHTML =
+          `<div class="heat-name" title="${esc(s.name)}">${esc(s.name)}</div>` +
+          `<div class="heat-pct">${sign}${pct.toFixed(2)}%</div>` +
+          `<div class="heat-price">${s.price.toFixed(2)} ${esc(s.currency)}</div>`;
+        tile.onclick = () => navigate(s);
+        container.appendChild(tile);
+      });
+    }
+
+    function toggleStar(evt, btn, path) {
+      evt.stopPropagation();
+      const adding = !watchlist.includes(path);
+      fetch('/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: adding ? 'add' : 'remove', path })
+      }).then(r => r.json()).then(d => {
+        if (!d.ok) return;
+        if (adding) watchlist.push(path);
+        else watchlist = watchlist.filter(p => p !== path);
+        document.querySelectorAll(`.card-star-btn[data-path="${CSS.escape(path)}"]`).forEach(b => {
+          b.className = 'card-star-btn' + (adding ? ' starred' : '');
+          b.innerHTML = adding ? '&#9733;' : '&#9734;';
+        });
+        // Invalidate favorites cache so next visit to that tab refetches
+        delete tabCache['favorites'];
+        if (activeMode === 'favorites') renderGrid();
+      });
+    }
+
+    function drawSparkline(svg, points, color) {
+      if (!points || points.length < 2) return;
+      const min   = Math.min(...points);
+      const max   = Math.max(...points);
+      const range = max - min || 1;
+      const W = 100, H = 40, pad = 3;
+      const gid = 'sg' + Math.random().toString(36).slice(2);
+      const pts = points.map((p, i) => {
+        const x = (i / (points.length - 1)) * W;
+        const y = H - pad - ((p - min) / range) * (H - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const first = points[0], last = points[points.length - 1];
+      const y0 = (H - pad - ((first - min) / range) * (H - pad * 2)).toFixed(1);
+      const yN = (H - pad - ((last  - min) / range) * (H - pad * 2)).toFixed(1);
+      const fillPts = `0,${y0} ${pts} 100,${yN} 100,${H} 0,${H}`;
+      svg.innerHTML =
+        `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">` +
+          `<stop offset="0%" stop-color="${color}" stop-opacity="0.18"/>` +
+          `<stop offset="100%" stop-color="${color}" stop-opacity="0.01"/>` +
+        `</linearGradient></defs>` +
+        `<polygon points="${fillPts}" fill="url(#${gid})"/>` +
+        `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>`;
+    }
+
+    function navigate(s) {
+      fetch('/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'path=' + encodeURIComponent(s.path)
+      }).finally(() => {
+        window.location.href = '/view?path=' + encodeURIComponent(s.path);
+      });
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ── Simulation ────────────────────────────────────────────────────────────
+    let simTrades = [];
+
+    function loadSimulation() {
+      fetch('/paper-trades')
+        .then(r => r.json())
+        .then(data => { simTrades = data; renderSimulation(); })
+        .catch(() => {});
+    }
+
+    function renderSimulation() {
+      const open   = simTrades.filter(t => t.status === 'open');
+      const closed = simTrades.filter(t => t.status === 'closed');
+
+      // Stats
+      const total    = simTrades.length;
+      const wins     = closed.filter(t => _simResult(t) === 'win').length;
+      const losses   = closed.filter(t => _simResult(t) === 'loss').length;
+      const winRate  = closed.length ? Math.round(wins / closed.length * 100) : null;
+      const avgPnl   = closed.length
+        ? closed.reduce((s, t) => s + _simPnl(t), 0) / closed.length
+        : null;
+      const bestPnl  = closed.length ? Math.max(...closed.map(_simPnl)) : null;
+      const worstPnl = closed.length ? Math.min(...closed.map(_simPnl)) : null;
+
+      document.getElementById('sim-stats').innerHTML =
+        _simStat(total, 'Total trades') +
+        _simStat(open.length, 'Open') +
+        _simStat(closed.length, 'Closed') +
+        _simStat(winRate !== null ? winRate + '%' : '—', 'Win rate', winRate >= 40 ? '#16c784' : winRate !== null ? '#ea3943' : null) +
+        _simStat(avgPnl  !== null ? (avgPnl >= 0 ? '+' : '') + avgPnl.toFixed(2) + '%'  : '—', 'Avg P&L', avgPnl >= 0 ? '#16c784' : avgPnl !== null ? '#ea3943' : null) +
+        _simStat(bestPnl  !== null ? '+' + bestPnl.toFixed(2)  + '%' : '—', 'Best',  '#16c784') +
+        _simStat(worstPnl !== null ? worstPnl.toFixed(2) + '%' : '—', 'Worst', '#ea3943');
+
+      document.getElementById('sim-open-body').innerHTML   = open.map(_simRow).join('') || '<tr><td colspan="9" style="color:#bbb;padding:16px 10px;">No open positions.</td></tr>';
+      document.getElementById('sim-closed-body').innerHTML = closed.map(_simRow).join('') || '<tr><td colspan="9" style="color:#bbb;padding:16px 10px;">No closed positions yet.</td></tr>';
+    }
+
+    function _simStat(val, lbl, color) {
+      const style = color ? ` style="color:${color}"` : '';
+      return `<div class="sim-stat"><div class="sim-stat-val"${style}>${val}</div><div class="sim-stat-lbl">${lbl}</div></div>`;
+    }
+
+    function _simResult(t) {
+      if (!t.first_exit) return 'open';
+      if (t.first_exit === 'target') return 'win';
+      if (t.first_exit === 'stop')   return 'loss';
+      // timeout — use T+7 price vs entry
+      if (t.exit_price_t7 !== null) return t.exit_price_t7 >= t.entry_price ? 'win' : 'loss';
+      return 'open';
+    }
+
+    function _simPnl(t) {
+      const ref = t.exit_price_t7 ?? (t.first_exit === 'target' ? t.target_price : t.first_exit === 'stop' ? t.stop_price : null);
+      if (ref === null) return 0;
+      return (ref - t.entry_price) / t.entry_price * 100;
+    }
+
+    function _simRow(t) {
+      const result   = _simResult(t);
+      const resClass = result === 'win' ? 'sim-win' : result === 'loss' ? 'sim-loss' : 'sim-open';
+      const resLabel = result === 'win' ? '✓ Target hit' : result === 'loss' ? '✗ Stop hit' : t.first_exit === 'timeout' ? 'Timeout' : '—';
+      const entryDate = new Date(t.entry_ts).toLocaleDateString('sv', { month: 'short', day: 'numeric' });
+      const pnlPct = t.exit_price_t7 !== null ? ((t.exit_price_t7 - t.entry_price) / t.entry_price * 100) : null;
+      const pnlStr = pnlPct !== null
+        ? `<span class="${pnlPct >= 0 ? 'sim-win' : 'sim-loss'}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`
+        : '—';
+      return `<tr>
+        <td><a href="/view?path=${encodeURIComponent(t.rel_path)}" style="color:#0052cc;text-decoration:none;">${esc(t.name)}</a></td>
+        <td>${entryDate}</td>
+        <td>${t.entry_price.toFixed(2)}</td>
+        <td>${t.target_price.toFixed(2)}</td>
+        <td>${t.stop_price.toFixed(2)}</td>
+        <td class="${resClass}">${resLabel}</td>
+        <td>${t.exit_price_t7 !== null ? t.exit_price_t7.toFixed(2) : '—'}</td>
+        <td>${pnlStr}</td>
+        <td><button class="sim-remove-btn" onclick="removeTrade('${esc(t.id)}')" title="Remove">✕</button></td>
+      </tr>`;
+    }
+
+    function addTrade(evt, s) {
+      evt.stopPropagation();
+      fetch('/paper-trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add',
+          rel_path: s.path,
+          name: s.name,
+          insref: s.insref || '',
+          entry_price: s.price,
+          entry_ts: Date.now(),
+        })
+      })
+        .then(r => r.json())
+        .then(d => { if (d.ok) { simTrades = d.trades; alert(`Added ${s.name} to simulation @ ${s.price.toFixed(2)}`); } })
+        .catch(() => {});
+    }
+
+    function removeTrade(id) {
+      fetch('/paper-trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', id })
+      })
+        .then(r => r.json())
+        .then(d => { if (d.ok) { simTrades = d.trades; renderSimulation(); } })
+        .catch(() => {});
+    }
+  </script>
+  <script src="/nav.js"></script>
+</body>
+</html>

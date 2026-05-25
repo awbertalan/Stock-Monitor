@@ -2,6 +2,8 @@
 // Requires:  const STOCK = { name, insref, type, currency, csv7d };
 
 const PAD = { top: 16, right: 16, bottom: 42, left: 72 };
+const VOL_BAND_H = 60;   // height of the volume band overlaid at the bottom of the price chart
+const priceBot = H => H - PAD.bottom - (showVolume ? VOL_BAND_H : 0);
 
 let allData          = [];
 let viewStart        = 0;
@@ -88,11 +90,9 @@ function updateTicker() {
 
 function initChart() {
   const pc = document.getElementById('price-chart');
-  const vc = document.getElementById('volume-chart');
   const rc = document.getElementById('rsi-chart');
   const W  = pc.offsetWidth || 760;
   pc.width  = W;  pc.height  = 320;
-  vc.width  = W;  vc.height  = 80;
   if (rc) { rc.width = W; rc.height = 80; }
   setupEvents(pc);
   redraw();
@@ -101,7 +101,6 @@ function initChart() {
 function redraw() {
   if (showCandles) drawCandles();
   else drawPrice();
-  if (showVolume) drawVolume();
   if (showRSI) drawRSI();
   if (_patternMode && _lastCandles.length) drawPatternOverlay();
 }
@@ -128,15 +127,17 @@ function drawPrice() {
   const isUp   = prices[prices.length - 1] >= prices[0];
   const color  = isUp ? '#00b36b' : '#e03131';
 
+  const pBot = priceBot(H);
   const xOf = i => PAD.left + (i / Math.max(n - 1, 1)) * (W - PAD.left - PAD.right);
-  const yOf = p => PAD.top  + (1 - (p - minP) / pRange) * (H - PAD.top - PAD.bottom);
+  const yOf = p => PAD.top  + (1 - (p - minP) / pRange) * (pBot - PAD.top);
+  const barW = Math.max(1, (W - PAD.left - PAD.right) / n * 0.7);
 
   ctx.clearRect(0, 0, W, H);
   ctx.font = '11px Arial';
 
   // Grid + Y labels
   for (let g = 0; g <= 4; g++) {
-    const yp    = PAD.top + (g / 4) * (H - PAD.top - PAD.bottom);
+    const yp    = PAD.top + (g / 4) * (pBot - PAD.top);
     const price = maxP - (g / 4) * pRange;
     ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD.left, yp); ctx.lineTo(W - PAD.right, yp); ctx.stroke();
@@ -154,10 +155,10 @@ function drawPrice() {
   ctx.stroke();
 
   // Gradient fill
-  ctx.lineTo(xOf(n - 1), H - PAD.bottom);
-  ctx.lineTo(xOf(0), H - PAD.bottom);
+  ctx.lineTo(xOf(n - 1), pBot);
+  ctx.lineTo(xOf(0), pBot);
   ctx.closePath();
-  const grad = ctx.createLinearGradient(0, PAD.top, 0, H - PAD.bottom);
+  const grad = ctx.createLinearGradient(0, PAD.top, 0, pBot);
   grad.addColorStop(0, color + '35');
   grad.addColorStop(1, color + '04');
   ctx.fillStyle = grad; ctx.fill();
@@ -165,10 +166,13 @@ function drawPrice() {
   // Moving average overlay
   drawMAOverlay(ctx, W, H);
 
+  // Volume bars in the bottom band (only when showVolume is on)
+  drawVolume(ctx, W, H, data, r => r[2] || 0, xOf, barW, isUp);
+
   // X-axis labels
   drawXLabels(ctx, data, W, H, xOf);
 
-  // Hover crosshair
+  // Hover crosshair — spans price + volume bands
   if (hoverIdx !== null) {
     const li = hoverIdx - viewStart;
     if (li >= 0 && li < n) {
@@ -221,7 +225,9 @@ function drawXLabels(ctx, data, W, H, xOf) {
 
 function drawTooltip(ctx, row, hx, W) {
   const d   = new Date(row[0]);
-  const tip = `${row[1].toFixed(2)}   ${d.toLocaleDateString('en', { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}`;
+  const dt  = `${d.toLocaleDateString('en', { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}`;
+  let tip   = `${row[1].toFixed(2)}   ${dt}`;
+  if (showVolume) tip += `   Vol: ${fmtVol(row[2] || 0)}`;
   ctx.font = 'bold 11.5px Arial';
   const tw = ctx.measureText(tip).width;
   const tx = Math.min(hx + 10, W - tw - 20);
@@ -315,12 +321,13 @@ function drawMAOverlay(ctx, W, H) {
   const minP   = Math.min(...prices);
   const maxP   = Math.max(...prices);
   const pRange = maxP - minP || 1;
+  const pBot   = priceBot(H);
   const xOf    = i => PAD.left + (i / Math.max(n - 1, 1)) * (W - PAD.left - PAD.right);
-  const yOf    = p => PAD.top  + (1 - (p - minP) / pRange) * (H - PAD.top - PAD.bottom);
+  const yOf    = p => PAD.top  + (1 - (p - minP) / pRange) * (pBot - PAD.top);
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(PAD.left, PAD.top, W - PAD.left - PAD.right, H - PAD.top - PAD.bottom);
+  ctx.rect(PAD.left, PAD.top, W - PAD.left - PAD.right, pBot - PAD.top);
   ctx.clip();
 
   [20, 50, 200].forEach(period => {
@@ -347,7 +354,7 @@ function drawMAOverlay(ctx, W, H) {
     const val = ma[viewEnd];
     if (val === null) return;
     const py = yOf(val);
-    if (py < PAD.top || py > H - PAD.bottom) return;
+    if (py < PAD.top || py > pBot) return;
     ctx.fillStyle = MA_COLORS[period]; ctx.textAlign = 'right'; ctx.font = 'bold 9px Arial';
     ctx.fillText('MA' + period, PAD.left - 2, py + 3);
   });
@@ -448,35 +455,39 @@ function toggleRSI() {
 
 // ── Volume chart ──────────────────────────────────────────────────────────────
 
-function drawVolume() {
-  const canvas = document.getElementById('volume-chart');
-  const ctx    = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  const data = visData();
-  if (!data.length) return;
-
-  const vols  = data.map(r => r[2] || 0);
+// Overlay volume bars in the bottom band of the price-chart canvas.
+// Called from drawPrice() and drawCandles() after the price area is drawn.
+//   items  – array of items (price rows or candles)
+//   getVol – fn(item) → volume number
+//   xOf    – x-position function matching the items above (same one used to
+//            place the price points / candles, so bars line up vertically)
+//   barW   – width of each bar
+//   isUp   – boolean used to pick the base bar colour
+function drawVolume(ctx, W, H, items, getVol, xOf, barW, isUp) {
+  if (!showVolume || !items.length) return;
+  const vols = items.map(getVol);
   // Cap at 95th-percentile so closing-auction spikes don't crush the scale
   const sorted = [...vols].sort((a, b) => a - b);
-  const maxV  = sorted[Math.floor(sorted.length * 0.95)] || Math.max(...vols) || 1;
-  const n     = data.length;
-  const isUp  = data[data.length - 1][1] >= data[0][1];
-  const color = isUp ? '#00b36b' : '#e03131';
-  const vpad  = { top: 8, right: PAD.right, bottom: 20, left: PAD.left };
+  const maxV   = sorted[Math.floor(sorted.length * 0.95)] || Math.max(...vols) || 1;
+  const color  = isUp ? '#00b36b' : '#e03131';
 
-  const xOf  = i => vpad.left + (i / Math.max(n - 1, 1)) * (W - vpad.left - vpad.right);
-  const barW = Math.max(1, (W - vpad.left - vpad.right) / n * 0.7);
+  const top   = priceBot(H);          // top of the volume band
+  const bot   = H - PAD.bottom;       // bottom of the volume band
+  const bandH = bot - top - 4;        // tiny 4px gap above bars
 
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#bbb'; ctx.font = '10px Arial'; ctx.textAlign = 'right';
-  ctx.fillText(fmtVol(maxV), vpad.left - 4, vpad.top + 10);
+  // Thin separator + max-volume label on the left axis
+  ctx.strokeStyle = '#e8ecf5'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD.left, top); ctx.lineTo(W - PAD.right, top); ctx.stroke();
+  ctx.fillStyle = '#8a94a6'; ctx.font = '10px Arial'; ctx.textAlign = 'right';
+  ctx.fillText(fmtVol(maxV), PAD.left - 6, top + 11);
 
-  data.forEach((r, i) => {
-    const bH = Math.min((r[2] || 0) / maxV, 1) * (H - vpad.top - vpad.bottom);
+  items.forEach((item, i) => {
+    const v  = getVol(item) || 0;
+    const bH = Math.min(v / maxV, 1) * bandH;
     const x  = xOf(i) - barW / 2;
     const hi = hoverIdx !== null && (hoverIdx - viewStart) === i;
     ctx.fillStyle = hi ? color : color + '70';
-    ctx.fillRect(x, H - vpad.bottom - bH, barW, bH);
+    ctx.fillRect(x, bot - bH, barW, bH);
   });
 }
 
@@ -541,15 +552,16 @@ function drawCandles() {
   const pRange = maxP - minP || 1;
   const slotW  = (W - PAD.left - PAD.right) / n;
   const bodyW  = Math.max(2, slotW * 0.62);
+  const pBot   = priceBot(H);
   const xOf    = i => PAD.left + (i + 0.5) * slotW;
-  const yOf    = p => PAD.top  + (1 - (p - minP) / pRange) * (H - PAD.top - PAD.bottom);
+  const yOf    = p => PAD.top  + (1 - (p - minP) / pRange) * (pBot - PAD.top);
 
   ctx.clearRect(0, 0, W, H);
   ctx.font = '11px Arial';
 
   // Grid + Y labels
   for (let g = 0; g <= 4; g++) {
-    const yp    = PAD.top + (g / 4) * (H - PAD.top - PAD.bottom);
+    const yp    = PAD.top + (g / 4) * (pBot - PAD.top);
     const price = maxP - (g / 4) * pRange;
     ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD.left, yp); ctx.lineTo(W - PAD.right, yp); ctx.stroke();
@@ -592,6 +604,10 @@ function drawCandles() {
   // Moving average overlay
   drawMAOverlay(ctx, W, H);
 
+  // Volume bars aligned under each candle (only when showVolume is on)
+  const trendUp = candles[candles.length - 1].close >= candles[0].open;
+  drawVolume(ctx, W, H, candles, c => c.vol, xOf, bodyW, trendUp);
+
   // X-axis labels (reuse existing, map candle timestamps as fake rows)
   drawXLabels(ctx, candles.map(c => [c.ts, c.close, c.vol]), W, H, xOf);
 
@@ -611,6 +627,7 @@ function drawCandleTooltip(ctx, c, hx, W) {
     `O: ${c.open.toFixed(2)}   H: ${c.high.toFixed(2)}`,
     `L: ${c.low.toFixed(2)}   C: ${c.close.toFixed(2)}`,
   ];
+  if (showVolume) lines.push(`Vol: ${fmtVol(c.vol || 0)}`);
   ctx.font = 'bold 11px Arial';
   const maxW  = Math.max(...lines.map(l => ctx.measureText(l).width));
   const lineH = 16;
@@ -726,15 +743,8 @@ function resetZoom() {
 
 function toggleVolume() {
   showVolume = !showVolume;
-  const vc  = document.getElementById('volume-chart');
-  const btn = document.getElementById('btn-vol');
-  vc.style.display = showVolume ? 'block' : 'none';
-  btn.classList.toggle('active', showVolume);
-  if (showVolume) {
-    vc.width  = document.getElementById('price-chart').width;
-    vc.height = 80;
-    drawVolume();
-  }
+  document.getElementById('btn-vol').classList.toggle('active', showVolume);
+  redraw();
 }
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
@@ -1300,8 +1310,9 @@ function drawPatternOverlay() {
   const maxP   = Math.max(...allP);
   const pRange = maxP - minP || 1;
   const slotW  = (W - PAD.left - PAD.right) / n;
+  const pBot   = priceBot(H);
   const xOf    = i => PAD.left + (i + 0.5) * slotW;
-  const yOf    = p => PAD.top  + (1 - (p - minP) / pRange) * (H - PAD.top - PAD.bottom);
+  const yOf    = p => PAD.top  + (1 - (p - minP) / pRange) * (pBot - PAD.top);
 
   // Group patterns by nearest candle in _lastCandles (handles TF mismatch)
   const byCandle = {};

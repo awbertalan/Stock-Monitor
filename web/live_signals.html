@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Signals</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: #f0f3fa; max-width: 1200px; }
+
+    h2 { color: #1a1f36; letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #8a94a6; margin-bottom: 20px; }
+
+    /* Top stats row */
+    .stat-row {
+      display: flex; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+    .stat-card {
+      flex: 1; min-width: 140px;
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .stat-label {
+      font-size: 10px; color: #8a94a6;
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
+    }
+    .stat-value {
+      font-size: 22px; font-weight: bold; color: #1a1f36;
+      letter-spacing: -0.5px; line-height: 1.1;
+    }
+    .stat-sub { font-size: 11px; color: #8a94a6; margin-top: 4px; }
+    .up   { color: #16c784; }
+    .down { color: #ea3943; }
+    .neutral { color: #0052cc; }
+
+    .toolbar {
+      display: flex; gap: 8px; align-items: center; margin-bottom: 16px;
+    }
+    .toolbar button {
+      background: #0052cc; color: #fff; border: none; border-radius: 6px;
+      padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+      font-family: Arial, sans-serif;
+    }
+    .toolbar button:hover:not(:disabled) { background: #003d99; }
+    .toolbar button:disabled { background: #aab2c2; cursor: not-allowed; }
+    .toolbar .meta {
+      font-size: 12px; color: #8a94a6; margin-left: auto;
+    }
+    .pill {
+      display: inline-block; padding: 3px 8px; border-radius: 10px;
+      font-size: 10px; font-weight: bold; text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .pill-on  { background: #e6f6ee; color: #1a8042; }
+    .pill-off { background: #fce8ea; color: #b32a36; }
+    .pill-warn { background: #fff4d6; color: #8a5a00; }
+    .pill-info { background: #e8f0fe; color: #0052cc; }
+
+    /* Section heads */
+    .section-title {
+      font-size: 11px; font-weight: bold; color: #8a94a6;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin: 22px 0 8px;
+    }
+
+    /* Tables */
+    .table-wrap {
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      overflow: hidden;
+    }
+    table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sig-table th {
+      text-align: left; padding: 9px 12px; font-size: 10px; font-weight: bold;
+      color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px;
+      border-bottom: 1px solid #e8ecf5; background: #fafbfd;
+      white-space: nowrap;
+    }
+    .sig-table td { padding: 10px 12px; border-bottom: 1px solid #f4f6fb; color: #1a1f36; }
+    .sig-table tr:last-child td { border-bottom: none; }
+    .sig-table tr:hover td { background: #f8faff; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ticker { font-weight: 600; }
+    .ticker-link { color: inherit; text-decoration: none; border-bottom: 1px dotted transparent; }
+    .ticker-link:hover { color: #0052cc; border-bottom-color: #0052cc; }
+    .small  { font-size: 11px; color: #8a94a6; }
+    .empty-row { text-align: center; color: #8a94a6; padding: 24px; font-style: italic; }
+    .pagination {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 12px; padding: 10px 12px 4px; font-size: 12px;
+    }
+    .page-btn {
+      padding: 6px 12px; border: 1px solid #dde1ec; border-radius: 6px;
+      background: #fff; color: #555; cursor: pointer;
+      font-family: Arial, sans-serif; font-size: 12px;
+    }
+    .page-btn:hover:not(:disabled) { border-color: #0052cc; color: #0052cc; }
+    .page-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: default; }
+    .page-info { color: #8a94a6; font-variant-numeric: tabular-nums; }
+
+    /* Analytics panels (equity curve + breakdowns) */
+    .equity-card {
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      padding: 14px 18px; margin-bottom: 14px;
+    }
+    .equity-stats {
+      display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px;
+      font-size: 12px; color: #8a94a6;
+    }
+    .equity-stats strong { color: #1a1f36; font-variant-numeric: tabular-nums; }
+    .equity-stats .up   { color: #1a8042; }
+    .equity-stats .down { color: #b32a36; }
+    #equity-curve { display: block; width: 100%; height: 180px; }
+
+    .analytics-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 14px; margin-bottom: 14px;
+    }
+    .analytics-panel {
+      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .analytics-panel.span-2 { grid-column: span 2; }
+    .panel-title {
+      font-size: 11px; font-weight: 600; color: #8a94a6;
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 10px;
+    }
+    .analytics-panel table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .analytics-panel th {
+      text-align: left; padding: 6px 8px;
+      color: #8a94a6; font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.4px; border-bottom: 1px solid #e8ecf5; font-weight: 600;
+    }
+    .analytics-panel td { padding: 6px 8px; border-bottom: 1px solid #f4f6fb; color: #1a1f36; }
+    .analytics-panel tr:last-child td { border-bottom: none; }
+    @media (max-width: 720px) {
+      .analytics-grid { grid-template-columns: 1fr; }
+      /* Drop low-priority columns so the actionable ones (Ticker, Action,
+         Suggested bid, TP, SL, Reason) fit without long horizontal scroll */
+      .sig-table .mobile-hide { display: none; }
+    }
+
+    /* Log panel */
+    #log-panel {
+      background: #1a1f36; color: #c0ccee; border-radius: 10px;
+      padding: 14px 16px; font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 11.5px; line-height: 1.5;
+      max-height: 420px; overflow-y: auto;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    #log-panel .log-empty { color: #6b7596; font-style: italic; }
+
+    .reason-TP      { background: #e6f6ee; color: #1a8042; }
+    .reason-SL      { background: #fce8ea; color: #b32a36; }
+    .reason-TIMEOUT { background: #f0f0f5; color: #555;   }
+
+    /* Approve toggle */
+    .approve-btn {
+      background: #fff; color: #0052cc; border: 1px solid #c0ccee;
+      border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+      cursor: pointer; font-family: Arial, sans-serif;
+    }
+    .approve-btn:hover { background: #f0f3fa; }
+    .approve-btn.approved { background: #1a8042; color: #fff; border-color: #1a8042; }
+    .approve-btn.approved:hover { background: #156634; }
+    .sell-btn {
+      background: #fff; color: #b08000; border: 1px solid #e0c060;
+      border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+      cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap;
+    }
+    .sell-btn:hover:not(:disabled) { background: #fff4d6; }
+    .sell-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: not-allowed; background: #fff; }
+    .sell-btn.queued { background: #b08000; color: #fff; border-color: #b08000; }
+    .sell-btn.queued:hover { background: #8a6500; }
+    .tag-std      { background: #e8f0fe; color: #0052cc; }
+    .tag-std-high { background: #e6f6ee; color: #0a7c4b; }
+    .tag-deep-pb  { background: #f3effe; color: #7a4dcc; }
+    .tag-val      { background: #e8f0fe; color: #0052cc; }
+    .tag-forced   { background: #fff4d6; color: #8a5a00; }
+    .src-auto { color: #8a94a6; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .src-user { color: #b08000; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; font-weight: 600; }
+    .approved-summary {
+      font-size: 12px; color: #555; margin: 8px 0 12px;
+    }
+    .approved-summary .chip {
+      display: inline-block; background: #e6f6ee; color: #1a8042;
+      border-radius: 10px; padding: 2px 9px; margin: 2px 4px 2px 0;
+      font-size: 11px; font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <h2>Live Signals</h2>
+  <p class="subtitle">Paper-trade engine — VALIDATED mean-reversion (TP +2% / SL −2% / 7d max hold · DoD ≤ −1% · not at 5d high · no-Friday)</p>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live-signals" class="active">Live Signals</a>
+    <a href="/live-patterns">Live Patterns</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Equity</div>
+      <div class="stat-value" id="stat-equity">—</div>
+      <div class="stat-sub" id="stat-equity-sub">&nbsp;</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Cash</div>
+      <div class="stat-value" id="stat-cash">—</div>
+      <div class="stat-sub" id="stat-cash-sub">&nbsp;</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open positions</div>
+      <div class="stat-value" id="stat-open">—</div>
+      <div class="stat-sub" id="stat-open-sub">&nbsp;</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value" id="stat-realized">—</div>
+      <div class="stat-sub" id="stat-realized-sub">&nbsp;</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win rate</div>
+      <div class="stat-value" id="stat-wr">—</div>
+      <div class="stat-sub" id="stat-wr-sub">&nbsp;</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <button id="btn-run" onclick="runNow()">Run now</button>
+    <span class="pill" id="pill-market">—</span>
+    <span class="pill" id="pill-lag" title="Lag between latest trade in the feed and real time">—</span>
+    <span class="pill" id="pill-spx" title="Most recent S&P 500 daily return — tape-regime context only, not used as a filter (smoketest 2026-05-23)">—</span>
+    <span class="meta" id="meta-text">—</span>
+  </div>
+
+  <div class="section-title">New signals (latest run)</div>
+  <div class="table-wrap">
+    <table class="sig-table" id="newsig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Action</th>
+          <th class="num mobile-hide">Last</th>
+          <th class="num mobile-hide">Bid</th>
+          <th class="num mobile-hide">Ask</th>
+          <th class="num">Suggested bid</th>
+          <th class="num mobile-hide">Spread</th>
+          <th class="num">TP</th>
+          <th class="num">SL</th>
+          <th>Signal / Reason</th>
+        </tr>
+      </thead>
+      <tbody id="newsig-body">
+        <tr><td colspan="10" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Watchlist signals — approve to trade (min 35k SEK buy-in)</div>
+  <div class="approved-summary" id="approved-summary">No watchlist tickers approved yet.</div>
+  <div class="table-wrap">
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Tag</th>
+          <th class="num">Last</th>
+          <th class="num">DoD</th>
+          <th class="num">At 5d high</th>
+          <th class="num">20d ret</th>
+          <th>Approve for trading</th>
+        </tr>
+      </thead>
+      <tbody id="watchlist-body">
+        <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Near-misses — approve to override filter</div>
+  <div class="approved-summary" id="forced-summary">No filter overrides queued.</div>
+  <div class="table-wrap">
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th class="num">DoD</th>
+          <th class="num mobile-hide">At 5d high</th>
+          <th class="num mobile-hide">Friday</th>
+          <th class="num">20d ret</th>
+          <th>Fails</th>
+          <th>Override</th>
+        </tr>
+      </thead>
+      <tbody id="nearmiss-body">
+        <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Open positions</div>
+  <div class="table-wrap">
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th class="num mobile-hide">Shares</th>
+          <th class="num mobile-hide">Entry</th>
+          <th class="num">Now</th>
+          <th class="num">P&amp;L</th>
+          <th class="num mobile-hide">TP</th>
+          <th class="num mobile-hide">SL</th>
+          <th class="mobile-hide">Exit by</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="open-body">
+        <tr><td colspan="9" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Live quotes (tracked tickers)</div>
+  <div class="table-wrap">
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th class="num">Last</th>
+          <th class="num">Bid</th>
+          <th class="num">Ask</th>
+          <th class="num">Spread</th>
+          <th class="num">Day %</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody id="quotes-body">
+        <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Closed trades</div>
+  <div class="table-wrap">
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th class="mobile-hide">Source</th>
+          <th>Entry → Exit</th>
+          <th class="num">Hold</th>
+          <th class="num mobile-hide">Entry</th>
+          <th class="num mobile-hide">Exit</th>
+          <th class="num">Return</th>
+          <th class="num">P&amp;L (SEK)</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody id="closed-body">
+        <tr><td colspan="9" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div class="pagination" id="closed-pagination" style="display:none;">
+      <button class="page-btn" id="closed-prev" onclick="closedPageChange(-1)">‹ Prev</button>
+      <span class="page-info" id="closed-page-info">Page 1 of 1</span>
+      <button class="page-btn" id="closed-next" onclick="closedPageChange(1)">Next ›</button>
+    </div>
+  </div>
+
+  <div class="section-title">Equity curve</div>
+  <div class="equity-card" id="equity-card" style="display:none;">
+    <svg id="equity-curve" viewBox="0 0 800 160" preserveAspectRatio="none"></svg>
+    <div class="equity-stats" id="equity-stats"></div>
+  </div>
+
+  <div class="section-title">Performance breakdown</div>
+  <div class="analytics-grid" id="analytics-grid" style="display:none;">
+    <div class="analytics-panel span-2">
+      <div class="panel-title">By entry source — automated engine vs user-approved</div>
+      <table>
+        <thead>
+          <tr><th>Source</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th></tr>
+        </thead>
+        <tbody id="source-body"></tbody>
+      </table>
+    </div>
+    <div class="analytics-panel">
+      <div class="panel-title">By conviction</div>
+      <table>
+        <thead>
+          <tr><th>Tier</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th></tr>
+        </thead>
+        <tbody id="conviction-body"></tbody>
+      </table>
+    </div>
+    <div class="analytics-panel">
+      <div class="panel-title">By ticker</div>
+      <table>
+        <thead>
+          <tr><th>Ticker</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th></tr>
+        </thead>
+        <tbody id="ticker-stats-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section-title">Latest run log</div>
+  <div id="log-panel"><span class="log-empty">Loading…</span></div>
+
+  <script src="/nav.js"></script>
+  <script>
+    const fmt = (n, d=0) => Number(n).toLocaleString('sv-SE', {maximumFractionDigits:d, minimumFractionDigits:d});
+    // Compact-format an ISO timestamp like "2026-05-19T10:23:45" -> "2026-05-19 10:23:45"
+    const fmtTs = ts => ts ? String(ts).replace('T', ' ').slice(0, 19) : '';
+    const pct = (n, d=2) => `${n>=0?'+':''}${(n*100).toFixed(d)}%`;
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const cls = n => n > 0 ? 'up' : (n < 0 ? 'down' : 'neutral');
+    const sign = n => n >= 0 ? `+${fmt(n,0)}` : fmt(n,0);
+
+    let approvedSet  = new Set();
+    let forcedSet    = new Set();
+    let forceSellSet = new Set();
+    const SELL_MIN_RET = 0.0075;   // UI gate: button enabled only at ≥+0.75% unrealized
+    let lastWatchlistHits = [];
+    let lastNearMisses    = [];
+    let tickerPaths = {};
+    let closedSortedCache = [];
+    let closedPage = 1;
+    const CLOSED_PAGE_SIZE = 20;
+
+    function tickerLink(name) {
+      const path = tickerPaths[name];
+      if (!path) return esc(name);
+      return `<a href="/view?path=${encodeURIComponent(path)}" class="ticker-link">${esc(name)}</a>`;
+    }
+
+    async function refresh() {
+      try {
+        const [pf, log, approved, forced, sellQueue] = await Promise.all([
+          fetch('/live-portfolio').then(r => r.json()),
+          fetch('/live-log').then(r => r.json()),
+          fetch('/live-approved').then(r => r.json()).catch(() => []),
+          fetch('/live-force-entry').then(r => r.json()).catch(() => []),
+          fetch('/live-force-sell').then(r => r.json()).catch(() => []),
+        ]);
+        approvedSet  = new Set(Array.isArray(approved) ? approved : []);
+        forcedSet    = new Set(Array.isArray(forced)   ? forced   : []);
+        forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
+        renderPortfolio(pf);
+        renderLog(log);
+        renderWatchlist();
+        renderNearMisses();
+      } catch (e) {
+        console.error('refresh failed', e);
+      }
+    }
+
+    function tagFor(info) {
+      if (!info) return { label: '[VAL]', cls: 'tag-val' };
+      const wl = info.from_watchlist ? '-WL' : '';
+      if (info.entry_tag === 'forced')        return { label: '[FORCED'  + wl + ']', cls: 'tag-forced'   };
+      if (info.entry_tag === 'validated')     return { label: '[VAL'     + wl + ']', cls: 'tag-val'      };
+      if (info.entry_tag === 'deep-pullback') return { label: '[DEEP-PB' + wl + ']', cls: 'tag-deep-pb'  };
+      if (info.conviction === 'high')         return { label: '[STD/HIGH'+ wl + ']', cls: 'tag-std-high' };
+      return { label: '[STD' + wl + ']', cls: 'tag-std' };
+    }
+
+    // Classify a closed/open trade by how it was entered:
+    //   "forced"    — user clicked Override on a near-miss (bypassed filter)
+    //   "watchlist" — user approved a mid/small-cap; filter still had to pass
+    //   "auto"      — primary-universe entry, filter passed without user input
+    // Used by the "By entry source" breakdown and the Source column on the
+    // closed-trades table so it's clear at a glance whether the engine or the
+    // user is generating the P&L.
+    function entrySource(t) {
+      const i = t.signal_info || {};
+      if (i.forced) return 'forced';
+      if (i.from_watchlist) return 'watchlist';
+      return 'auto';
+    }
+    function sourceLabel(s) {
+      return s === 'forced' ? 'User (forced)'
+           : s === 'watchlist' ? 'User (watchlist)'
+           : 'Auto';
+    }
+
+    function renderWatchlist() {
+      const body = document.getElementById('watchlist-body');
+      const summary = document.getElementById('approved-summary');
+      const hits = lastWatchlistHits;
+
+      // Build the union of (current watchlist signals) + (already-approved tickers
+      // that didn't appear in the latest hits list) so the user can always toggle
+      // off something they previously approved, even if it isn't signalling now.
+      const byTicker = new Map();
+      hits.forEach(h => byTicker.set(h.ticker, h));
+      approvedSet.forEach(t => {
+        if (!byTicker.has(t)) byTicker.set(t, { ticker: t, last: null, info: null, _stale: true });
+      });
+      const rows = [...byTicker.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="7" class="empty-row">No watchlist signals in the latest run</td></tr>';
+      } else {
+        body.innerHTML = rows.map(w => {
+          const tag = tagFor(w.info);
+          const isApproved = approvedSet.has(w.ticker);
+          const stale = w._stale ? ' <span class="small">(not signalling)</span>' : '';
+          const i = w.info || {};
+          return `
+            <tr>
+              <td class="ticker">${tickerLink(w.ticker)}${stale}</td>
+              <td><span class="pill ${tag.cls}">${tag.label}</span></td>
+              <td class="num">${w.last != null ? fmt(w.last, 2) : '—'}</td>
+              <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
+              <td class="num">${i.at_5d_high ? 'yes' : 'no'}</td>
+              <td class="num ${i.ret_20d != null ? cls(i.ret_20d) : ''}">${i.ret_20d != null ? pct(i.ret_20d, 1) : '—'}</td>
+              <td>
+                <button class="approve-btn${isApproved ? ' approved' : ''}"
+                        onclick="toggleApprove('${esc(w.ticker)}', this)">
+                  ${isApproved ? '✓ Approved' : 'Approve'}
+                </button>
+              </td>
+            </tr>`;
+        }).join('');
+      }
+
+      if (!approvedSet.size) {
+        summary.textContent = 'No watchlist tickers approved yet — approved tickers become tradable on the next signal check.';
+      } else {
+        const chips = [...approvedSet].sort().map(t => `<span class="chip">${esc(t)}</span>`).join('');
+        summary.innerHTML = `<strong>${approvedSet.size} approved for trading:</strong> ${chips}`;
+      }
+    }
+
+    async function toggleApprove(ticker, btn) {
+      const adding = !approvedSet.has(ticker);
+      btn.disabled = true;
+      try {
+        const res = await fetch('/live-approved', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
+        }).then(r => r.json());
+        if (res && res.ok) {
+          approvedSet = new Set(res.approved || []);
+          renderWatchlist();
+        }
+      } catch (e) {
+        console.error('toggle failed', e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderNearMisses() {
+      const body    = document.getElementById('nearmiss-body');
+      const summary = document.getElementById('forced-summary');
+      // Union of (current near-misses) + (already-approved overrides not in the
+      // latest near-miss list — e.g. approved earlier, no longer signalling).
+      const byTicker = new Map();
+      lastNearMisses.forEach(nm => byTicker.set(nm.ticker, nm));
+      forcedSet.forEach(t => {
+        if (!byTicker.has(t)) byTicker.set(t, { ticker: t, info: {}, fails: [], _stale: true });
+      });
+      const rows = [...byTicker.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="7" class="empty-row">No near-misses in the latest run</td></tr>';
+      } else {
+        body.innerHTML = rows.map(nm => {
+          const i = nm.info || {};
+          const isForced = forcedSet.has(nm.ticker);
+          const stale    = nm._stale ? ' <span class="small">(no longer near-miss)</span>' : '';
+          const failsStr = (nm.fails || []).join(', ') || 'borderline';
+          return `
+            <tr>
+              <td class="ticker">${tickerLink(nm.ticker)}${stale}</td>
+              <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
+              <td class="num mobile-hide">${i.at_5d_high ? 'yes' : 'no'}</td>
+              <td class="num mobile-hide">${i.is_friday  ? 'yes' : 'no'}</td>
+              <td class="num ${i.ret_20d != null ? cls(i.ret_20d) : ''}">${i.ret_20d != null ? pct(i.ret_20d, 1) : '—'}</td>
+              <td class="small">${esc(failsStr)}</td>
+              <td>
+                <button class="approve-btn${isForced ? ' approved' : ''}"
+                        onclick="toggleForceEntry('${esc(nm.ticker)}', this)">
+                  ${isForced ? '✓ Override' : 'Override'}
+                </button>
+              </td>
+            </tr>`;
+        }).join('');
+      }
+
+      if (!forcedSet.size) {
+        summary.textContent = 'No filter overrides queued. Approving a near-miss here will bypass the validated filter on the next run — one-shot, consumed on entry.';
+      } else {
+        const chips = [...forcedSet].sort().map(t => `<span class="chip">${esc(t)}</span>`).join('');
+        summary.innerHTML = `<strong>${forcedSet.size} override${forcedSet.size===1?'':'s'} queued:</strong> ${chips}`;
+      }
+    }
+
+    async function toggleForceEntry(ticker, btn) {
+      const adding = !forcedSet.has(ticker);
+      btn.disabled = true;
+      try {
+        const res = await fetch('/live-force-entry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
+        }).then(r => r.json());
+        if (res && res.ok) {
+          forcedSet = new Set(res.forced || []);
+          renderNearMisses();
+        }
+      } catch (e) {
+        console.error('toggle force-entry failed', e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function toggleForceSell(ticker, btn) {
+      const adding = !forceSellSet.has(ticker);
+      btn.disabled = true;
+      try {
+        const res = await fetch('/live-force-sell', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
+        }).then(r => r.json());
+        if (res && res.ok) {
+          forceSellSet = new Set(res.queued || []);
+          // Re-render open positions to reflect queued state immediately.
+          // Falling back to a full refresh() is simpler than mutating the
+          // current cached p object.
+          refresh();
+        }
+      } catch (e) {
+        console.error('toggle force-sell failed', e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderAnalytics(closed) {
+      const equityCard    = document.getElementById('equity-card');
+      const analyticsGrid = document.getElementById('analytics-grid');
+      if (!closed.length) {
+        equityCard.style.display = 'none';
+        analyticsGrid.style.display = 'none';
+        return;
+      }
+      equityCard.style.display    = '';
+      analyticsGrid.style.display = '';
+      renderSourceBreakdown(closed);
+      renderConvictionBreakdown(closed);
+      renderTickerStats(closed);
+      renderEquityCurve(closed);
+    }
+
+    function renderSourceBreakdown(closed) {
+      // Group by entrySource(); compute N / WR / Avg ret / total P&L per group.
+      // Always show all three rows when there are trades, even if a group is
+      // empty — makes the comparison stable as user-approved trades accumulate.
+      const groups = { auto: [], watchlist: [], forced: [] };
+      closed.forEach(t => groups[entrySource(t)].push(t));
+      const labels = {
+        auto:      'Automated',
+        watchlist: 'User (watchlist)',
+        forced:    'User (forced)',
+      };
+      const rows = ['auto', 'watchlist', 'forced'].map(k => {
+        const tr = groups[k];
+        if (!tr.length) {
+          return `
+            <tr>
+              <td>${labels[k]}</td>
+              <td class="num">0</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+            </tr>`;
+        }
+        const n      = tr.length;
+        const wins   = tr.filter(t => (t.pnl_sek || 0) > 0).length;
+        const wr     = wins / n;
+        const avgRet = tr.reduce((s, t) => s + (t.ret_pct || 0), 0) / n;
+        const total  = tr.reduce((s, t) => s + (t.pnl_sek || 0), 0);
+        return `
+          <tr>
+            <td>${labels[k]}</td>
+            <td class="num">${n}</td>
+            <td class="num ${wr >= 0.5 ? 'up' : (wr < 0.4 ? 'down' : '')}">${(wr*100).toFixed(0)}%</td>
+            <td class="num ${cls(avgRet)}">${pct(avgRet, 2)}</td>
+            <td class="num ${cls(total)}">${sign(total)}</td>
+          </tr>`;
+      }).join('');
+      document.getElementById('source-body').innerHTML =
+        rows || '<tr><td colspan="5" class="empty-row">No closed trades yet</td></tr>';
+    }
+
+    function renderConvictionBreakdown(closed) {
+      // Group by conviction tier; default missing → "normal"
+      const groups = { high: [], normal: [], low: [] };
+      closed.forEach(t => {
+        const c = (t.conviction || 'normal').toLowerCase();
+        if (groups[c]) groups[c].push(t);
+        else (groups.normal ||= []).push(t);
+      });
+      const labels = {
+        high:   '[STD/HIGH]',
+        normal: '[STD]',
+        low:    '[DEEP-PB]',
+      };
+      const rows = ['high', 'normal', 'low']
+        .filter(k => groups[k].length)
+        .map(k => {
+          const trades = groups[k];
+          const n      = trades.length;
+          const wins   = trades.filter(t => (t.pnl_sek || 0) > 0).length;
+          const wr     = wins / n;
+          const avgRet = trades.reduce((s, t) => s + (t.ret_pct || 0), 0) / n;
+          const total  = trades.reduce((s, t) => s + (t.pnl_sek || 0), 0);
+          return `
+            <tr>
+              <td>${labels[k]}</td>
+              <td class="num">${n}</td>
+              <td class="num ${wr >= 0.8 ? 'up' : (wr < 0.5 ? 'down' : '')}">${(wr*100).toFixed(0)}%</td>
+              <td class="num ${cls(avgRet)}">${pct(avgRet, 2)}</td>
+              <td class="num ${cls(total)}">${sign(total)}</td>
+            </tr>`;
+        }).join('');
+      document.getElementById('conviction-body').innerHTML =
+        rows || '<tr><td colspan="5" class="empty-row">No closed trades yet</td></tr>';
+    }
+
+    function renderTickerStats(closed) {
+      // Group by ticker
+      const byTicker = new Map();
+      closed.forEach(t => {
+        const arr = byTicker.get(t.ticker) || [];
+        arr.push(t);
+        byTicker.set(t.ticker, arr);
+      });
+      const rows = [...byTicker.entries()]
+        .map(([ticker, trades]) => {
+          const n      = trades.length;
+          const wins   = trades.filter(t => (t.pnl_sek || 0) > 0).length;
+          const wr     = wins / n;
+          const avgRet = trades.reduce((s, t) => s + (t.ret_pct || 0), 0) / n;
+          const total  = trades.reduce((s, t) => s + (t.pnl_sek || 0), 0);
+          return { ticker, n, wr, avgRet, total };
+        })
+        .sort((a, b) => b.total - a.total)   // best PnL first
+        .map(r => `
+          <tr>
+            <td class="ticker">${tickerLink(r.ticker)}</td>
+            <td class="num">${r.n}</td>
+            <td class="num ${r.wr >= 0.8 ? 'up' : (r.wr < 0.5 ? 'down' : '')}">${(r.wr*100).toFixed(0)}%</td>
+            <td class="num ${cls(r.avgRet)}">${pct(r.avgRet, 2)}</td>
+            <td class="num ${cls(r.total)}">${sign(r.total)}</td>
+          </tr>`).join('');
+      document.getElementById('ticker-stats-body').innerHTML =
+        rows || '<tr><td colspan="5" class="empty-row">No closed trades yet</td></tr>';
+    }
+
+    function renderEquityCurve(closed) {
+      // Sort by exit time ascending, build cumulative PnL series
+      const sorted = [...closed].sort((a, b) =>
+        ((a.exit_ts || a.exit_date || '') > (b.exit_ts || b.exit_date || '') ? 1 : -1));
+      let cum = 0;
+      const series = sorted.map(t => (cum += (t.pnl_sek || 0)));
+      const n = series.length;
+
+      const svg = document.getElementById('equity-curve');
+      // viewBox: 800 wide × 160 tall
+      const W = 800, H = 160, padL = 8, padR = 8, padT = 12, padB = 12;
+      const minV = Math.min(0, ...series);
+      const maxV = Math.max(0, ...series);
+      const range = (maxV - minV) || 1;
+      const xOf = i => padL + (n <= 1 ? (W - padL - padR) / 2 : (i / (n - 1)) * (W - padL - padR));
+      const yOf = v => padT + (1 - (v - minV) / range) * (H - padT - padB);
+      const zeroY = yOf(0);
+
+      const final = series[series.length - 1] || 0;
+      const color = final >= 0 ? '#1a8042' : '#b32a36';
+      const fill  = final >= 0 ? '#e6f6ee' : '#fce8ea';
+
+      const pts = series.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
+      const areaPts = `${xOf(0).toFixed(1)},${zeroY.toFixed(1)} ${pts} ${xOf(n-1).toFixed(1)},${zeroY.toFixed(1)}`;
+
+      svg.innerHTML = `
+        <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W-padR}" y2="${zeroY.toFixed(1)}"
+              stroke="#e8ecf5" stroke-width="1"/>
+        <polygon points="${areaPts}" fill="${fill}" opacity="0.7"/>
+        <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.8"
+                  stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${xOf(n-1).toFixed(1)}" cy="${yOf(final).toFixed(1)}" r="3.5" fill="${color}"/>
+      `;
+
+      // Footer stats
+      const wins   = sorted.filter(t => (t.pnl_sek || 0) > 0).length;
+      const losses = sorted.length - wins;
+      const peak   = Math.max(...series, 0);
+      const trough = Math.min(...series, 0);
+      let maxDD = 0, runningPeak = 0;
+      for (const v of series) {
+        if (v > runningPeak) runningPeak = v;
+        const dd = runningPeak - v;
+        if (dd > maxDD) maxDD = dd;
+      }
+      const finalCls = final >= 0 ? 'up' : 'down';
+      document.getElementById('equity-stats').innerHTML = `
+        <span>Realized: <strong class="${finalCls}">${sign(final)}</strong> SEK</span>
+        <span>Trades: <strong>${sorted.length}</strong>  (${wins}W / ${losses}L)</span>
+        <span>Peak: <strong>${sign(peak)}</strong> · Trough: <strong>${sign(trough)}</strong></span>
+        <span>Max drawdown: <strong class="down">−${fmt(maxDD, 0)}</strong> SEK</span>
+      `;
+    }
+
+    function renderClosedPage() {
+      const closedBody = document.getElementById('closed-body');
+      const pager      = document.getElementById('closed-pagination');
+      const sorted     = closedSortedCache;
+
+      if (!sorted.length) {
+        closedBody.innerHTML = '<tr><td colspan="9" class="empty-row">No closed trades yet</td></tr>';
+        pager.style.display = 'none';
+        return;
+      }
+
+      const totalPages = Math.max(1, Math.ceil(sorted.length / CLOSED_PAGE_SIZE));
+      if (closedPage > totalPages) closedPage = totalPages;
+      if (closedPage < 1) closedPage = 1;
+      const start = (closedPage - 1) * CLOSED_PAGE_SIZE;
+      const pageRows = sorted.slice(start, start + CLOSED_PAGE_SIZE);
+
+      closedBody.innerHTML = pageRows.map(t => {
+        const inLabel  = fmtTs(t.entry_ts) || t.entry_date || '';
+        const outLabel = fmtTs(t.exit_ts)  || t.exit_date  || '';
+        const src      = entrySource(t);
+        const srcCls   = src === 'auto' ? 'src-auto' : 'src-user';
+        return `
+        <tr>
+          <td class="ticker">${tickerLink(t.ticker)}</td>
+          <td class="mobile-hide ${srcCls}" title="${sourceLabel(src)}">${src === 'auto' ? 'Auto' : 'User'}</td>
+          <td class="small">${esc(inLabel)}<br>→ ${esc(outLabel)}</td>
+          <td class="num">${esc(closedHold(t))}</td>
+          <td class="num mobile-hide">${fmt(t.entry_price, 2)}</td>
+          <td class="num mobile-hide">${fmt(t.exit_price, 2)}</td>
+          <td class="num ${cls(t.ret_pct)}">${pct(t.ret_pct)}</td>
+          <td class="num ${cls(t.pnl_sek)}">${sign(t.pnl_sek)}</td>
+          <td><span class="pill reason-${esc(t.reason || '')}">${esc(t.reason || '')}</span></td>
+        </tr>`;
+      }).join('');
+
+      // Pager visible only when there's more than one page worth of trades
+      if (sorted.length <= CLOSED_PAGE_SIZE) {
+        pager.style.display = 'none';
+      } else {
+        pager.style.display = '';
+        const firstIdx = start + 1;
+        const lastIdx  = start + pageRows.length;
+        document.getElementById('closed-page-info').textContent =
+          `Showing ${firstIdx}–${lastIdx} of ${sorted.length}  ·  Page ${closedPage} of ${totalPages}`;
+        document.getElementById('closed-prev').disabled = closedPage <= 1;
+        document.getElementById('closed-next').disabled = closedPage >= totalPages;
+      }
+    }
+
+    function closedPageChange(delta) {
+      closedPage += delta;
+      renderClosedPage();
+    }
+
+    function renderPortfolio(p) {
+      const WALLET_START = 500000;
+      const cash = p.cash || 0;
+      const positions = p.positions || {};
+      const closed = p.closed_trades || [];
+      lastWatchlistHits = Array.isArray(p.last_watchlist_hits) ? p.last_watchlist_hits : [];
+      lastNearMisses    = Array.isArray(p.last_near_misses)    ? p.last_near_misses    : [];
+      tickerPaths = (p.ticker_paths && typeof p.ticker_paths === 'object') ? p.ticker_paths : {};
+
+      const openVal = Object.values(positions).reduce((s, pos) => s + (pos.shares * pos.entry_price), 0);
+      const equity = cash + openVal;
+      const totalRet = equity / WALLET_START - 1;
+
+      const realized = closed.reduce((s, t) => s + (t.pnl_sek || 0), 0);
+      const wins = closed.filter(t => (t.pnl_sek || 0) > 0).length;
+      const wr = closed.length ? wins / closed.length : null;
+
+      document.getElementById('stat-equity').textContent = fmt(equity, 0) + ' SEK';
+      const eqSub = document.getElementById('stat-equity-sub');
+      eqSub.textContent = pct(totalRet) + ' total';
+      eqSub.className = 'stat-sub ' + cls(totalRet);
+
+      document.getElementById('stat-cash').textContent = fmt(cash, 0) + ' SEK';
+      document.getElementById('stat-cash-sub').textContent = `${Object.keys(positions).length} live, ${closed.length} closed`;
+
+      document.getElementById('stat-open').textContent = Object.keys(positions).length;
+      document.getElementById('stat-open-sub').textContent = fmt(openVal, 0) + ' SEK deployed';
+
+      const realEl = document.getElementById('stat-realized');
+      realEl.textContent = sign(realized) + ' SEK';
+      realEl.className = 'stat-value ' + cls(realized);
+      document.getElementById('stat-realized-sub').textContent = `${closed.length} trade${closed.length===1?'':'s'}`;
+
+      const wrEl = document.getElementById('stat-wr');
+      if (wr === null) {
+        wrEl.textContent = '—';
+        wrEl.className = 'stat-value';
+        document.getElementById('stat-wr-sub').textContent = 'no closed trades yet';
+      } else {
+        wrEl.textContent = (wr*100).toFixed(0) + '%';
+        wrEl.className = 'stat-value ' + (wr >= 0.8 ? 'up' : (wr < 0.5 ? 'down' : 'neutral'));
+        document.getElementById('stat-wr-sub').textContent = `${wins}W / ${closed.length-wins}L  (80% breakeven)`;
+      }
+
+      // Open positions
+      const openBody  = document.getElementById('open-body');
+      const lastQuotes = p.last_quotes || {};
+      const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
+      if (!openList.length) {
+        openBody.innerHTML = '<tr><td colspan="9" class="empty-row">No open positions</td></tr>';
+      } else {
+        openBody.innerHTML = openList.map(([tk, pos]) => {
+          const lq    = lastQuotes[tk] || {};
+          const now   = (lq.last != null) ? lq.last : pos.entry_price;
+          const ret   = now / pos.entry_price - 1;
+          const pnl   = pos.shares * (now - pos.entry_price);
+          const queued = forceSellSet.has(tk);
+          const canSell = queued || ret >= SELL_MIN_RET;
+          const btnLabel = queued ? '✓ Sell queued' : 'Sell now';
+          const btnTitle = queued
+            ? 'Position is queued for sale on the next engine run — click to cancel'
+            : (ret >= SELL_MIN_RET
+                 ? `Manually sell at market on next run (+${(ret*100).toFixed(2)}% unrealized)`
+                 : `Sell button unlocks at +${(SELL_MIN_RET*100).toFixed(2)}% unrealized (currently ${ret>=0?'+':''}${(ret*100).toFixed(2)}%)`);
+          return `
+          <tr>
+            <td class="ticker">${tickerLink(tk)}</td>
+            <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
+            <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
+            <td class="num">${fmt(now, 2)}</td>
+            <td class="num ${cls(ret)}">${pct(ret)}  <span class="small">(${sign(pnl)})</span></td>
+            <td class="num mobile-hide">${fmt(pos.tp, 2)}</td>
+            <td class="num mobile-hide">${fmt(pos.sl, 2)}</td>
+            <td class="mobile-hide">${esc(pos.target_exit_date || '')}<div class="small">from ${esc(fmtTs(pos.entry_ts) || pos.entry_date || '')}</div></td>
+            <td>
+              <button class="sell-btn${queued ? ' queued' : ''}"
+                      ${canSell ? '' : 'disabled'}
+                      title="${esc(btnTitle)}"
+                      onclick="toggleForceSell('${esc(tk)}', this)">
+                ${btnLabel}
+              </button>
+            </td>
+          </tr>`;
+        }).join('');
+      }
+
+      // Closed trades (newest first, paginated)
+      closedSortedCache = [...closed].sort((a,b) => (b.exit_date || '').localeCompare(a.exit_date || ''));
+      renderClosedPage();
+      renderAnalytics(closed);
+
+      // ---- New signals (latest run only) ----
+      const newsigBody = document.getElementById('newsig-body');
+      const recent = Array.isArray(p.recent_signals) ? p.recent_signals : [];
+      // Show the signal events from the latest run (same timestamp)
+      let latestRunSigs = [];
+      if (recent.length) {
+        const latestTs = recent[recent.length - 1].ts;
+        latestRunSigs = recent.filter(e => e.ts === latestTs);
+      }
+      if (!latestRunSigs.length) {
+        newsigBody.innerHTML = '<tr><td colspan="10" class="empty-row">No signals in the latest run</td></tr>';
+      } else {
+        newsigBody.innerHTML = latestRunSigs.map(e => {
+          const isEnt  = e.action === 'entered';
+          const reason = isEnt
+            ? `DoD ${e.dod != null ? pct(e.dod, 2) : '?'} · 20d ${e.ret_20d != null ? pct(e.ret_20d, 1) : '?'}`
+            : (e.skip_reason || 'skipped');
+          const sugg = e.suggested_bid != null ? fmt(e.suggested_bid, 2) : '—';
+          const spreadVal = (e.spread != null && e.last) ? `${fmt(e.spread, 2)} (${(e.spread/e.last*100).toFixed(2)}%)` : (e.spread != null ? fmt(e.spread, 2) : '—');
+          const actionCell = isEnt
+            ? '<span class="pill pill-on">Entered</span>'
+            : '<span class="pill pill-warn">Skipped</span>';
+          return `
+            <tr>
+              <td class="ticker">${tickerLink(e.ticker)}</td>
+              <td>${actionCell}</td>
+              <td class="num mobile-hide">${e.last != null ? fmt(e.last, 2) : '—'}</td>
+              <td class="num mobile-hide">${e.bid  != null ? fmt(e.bid,  2) : '—'}</td>
+              <td class="num mobile-hide">${e.ask  != null ? fmt(e.ask,  2) : '—'}</td>
+              <td class="num neutral"><strong>${sugg}</strong></td>
+              <td class="num small mobile-hide">${spreadVal}</td>
+              <td class="num">${e.tp != null ? fmt(e.tp, 2) : '—'}</td>
+              <td class="num">${e.sl != null ? fmt(e.sl, 2) : '—'}</td>
+              <td class="small">${esc(reason)}</td>
+            </tr>`;
+        }).join('');
+      }
+
+      // ---- Live quotes (tracked tickers) ----
+      const quotesBody = document.getElementById('quotes-body');
+      const quotes = p.last_quotes || {};
+      const qList = Object.entries(quotes).sort((a,b) => a[0].localeCompare(b[0]));
+      if (!qList.length) {
+        quotesBody.innerHTML = '<tr><td colspan="7" class="empty-row">No tracked tickers</td></tr>';
+      } else {
+        quotesBody.innerHTML = qList.map(([tk, q]) => {
+          const spreadVal = (q.bid != null && q.ask != null) ? fmt(q.ask - q.bid, 2) : '—';
+          const dayVal = q.diff_pct != null ? `${q.diff_pct >= 0 ? '+' : ''}${q.diff_pct.toFixed(2)}%` : '—';
+          const dayCls = q.diff_pct != null ? cls(q.diff_pct) : '';
+          return `
+            <tr>
+              <td class="ticker">${tickerLink(tk)}</td>
+              <td class="num">${q.last != null ? fmt(q.last, 2) : '—'}</td>
+              <td class="num">${q.bid  != null ? fmt(q.bid,  2) : '—'}</td>
+              <td class="num">${q.ask  != null ? fmt(q.ask,  2) : '—'}</td>
+              <td class="num">${spreadVal}</td>
+              <td class="num ${dayCls}">${dayVal}</td>
+              <td class="small">${esc(q.source || '')}</td>
+            </tr>`;
+        }).join('');
+      }
+
+      // Meta
+      const last = p.last_run ? new Date(p.last_run) : null;
+      document.getElementById('meta-text').textContent =
+        last ? `Last run: ${last.toLocaleString('sv-SE')}` : 'No run recorded yet';
+
+      // Data feed lag pill
+      const lagPill = document.getElementById('pill-lag');
+      const lag = p.data_lag || {};
+      if (lag.lag_seconds == null) {
+        lagPill.textContent = 'Lag: ?';
+        lagPill.className = 'pill';
+      } else {
+        const m = Math.floor(lag.lag_seconds / 60);
+        const s = lag.lag_seconds % 60;
+        const txt = m > 0 ? `Lag: ${m}m ${s}s` : `Lag: ${s}s`;
+        lagPill.textContent = txt;
+        lagPill.title = `Last ${lag.ticker || 'probe'} trade at ${(lag.trade_dt || '').slice(11,19)}`;
+        if (lag.lag_seconds >= 600) lagPill.className = 'pill pill-warn';        // >=10 min: delayed feed
+        else if (lag.lag_seconds >= 120) lagPill.className = 'pill pill-info';   // 2-10 min: typical
+        else lagPill.className = 'pill pill-on';                                  // <2 min: ~real-time
+      }
+
+      // SPX tape-regime pill (context only, not a filter)
+      const spxPill = document.getElementById('pill-spx');
+      const us = p.us_context;
+      if (!us || us.return_pct == null) {
+        spxPill.textContent = 'SPX: ?';
+        spxPill.className = 'pill';
+      } else {
+        const r = us.return_pct;
+        // Compact date: "May 22"
+        const d = new Date(us.date + 'T00:00:00');
+        const dStr = d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+        const sign = r >= 0 ? '+' : '';
+        spxPill.textContent = `SPX ${dStr}: ${sign}${r.toFixed(2)}%`;
+        if (us.stale_days > 3)   spxPill.className = 'pill pill-warn';          // stale data
+        else if (r >= 0)         spxPill.className = 'pill pill-on';            // green
+        else                     spxPill.className = 'pill pill-off';           // red
+      }
+    }
+
+    function closedHold(t) {
+      const aStr = t.entry_ts || t.entry_date;
+      const bStr = t.exit_ts  || t.exit_date;
+      if (!aStr || !bStr) return '—';
+      const a = new Date(aStr), b = new Date(bStr);
+      const sec = Math.max(0, Math.round((b - a) / 1000));
+      if (sec >= 86400)     return `${Math.round(sec / 86400)}d`;
+      if (sec >= 3600)      return `${Math.floor(sec/3600)}h ${Math.floor((sec%3600)/60)}m`;
+      if (sec >= 60)        return `${Math.floor(sec/60)}m`;
+      return `${sec}s`;
+    }
+
+    function renderLog(log) {
+      const panel = document.getElementById('log-panel');
+      const txt = log && log.text ? log.text : '';
+      if (!txt.trim()) {
+        panel.innerHTML = '<span class="log-empty">No log yet</span>';
+      } else {
+        panel.textContent = txt;
+      }
+      // Update market pill from the log header line if present
+      const pill = document.getElementById('pill-market');
+      if (/Market closed/i.test(txt)) {
+        pill.textContent = 'Market closed';
+        pill.className = 'pill pill-off';
+      } else if (/Universe:/i.test(txt)) {
+        pill.textContent = 'Market open';
+        pill.className = 'pill pill-on';
+      } else {
+        pill.textContent = '—';
+        pill.className = 'pill';
+      }
+    }
+
+    async function runNow() {
+      const btn = document.getElementById('btn-run');
+      btn.disabled = true;
+      btn.textContent = 'Running…';
+      try {
+        await fetch('/live-run', { method: 'POST' });
+        // wait briefly then refresh
+        setTimeout(refresh, 2500);
+        setTimeout(() => { btn.disabled = false; btn.textContent = 'Run now'; }, 3000);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Run now';
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 120000);  // 2 min
+  </script>
+</body>
+</html>

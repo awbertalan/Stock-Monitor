@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 900px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 22px; margin-bottom: 18px;
+    }
+    .section-title {
+      font-size: 11px; font-weight: bold; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
+    }
+    .section-desc { font-size: 13px; color: var(--text-subtle); margin-bottom: 14px; line-height: 1.5; }
+    .section-desc strong { color: var(--text); }
+
+    .interval-group {
+      display: flex; border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      overflow: hidden; background: var(--surface); width: fit-content;
+    }
+    .interval-btn {
+      padding: 8px 18px; border: none; border-right: 1px solid var(--border-input);
+      background: var(--surface); cursor: pointer; font-size: 13px;
+      font-family: Arial, sans-serif; color: var(--text-subtle);
+    }
+    .interval-btn:last-child { border-right: none; }
+    .interval-btn:hover  { background: var(--surface-hover); }
+    .interval-btn.active { background: var(--accent); color: #fff; }
+
+    .type-helpers { display: flex; gap: 14px; margin-bottom: 10px; }
+    .text-btn {
+      background: none; border: none; color: var(--accent); cursor: pointer;
+      font-size: 13px; padding: 0; font-family: Arial, sans-serif;
+    }
+    .text-btn:hover { text-decoration: underline; }
+
+    .type-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 2px;
+    }
+    .type-label {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--text);
+      cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm);
+    }
+    .type-label:hover { background: var(--surface-hover); }
+    .type-label input { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+
+    .schedule-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; margin-top: 16px;
+    }
+    .schedule-grid label {
+      font-size: 11px; font-weight: bold; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px;
+      display: block; margin-bottom: 4px;
+    }
+    .schedule-grid input {
+      width: 100%; padding: 8px 10px; font-size: 14px;
+      border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--text); font-family: Arial, sans-serif;
+      box-sizing: border-box;
+    }
+    .schedule-grid input:focus { outline: none; border-color: var(--accent); }
+
+    .toggle-label {
+      display: flex; align-items: center; gap: 10px; cursor: pointer;
+      font-size: 13px; color: var(--text);
+    }
+    .toggle-label input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
+
+    .action-row {
+      display: flex; gap: 12px; align-items: center;
+      padding: 18px 22px; margin-bottom: 18px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
+    .btn-save {
+      padding: 9px 24px; background: var(--accent); color: #fff;
+      border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: bold;
+      cursor: pointer; font-family: Arial, sans-serif;
+    }
+    .btn-save:hover { background: var(--accent-hover); }
+    .btn-full {
+      padding: 9px 20px; background: var(--surface); color: var(--positive);
+      border: 1px solid var(--positive); border-radius: var(--radius-sm); font-size: 14px;
+      font-weight: bold; cursor: pointer; font-family: Arial, sans-serif;
+    }
+    .btn-full:hover    { background: var(--positive-soft); }
+    .btn-full:disabled { color: var(--text-muted); border-color: var(--border); cursor: default; background: var(--surface); }
+    #save-status, #isin-status, #lists-status { font-size: 13px; color: var(--text-subtle); }
+    .status-ok   { color: var(--positive) !important; }
+    .status-err  { color: var(--negative) !important; }
+    .status-warn { color: var(--warning)  !important; }
+
+    @media (max-width: 720px) {
+      .schedule-grid { grid-template-columns: 1fr; gap: 12px; }
+      .interval-group { width: 100%; }
+      .interval-btn { flex: 1; padding: 8px 10px; font-size: 12px; }
+      .action-row { flex-wrap: wrap; }
+      .btn-save, .btn-full { flex: 1; min-width: 140px; }
+    }
+  </style>
+</head>
+<body>
+  <h2>Settings</h2>
+  <div class="subtitle">Refresh cadence, update filters, and database maintenance.</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live-signals">Live Signals</a>
+    <a href="/live-patterns">Live Patterns</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings" class="active">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="section">
+    <div class="section-title">Stock Page Auto-Refresh Interval</div>
+    <div class="section-desc">
+      How often the chart refreshes automatically when viewing a stock page.
+      Set to <strong>Manual only</strong> to disable auto-refresh entirely.
+      Takes effect on the next page load.
+    </div>
+    <div class="interval-group">
+      <button class="interval-btn" data-s="0"   onclick="setIntervalSetting(0)">Manual only</button>
+      <button class="interval-btn" data-s="10"  onclick="setIntervalSetting(10)">10 s</button>
+      <button class="interval-btn" data-s="30"  onclick="setIntervalSetting(30)">30 s</button>
+      <button class="interval-btn" data-s="60"  onclick="setIntervalSetting(60)">1 min</button>
+      <button class="interval-btn" data-s="300" onclick="setIntervalSetting(300)">5 min</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Trades List Limit</div>
+    <div class="section-desc">
+      How many recent trades to display on the stock page (10–50).
+      Takes effect on the next stock page load.
+    </div>
+    <div class="interval-group">
+      <button class="interval-btn" data-trades="10"  onclick="setTradesLimit(10)">10</button>
+      <button class="interval-btn" data-trades="15"  onclick="setTradesLimit(15)">15</button>
+      <button class="interval-btn" data-trades="25"  onclick="setTradesLimit(25)">25</button>
+      <button class="interval-btn" data-trades="35"  onclick="setTradesLimit(35)">35</button>
+      <button class="interval-btn" data-trades="50"  onclick="setTradesLimit(50)">50</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Update All Scope</div>
+    <div class="section-desc">
+      The <strong>Update All</strong> button in the navigation bar only refreshes
+      stocks whose instrument type <em>and</em> currency are both checked below.<br>
+      The <strong>Update Everything</strong> button at the bottom always
+      refreshes all stocks, regardless of this filter.
+    </div>
+
+    <div class="section-title" style="margin-top:14px">Instrument Types</div>
+    <div class="type-helpers">
+      <button class="text-btn" onclick="selectAll('type-grid')">Select all</button>
+      <button class="text-btn" onclick="deselectAll('type-grid')">Deselect all</button>
+    </div>
+    <div class="type-grid" id="type-grid">Loading…</div>
+
+    <div class="section-title" style="margin-top:18px">Currencies</div>
+    <div class="type-helpers">
+      <button class="text-btn" onclick="selectAll('curr-grid')">Select all</button>
+      <button class="text-btn" onclick="deselectAll('curr-grid')">Deselect all</button>
+    </div>
+    <div class="type-grid" id="curr-grid">Loading…</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Auto-Update Schedule</div>
+    <div class="section-desc">
+      Configure the automatic background update intervals for all stocks.
+      Updates run in the background and refresh stock data from Millistream.
+    </div>
+
+    <div style="display:flex; align-items:center; gap:12px; margin-top:8px; margin-bottom:4px;">
+      <label class="toggle-label">
+        <input type="checkbox" id="auto-refresh-enabled" onchange="saveAutoRefreshEnabled(this.checked)">
+        Enable automatic background updates
+      </label>
+      <span id="auto-refresh-status" style="font-size:12px; color:var(--text-muted);"></span>
+    </div>
+
+    <div id="auto-refresh-schedule" class="schedule-grid">
+      <div>
+        <label>Weekend Interval (minutes)</label>
+        <input type="number" id="weekend-minutes" min="1">
+      </div>
+      <div>
+        <label>Market Hours Interval (minutes)</label>
+        <input type="number" id="market-minutes" min="1">
+      </div>
+      <div>
+        <label>Off-Hours Interval (minutes)</label>
+        <input type="number" id="off-hours-minutes" min="1">
+      </div>
+      <div>
+        <label>Market Hours Start (hour, 0-23)</label>
+        <input type="number" id="market-start" min="0" max="23">
+      </div>
+      <div>
+        <label>Market Hours End (hour, 0-23)</label>
+        <input type="number" id="market-end" min="0" max="23">
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">ISIN Database</div>
+    <div class="section-desc">
+      Update ISIN numbers for all stocks in the database. This will fetch and populate
+      missing ISIN codes from Millistream. May take a minute or two.
+    </div>
+    <button class="btn-full" id="btn-isin" onclick="updateISINs()" style="margin-top:10px;">Update ISINs for Old Stocks</button>
+    <span id="isin-status" style="margin-left:10px;font-size:13px;"></span>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Market List Database</div>
+    <div class="section-desc">
+      Populate the market list (OMXS30, Large Cap, Mid Cap, Small Cap, First North, Spotlight)
+      for every stock. Required for the dashboard list tabs to show data.
+      Only fetches stocks with a missing list — safe to re-run.
+    </div>
+    <button class="btn-full" id="btn-lists" onclick="updateLists()" style="margin-top:10px;">Update Market Lists</button>
+    <span id="lists-status" style="margin-left:10px;font-size:13px;"></span>
+  </div>
+
+  <div class="action-row">
+    <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+    <button class="btn-full" id="btn-full" onclick="updateEverything()">Update Everything</button>
+    <span id="save-status"></span>
+  </div>
+
+  <script>
+    let chosenInterval = 30;
+    let chosenTradesLimit = 25;
+    let allTypes = [];
+    let allCurrencies = [];
+
+    function setIntervalSetting(s) {
+      chosenInterval = s;
+      document.querySelectorAll('.interval-btn').forEach(b =>
+        b.classList.toggle('active', parseInt(b.dataset.s) === s));
+    }
+
+    function setTradesLimit(limit) {
+      chosenTradesLimit = limit;
+      document.querySelectorAll('.interval-btn[data-trades]').forEach(b =>
+        b.classList.toggle('active', parseInt(b.dataset.trades) === limit));
+    }
+
+    function selectAll(gridId)   { document.querySelectorAll('#' + gridId + ' input').forEach(cb => cb.checked = true); }
+    function deselectAll(gridId) { document.querySelectorAll('#' + gridId + ' input').forEach(cb => cb.checked = false); }
+
+    function saveSettings() {
+      const checkedTypes = [...document.querySelectorAll('#type-grid input:checked')].map(cb => cb.value);
+      const checkedCurrs = [...document.querySelectorAll('#curr-grid input:checked')].map(cb => cb.value);
+      const typeFilter = checkedTypes.length === allTypes.length       ? null : checkedTypes;
+      const currFilter = checkedCurrs.length === allCurrencies.length  ? null : checkedCurrs;
+      fetch('/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          refresh_interval_s: chosenInterval,
+          trades_limit: chosenTradesLimit,
+          update_filter: { types: typeFilter, currencies: currFilter },
+          auto_refresh_weekend_minutes: parseInt(document.getElementById('weekend-minutes').value) || 240,
+          auto_refresh_market_minutes: parseInt(document.getElementById('market-minutes').value) || 15,
+          auto_refresh_off_hours_minutes: parseInt(document.getElementById('off-hours-minutes').value) || 60,
+          market_hours_start: parseInt(document.getElementById('market-start').value) || 9,
+          market_hours_end: parseInt(document.getElementById('market-end').value) || 17
+        })
+      })
+      .then(r => r.json())
+      .then(d => {
+        const el = document.getElementById('save-status');
+        el.textContent  = d.ok ? 'Saved.' : 'Error: ' + d.error;
+        el.style.color  = d.ok ? 'var(--positive)' : 'var(--negative)';
+        setTimeout(() => { el.textContent = ''; }, 3000);
+      });
+    }
+
+    function saveAutoRefreshEnabled(enabled) {
+      document.getElementById('auto-refresh-schedule').style.opacity = enabled ? '1' : '0.4';
+      document.getElementById('auto-refresh-status').textContent = enabled ? '' : 'Disabled — updates will not run automatically';
+      fetch('/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_refresh_enabled: enabled })
+      });
+    }
+
+    function updateISINs() {
+      const btn = document.getElementById('btn-isin');
+      const el  = document.getElementById('isin-status');
+      btn.disabled    = true;
+      btn.textContent = 'Starting…';
+      el.textContent  = '';
+      fetch('/update-isins', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          if (d.error) {
+            el.textContent  = 'Error: ' + d.error;
+            el.style.color  = 'var(--negative)';
+            btn.disabled    = false;
+            btn.textContent = 'Update ISINs for Old Stocks';
+            return;
+          }
+          pollISINs();
+        })
+        .catch(err => {
+          el.textContent  = 'Network error: ' + err;
+          el.style.color  = 'var(--negative)';
+          btn.disabled    = false;
+          btn.textContent = 'Update ISINs for Old Stocks';
+        });
+    }
+
+    function pollISINs() {
+      fetch('/update-isins-status').then(r => r.json()).then(d => {
+        const btn = document.getElementById('btn-isin');
+        const el  = document.getElementById('isin-status');
+        if (!btn) return;
+        if (d.running) {
+          btn.textContent = d.total > 0 ? `Updating… ${d.done} / ${d.total}` : 'Updating…';
+          el.textContent  = d.updated > 0 ? `${d.updated} updated so far` : '';
+          el.style.color  = 'var(--text-subtle)';
+          setTimeout(pollISINs, 800);
+        } else if (d.total > 0) {
+          btn.disabled    = false;
+          btn.textContent = 'Update ISINs for Old Stocks';
+          const mins    = Math.floor(d.elapsed_s / 60);
+          const secs    = d.elapsed_s % 60;
+          const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+          let msg = `${d.updated} updated`;
+          if (d.failed > 0) msg += `, ${d.failed} failure${d.failed !== 1 ? 's' : ''}`;
+          msg += ` — ${timeStr}`;
+          el.textContent = msg;
+          el.style.color = d.failed > 0 ? 'var(--warning)' : 'var(--positive)';
+          setTimeout(() => { el.textContent = ''; }, 12000);
+        }
+      }).catch(() => setTimeout(pollISINs, 2000));
+    }
+
+    function updateEverything() {
+      const btn = document.getElementById('btn-full');
+      btn.disabled    = true;
+      btn.textContent = 'Starting…';
+      fetch('/refresh-all-full', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => { if (d.error) resetFullBtn(); else pollFull(); })
+        .catch(resetFullBtn);
+    }
+
+    function pollFull() {
+      fetch('/refresh-all-status').then(r => r.json()).then(d => {
+        const btn = document.getElementById('btn-full');
+        if (!btn) return;
+        if (d.running) {
+          btn.textContent = `Updating… ${d.done}/${d.total}`;
+          setTimeout(pollFull, 2000);
+        } else {
+          btn.textContent = d.total > 0 ? `Done (${d.total})` : 'Update Everything';
+          btn.disabled = false;
+          if (d.total > 0) setTimeout(() => { btn.textContent = 'Update Everything'; }, 3000);
+        }
+      }).catch(resetFullBtn);
+    }
+
+    function resetFullBtn() {
+      const btn = document.getElementById('btn-full');
+      if (btn) { btn.disabled = false; btn.textContent = 'Update Everything'; }
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Load settings, instrument types, and currencies
+    Promise.all([
+      fetch('/get-settings').then(r => r.json()),
+      fetch('/instrument-types').then(r => r.json()),
+      fetch('/currencies').then(r => r.json()),
+    ]).then(([settings, types, currencies]) => {
+      allTypes      = types;
+      allCurrencies = currencies;
+      setIntervalSetting(settings.refresh_interval_s ?? 30);
+      setTradesLimit(settings.trades_limit ?? 25);
+
+      const enabled = settings.auto_refresh_enabled ?? true;
+      document.getElementById('auto-refresh-enabled').checked = enabled;
+      document.getElementById('auto-refresh-schedule').style.opacity = enabled ? '1' : '0.4';
+      document.getElementById('auto-refresh-status').textContent = enabled ? '' : 'Disabled — updates will not run automatically';
+
+      document.getElementById('weekend-minutes').value = settings.auto_refresh_weekend_minutes ?? 240;
+      document.getElementById('market-minutes').value = settings.auto_refresh_market_minutes ?? 15;
+      document.getElementById('off-hours-minutes').value = settings.auto_refresh_off_hours_minutes ?? 60;
+      document.getElementById('market-start').value = settings.market_hours_start ?? 9;
+      document.getElementById('market-end').value = settings.market_hours_end ?? 17;
+
+      const uf         = settings.update_filter || {};
+      const typeFilter = uf.types;      // null = all
+      const currFilter = uf.currencies; // null = all
+
+      document.getElementById('type-grid').innerHTML = types.map(t => {
+        const chk = (typeFilter === null || typeFilter === undefined || typeFilter.includes(t)) ? 'checked' : '';
+        return `<label class="type-label"><input type="checkbox" value="${esc(t)}" ${chk}>${esc(t)}</label>`;
+      }).join('');
+
+      const currGrid = document.getElementById('curr-grid');
+      if (!currencies.length) {
+        currGrid.innerHTML = '<span style="color:var(--text-muted);font-size:13px;font-style:italic;">No currencies found — run a scrape first.</span>';
+      } else {
+        currGrid.innerHTML = currencies.map(c => {
+          const chk = (currFilter === null || currFilter === undefined || currFilter.includes(c)) ? 'checked' : '';
+          return `<label class="type-label"><input type="checkbox" value="${esc(c)}" ${chk}>${esc(c)}</label>`;
+        }).join('');
+      }
+    });
+
+    // Reconnect if update-everything is already running
+    fetch('/refresh-all-status').then(r => r.json()).then(d => {
+      if (d.running) {
+        const btn = document.getElementById('btn-full');
+        if (btn) { btn.disabled = true; btn.textContent = `Updating… ${d.done}/${d.total}`; }
+        pollFull();
+      }
+    }).catch(() => {});
+
+    // Reconnect if ISIN update is already running
+    fetch('/update-isins-status').then(r => r.json()).then(d => {
+      if (d.running) {
+        const btn = document.getElementById('btn-isin');
+        if (btn) { btn.disabled = true; btn.textContent = `Updating… ${d.done} / ${d.total}`; }
+        pollISINs();
+      }
+    }).catch(() => {});
+
+    // Reconnect if list update is already running
+    fetch('/update-lists-status').then(r => r.json()).then(d => {
+      if (d.running) {
+        const btn = document.getElementById('btn-lists');
+        if (btn) { btn.disabled = true; btn.textContent = `Updating… ${d.done} / ${d.total}`; }
+        pollLists();
+      }
+    }).catch(() => {});
+
+    function updateLists() {
+      const btn = document.getElementById('btn-lists');
+      const el  = document.getElementById('lists-status');
+      btn.disabled    = true;
+      btn.textContent = 'Starting…';
+      el.textContent  = '';
+      fetch('/update-lists', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          if (d.error) {
+            el.textContent  = 'Error: ' + d.error;
+            el.style.color  = 'var(--negative)';
+            btn.disabled    = false;
+            btn.textContent = 'Update Market Lists';
+            return;
+          }
+          pollLists();
+        })
+        .catch(err => {
+          el.textContent  = 'Network error: ' + err;
+          el.style.color  = 'var(--negative)';
+          btn.disabled    = false;
+          btn.textContent = 'Update Market Lists';
+        });
+    }
+
+    function pollLists() {
+      fetch('/update-lists-status').then(r => r.json()).then(d => {
+        const btn = document.getElementById('btn-lists');
+        const el  = document.getElementById('lists-status');
+        if (!btn) return;
+        if (d.running) {
+          btn.textContent = d.total > 0 ? `Updating… ${d.done} / ${d.total}` : 'Updating…';
+          el.textContent  = d.updated > 0 ? `${d.updated} assigned so far` : '';
+          el.style.color  = 'var(--text-subtle)';
+          setTimeout(pollLists, 800);
+        } else if (d.total > 0) {
+          btn.disabled    = false;
+          btn.textContent = 'Update Market Lists';
+          const mins    = Math.floor(d.elapsed_s / 60);
+          const secs    = d.elapsed_s % 60;
+          const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+          let msg = `${d.updated} assigned`;
+          if (d.skipped > 0) msg += `, ${d.skipped} already had list`;
+          if (d.failed  > 0) msg += `, ${d.failed} not found`;
+          msg += ` — ${timeStr}`;
+          el.textContent = msg;
+          el.style.color = d.failed > 0 ? 'var(--warning)' : 'var(--positive)';
+          setTimeout(() => { el.textContent = ''; }, 12000);
+        }
+      }).catch(() => setTimeout(pollLists, 2000));
+    }
+  </script>
+  <script src="/nav.js"></script>
+</body>
+</html>

@@ -5,5 +5,14 @@ Instrumenttype/
 __pycache__/
 *.pyc
 .vscode/
-live_portfolio.json
-live_signals.log
+
+# Runtime state — written by engines, not source
+state/
+logs/
+ohlc/
+
+# Backups
+*.bak.*
+
+# Smoke test artifacts (regenerate as needed)
+scripts/smoke_test_results.json

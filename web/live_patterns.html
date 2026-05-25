@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Patterns</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 1200px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+
+    .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .stat-card {
+      flex: 1; min-width: 140px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .stat-label {
+      font-size: 10px; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
+    }
+    .stat-value { font-size: 22px; font-weight: bold; color: var(--text); font-variant-numeric: tabular-nums; }
+    .stat-sub   { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .up   { color: var(--positive); }
+    .down { color: var(--negative); }
+
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 22px; margin-bottom: 18px;
+    }
+    .section-title {
+      font-size: 11px; font-weight: bold; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 12px;
+    }
+
+    .sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sig-table th {
+      text-align: left; padding: 9px 12px; background: var(--surface-alt);
+      color: var(--text-muted); font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.4px; border-bottom: 1px solid var(--border); font-weight: 600;
+    }
+    .sig-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .sig-table tr:last-child td { border-bottom: none; }
+    .sig-table tr:hover td { background: var(--surface-hover); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ticker { font-weight: 600; }
+    .ticker-link { color: inherit; text-decoration: none; border-bottom: 1px dotted transparent; }
+    .ticker-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+    .small  { font-size: 11px; color: var(--text-muted); }
+    .empty-row { text-align: center; color: var(--text-muted); padding: 24px; font-style: italic; }
+    .pill {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      border-radius: 4px; padding: 3px 7px; text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .reason-TP      { background: var(--positive-soft); color: var(--positive); }
+    .reason-SL      { background: var(--negative-soft); color: var(--negative); }
+    .reason-TIMEOUT { background: var(--warning-soft);  color: var(--warning); }
+    .pattern-pill   { background: var(--accent-soft);   color: var(--accent); font-weight: 600; }
+
+    .sell-btn {
+      background: var(--surface); color: var(--warning); border: 1px solid #e0c060;
+      border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+      cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap;
+    }
+    .sell-btn:hover:not(:disabled) { background: var(--warning-soft); }
+    .sell-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: not-allowed; background: var(--surface); }
+    .sell-btn.queued { background: var(--warning); color: #fff; border-color: var(--warning); }
+    .sell-btn.queued:hover { background: #8a6500; }
+
+    #log-panel {
+      background: #0f1419; color: #c5cbd6; padding: 14px 16px;
+      border-radius: var(--radius-md); font-size: 12px;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      max-height: 360px; overflow-y: auto; white-space: pre-wrap;
+    }
+    .log-empty { color: var(--text-muted); font-style: italic; }
+    @media (max-width: 720px) {
+      .sig-table .mobile-hide { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <h2>Live Patterns</h2>
+  <p class="subtitle">Candlestick-pattern paper-trading engine — TP +2% / SL −2% / 7d max hold · no-Friday · no-after-16:30 · 6 bullish patterns. Separate 500k SEK wallet from Live Signals.</p>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live-signals">Live Signals</a>
+    <a href="/live-patterns" class="active">Live Patterns</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Equity</div>
+      <div class="stat-value" id="stat-equity">—</div>
+      <div class="stat-sub" id="stat-equity-sub">total of 500k</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Cash</div>
+      <div class="stat-value" id="stat-cash">—</div>
+      <div class="stat-sub" id="stat-cash-sub">— live, — closed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open positions</div>
+      <div class="stat-value" id="stat-open">—</div>
+      <div class="stat-sub" id="stat-open-sub">— SEK deployed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value" id="stat-realized">—</div>
+      <div class="stat-sub" id="stat-realized-sub">— trades</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win rate</div>
+      <div class="stat-value" id="stat-wr">—</div>
+      <div class="stat-sub" id="stat-wr-sub">33% breakeven</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Open positions</div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Pattern</th>
+          <th class="num mobile-hide">Shares</th>
+          <th class="num mobile-hide">Entry</th>
+          <th class="num">Now</th>
+          <th class="num">P&amp;L</th>
+          <th class="num mobile-hide">TP</th>
+          <th class="num mobile-hide">SL</th>
+          <th class="mobile-hide">Exit by</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="open-body">
+        <tr><td colspan="10" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Closed trades</div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Pattern</th>
+          <th>Entry → Exit</th>
+          <th class="num mobile-hide">Entry</th>
+          <th class="num mobile-hide">Exit</th>
+          <th class="num">Return</th>
+          <th class="num">P&amp;L</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody id="closed-body">
+        <tr><td colspan="8" class="empty-row">No trades yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Latest run log</div>
+    <div id="log-panel"><span class="log-empty">Loading…</span></div>
+  </div>
+
+  <script>
+    const fmt  = (n, d=0) => Number(n).toLocaleString('sv-SE', {maximumFractionDigits:d, minimumFractionDigits:d});
+    const fmtTs = ts => ts ? String(ts).replace('T', ' ').slice(0, 19) : '';
+    const pct  = (n, d=2) => `${n>=0?'+':''}${(n*100).toFixed(d)}%`;
+    const sign = n => n >= 0 ? `+${fmt(n,0)}` : fmt(n,0);
+    const cls  = n => n > 0 ? 'up' : (n < 0 ? 'down' : '');
+    const esc  = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    let forceSellSet = new Set();
+    const SELL_MIN_RET = 0.0075;   // UI gate: button unlocks at ≥+0.75% unrealized
+
+    async function refresh() {
+      try {
+        const [pf, log, sellQueue] = await Promise.all([
+          fetch('/live-patterns-portfolio').then(r => r.json()),
+          fetch('/live-patterns-log').then(r => r.json()),
+          fetch('/live-patterns-force-sell').then(r => r.json()).catch(() => []),
+        ]);
+        forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
+        renderPortfolio(pf);
+        renderLog(log);
+      } catch (e) {
+        console.error('refresh failed', e);
+      }
+    }
+
+    async function toggleForceSell(ticker, btn) {
+      const adding = !forceSellSet.has(ticker);
+      btn.disabled = true;
+      try {
+        const res = await fetch('/live-patterns-force-sell', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
+        }).then(r => r.json());
+        if (res && res.ok) {
+          forceSellSet = new Set(res.queued || []);
+          refresh();
+        }
+      } catch (e) {
+        console.error('toggle force-sell failed', e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderPortfolio(p) {
+      const cash = p.cash || 0;
+      const positions = p.positions || {};
+      const closed    = p.closed_trades || [];
+      const openVal   = Object.entries(positions).reduce((s, [tk, pos]) => {
+        const last = (p.last_quotes && p.last_quotes[tk] && p.last_quotes[tk].last) || pos.entry_price;
+        return s + pos.shares * last;
+      }, 0);
+      const equity   = cash + openVal;
+      const realized = closed.reduce((s, t) => s + (t.pnl_sek || 0), 0);
+      const wins     = closed.filter(t => (t.pnl_sek || 0) > 0).length;
+      const wr       = closed.length ? wins / closed.length : null;
+
+      document.getElementById('stat-equity').textContent = fmt(equity, 0) + ' SEK';
+      document.getElementById('stat-equity-sub').textContent =
+        `${((equity / 500000 - 1) * 100).toFixed(2)}% vs 500k start`;
+      document.getElementById('stat-cash').textContent = fmt(cash, 0) + ' SEK';
+      document.getElementById('stat-cash-sub').textContent =
+        `${Object.keys(positions).length} live, ${closed.length} closed`;
+      document.getElementById('stat-open').textContent = Object.keys(positions).length;
+      document.getElementById('stat-open-sub').textContent =
+        `${fmt(openVal, 0)} SEK deployed`;
+      const realizedEl = document.getElementById('stat-realized');
+      realizedEl.textContent = sign(realized) + ' SEK';
+      realizedEl.className = 'stat-value ' + cls(realized);
+      document.getElementById('stat-realized-sub').textContent = `${closed.length} trade${closed.length===1?'':'s'}`;
+      if (wr === null) {
+        document.getElementById('stat-wr').textContent = '—';
+        document.getElementById('stat-wr-sub').textContent = 'no closed trades yet';
+      } else {
+        const wrEl = document.getElementById('stat-wr');
+        wrEl.textContent = (wr*100).toFixed(0) + '%';
+        wrEl.className = 'stat-value ' + (wr >= 0.5 ? 'up' : (wr < 0.33 ? 'down' : ''));
+        document.getElementById('stat-wr-sub').textContent = `${wins}W / ${closed.length-wins}L  (33% breakeven)`;
+      }
+
+      // Open positions
+      const openBody = document.getElementById('open-body');
+      const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
+      if (!openList.length) {
+        openBody.innerHTML = '<tr><td colspan="10" class="empty-row">No open positions</td></tr>';
+      } else {
+        openBody.innerHTML = openList.map(([tk, pos]) => {
+          const last = (p.last_quotes && p.last_quotes[tk] && p.last_quotes[tk].last) || pos.entry_price;
+          const pnl  = pos.shares * (last - pos.entry_price);
+          const ret  = last / pos.entry_price - 1;
+          const pat  = (pos.signal_info || {}).pattern || '?';
+          const queued  = forceSellSet.has(tk);
+          const canSell = queued || ret >= SELL_MIN_RET;
+          const btnLabel = queued ? '✓ Sell queued' : 'Sell now';
+          const btnTitle = queued
+            ? 'Position is queued for sale on the next engine run — click to cancel'
+            : (ret >= SELL_MIN_RET
+                 ? `Manually sell at market on next run (+${(ret*100).toFixed(2)}% unrealized)`
+                 : `Sell button unlocks at +${(SELL_MIN_RET*100).toFixed(2)}% unrealized (currently ${ret>=0?'+':''}${(ret*100).toFixed(2)}%)`);
+          return `
+            <tr>
+              <td class="ticker">${esc(tk)}</td>
+              <td><span class="pill pattern-pill">${esc(pat)}</span></td>
+              <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
+              <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
+              <td class="num">${fmt(last, 2)}</td>
+              <td class="num ${cls(ret)}">${pct(ret)}  <span class="small">(${sign(pnl)})</span></td>
+              <td class="num mobile-hide">${fmt(pos.tp, 2)}</td>
+              <td class="num mobile-hide">${fmt(pos.sl, 2)}</td>
+              <td class="small mobile-hide">${esc(pos.target_exit_date || '')}</td>
+              <td>
+                <button class="sell-btn${queued ? ' queued' : ''}"
+                        ${canSell ? '' : 'disabled'}
+                        title="${esc(btnTitle)}"
+                        onclick="toggleForceSell('${esc(tk)}', this)">
+                  ${btnLabel}
+                </button>
+              </td>
+            </tr>`;
+        }).join('');
+      }
+
+      // Closed trades (newest first)
+      const closedBody = document.getElementById('closed-body');
+      if (!closed.length) {
+        closedBody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
+      } else {
+        const sorted = [...closed].sort((a,b) => (b.exit_date || '').localeCompare(a.exit_date || ''));
+        closedBody.innerHTML = sorted.slice(0, 30).map(t => {
+          const inLabel  = fmtTs(t.entry_ts) || t.entry_date || '';
+          const outLabel = fmtTs(t.exit_ts)  || t.exit_date  || '';
+          const pat      = (t.signal_info || {}).pattern || '?';
+          return `
+            <tr>
+              <td class="ticker">${esc(t.ticker)}</td>
+              <td><span class="pill pattern-pill">${esc(pat)}</span></td>
+              <td class="small">${esc(inLabel)}<br>→ ${esc(outLabel)}</td>
+              <td class="num mobile-hide">${fmt(t.entry_price, 2)}</td>
+              <td class="num mobile-hide">${fmt(t.exit_price, 2)}</td>
+              <td class="num ${cls(t.ret_pct)}">${pct(t.ret_pct)}</td>
+              <td class="num ${cls(t.pnl_sek)}">${sign(t.pnl_sek)}</td>
+              <td><span class="pill reason-${esc(t.reason || '')}">${esc(t.reason || '')}</span></td>
+            </tr>`;
+        }).join('');
+      }
+    }
+
+    function renderLog(log) {
+      const panel = document.getElementById('log-panel');
+      const txt = log && log.text ? log.text : '';
+      if (!txt.trim()) {
+        panel.innerHTML = '<span class="log-empty">No log yet — first run happens at the next LaunchAgent cycle</span>';
+      } else {
+        panel.textContent = txt;
+        panel.scrollTop = panel.scrollHeight;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 120000);  // 2 min
+  </script>
+  <script src="/nav.js"></script>
+</body>
+</html>

@@ -1,12 +1,20 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
 import threading, webbrowser, json, urllib.parse, os, csv, time, re
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+
 import webController
 import webScrapper
 import infoScrapper
 import newsScrapper
 import tradesScrapper
+import ohlc_capture
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+WEB_DIR    = os.path.join(BASE_DIR, "web")
+STATE_DIR  = os.path.join(BASE_DIR, "state")
+LOGS_DIR   = os.path.join(BASE_DIR, "logs")
 
 OMXS30_NAMES = {
     'ABB', 'AlfaLaval', 'AssaAbloyB', 'AstraZeneca',
@@ -26,13 +34,22 @@ MARKET_INDICES = [
     {"name": "NASDAQ 100","path": "Index/USD/39486_NASDAQ100",                  "fname": "NASDAQ100_39486_7d.csv"},
     {"name": "DAX",       "path": "Index/EUR/72822_DAX",                        "fname": "DAX_72822_7d.csv"},
 ]
-INDEX_PATH     = os.path.join(BASE_DIR, "stock_index.json")
-HISTORY_PATH   = os.path.join(BASE_DIR, "scrape_history.json")
-SETTINGS_PATH  = os.path.join(BASE_DIR, "settings.json")
-WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
-ALERTS_PATH    = os.path.join(BASE_DIR, "alerts.json")
+INDEX_PATH     = os.path.join(STATE_DIR, "stock_index.json")
+HISTORY_PATH   = os.path.join(STATE_DIR, "scrape_history.json")
+SETTINGS_PATH  = os.path.join(STATE_DIR, "settings.json")
+WATCHLIST_PATH = os.path.join(STATE_DIR, "watchlist.json")
+ALERTS_PATH    = os.path.join(STATE_DIR, "alerts.json")
 NAMES_CSV_PATH = os.path.join(BASE_DIR, "stock_names.csv")
-PAPER_TRADES_PATH = os.path.join(BASE_DIR, "paper_trades.json")
+PAPER_TRADES_PATH = os.path.join(STATE_DIR, "paper_trades.json")
+LIVE_PORTFOLIO_PATH  = os.path.join(STATE_DIR, "live_portfolio.json")
+LIVE_LOG_PATH        = os.path.join(LOGS_DIR,  "live_signals.log")
+LIVE_SCRIPT_PATH     = os.path.join(BASE_DIR,  "live_signals.py")
+LIVE_APPROVED_PATH    = os.path.join(STATE_DIR, "live_approved.json")
+LIVE_FORCE_ENTRY_PATH = os.path.join(STATE_DIR, "live_force_entry.json")
+LIVE_FORCE_SELL_PATH  = os.path.join(STATE_DIR, "live_force_sell.json")
+LIVE_PATTERNS_PORTFOLIO_PATH  = os.path.join(STATE_DIR, "live_patterns_portfolio.json")
+LIVE_PATTERNS_LOG_PATH        = os.path.join(LOGS_DIR,  "live_patterns.log")
+LIVE_PATTERNS_FORCE_SELL_PATH = os.path.join(STATE_DIR, "live_patterns_force_sell.json")
 
 
 def _load_names():
@@ -57,6 +74,12 @@ def _load_names():
 _watchlist_lock     = threading.Lock()
 _alerts_lock        = threading.Lock()
 _paper_trades_lock  = threading.Lock()
+_live_run_lock      = threading.Lock()
+_live_running       = {"running": False, "started_at": None}
+_live_approved_lock              = threading.Lock()
+_live_force_entry_lock           = threading.Lock()
+_live_force_sell_lock            = threading.Lock()
+_live_patterns_force_sell_lock   = threading.Lock()
 _dashboard_cache    = {}
 _dashboard_cache_lock = threading.Lock()
 
@@ -93,6 +116,114 @@ def _read_paper_trades():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return []
+
+
+def _read_live_portfolio():
+    try:
+        with open(LIVE_PORTFOLIO_PATH, encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"cash": 500000, "positions": {}, "closed_trades": [], "last_run": None}
+
+
+def _read_live_patterns_portfolio():
+    try:
+        with open(LIVE_PATTERNS_PORTFOLIO_PATH, encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"cash": 500000, "positions": {}, "closed_trades": [], "last_run": None}
+
+
+def _read_live_approved():
+    try:
+        with open(LIVE_APPROVED_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        return list(data) if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _write_live_approved(approved):
+    with open(LIVE_APPROVED_PATH, 'w', encoding='utf-8') as f:
+        json.dump(sorted(set(approved)), f, ensure_ascii=False, indent=2)
+
+
+def _read_live_force_entry():
+    try:
+        with open(LIVE_FORCE_ENTRY_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        return list(data) if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _write_live_force_entry(tickers):
+    with open(LIVE_FORCE_ENTRY_PATH, 'w', encoding='utf-8') as f:
+        json.dump(sorted(set(tickers)), f, ensure_ascii=False, indent=2)
+
+
+def _read_force_sell_file(path):
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+        return list(data) if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _write_force_sell_file(path, tickers):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(sorted(set(tickers)), f, ensure_ascii=False, indent=2)
+
+
+def _read_last_log_run(max_chars=12000):
+    """Return the last '=== run' section of live_signals.log, capped to max_chars."""
+    return _read_last_log_run_at(LIVE_LOG_PATH, max_chars)
+
+
+def _read_last_log_run_at(path, max_chars=12000):
+    """Generic: return the last '=== run' section of any structured log file."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, 'rb') as f:
+            f.seek(max(0, size - max_chars))
+            tail = f.read().decode('utf-8', errors='replace')
+    except FileNotFoundError:
+        return ""
+    parts = tail.split("=" * 72)
+    if len(parts) >= 3:
+        return ("=" * 72) + parts[-2] + ("=" * 72) + parts[-1]
+    return tail
+
+
+def _start_live_run():
+    """Kick off live_signals.py in a subprocess. Non-blocking; returns immediately."""
+    import subprocess, sys as _sys
+    with _live_run_lock:
+        if _live_running["running"]:
+            return {"started": False, "reason": "already running"}
+        _live_running["running"]    = True
+        _live_running["started_at"] = time.time()
+
+    def _runner():
+        try:
+            with open(LIVE_LOG_PATH, 'ab') as log:
+                subprocess.run(
+                    [_sys.executable, LIVE_SCRIPT_PATH],
+                    cwd=BASE_DIR, stdout=log, stderr=log, timeout=120,
+                )
+        except Exception as e:
+            try:
+                with open(LIVE_LOG_PATH, 'a', encoding='utf-8') as log:
+                    log.write(f"\n[manual /live-run failed: {e}]\n")
+            except Exception:
+                pass
+        finally:
+            with _live_run_lock:
+                _live_running["running"] = False
+
+    threading.Thread(target=_runner, daemon=True).start()
+    return {"started": True}
 
 
 def _write_paper_trades(trades):
@@ -495,16 +626,19 @@ def _do_refresh_one(rel_path, inst_type, currency, stock_dir, insref, name):
 
 
 STATIC = {
-    "/style.css":          ("text/css; charset=utf-8",          "style.css"),
-    "/stock_page.js":      ("text/javascript; charset=utf-8",   "stock_page.js"),
-    "/pattern_engine.js":  ("text/javascript; charset=utf-8",   "patternEngine.js"),
-    "/nav.js":             ("text/javascript; charset=utf-8",   "nav.js"),
-    "/":               ("text/html; charset=utf-8",          "dashboard.html"),
-    "/scrape":         ("text/html; charset=utf-8",          "index.html"),
-    "/browse":         ("text/html; charset=utf-8",          "browse.html"),
-    "/stocksearch":    ("text/html; charset=utf-8",          "stocksearch.html"),
-    "/settings":       ("text/html; charset=utf-8",          "settings.html"),
-    "/help":           ("text/html; charset=utf-8",          "help.html"),
+    "/style.css":          ("text/css; charset=utf-8",          "web/style.css"),
+    "/stock_page.js":      ("text/javascript; charset=utf-8",   "web/stock_page.js"),
+    "/pattern_engine.js":  ("text/javascript; charset=utf-8",   "web/patternEngine.js"),
+    "/nav.js":             ("text/javascript; charset=utf-8",   "web/nav.js"),
+    "/":               ("text/html; charset=utf-8",          "web/dashboard.html"),
+    "/scrape":         ("text/html; charset=utf-8",          "web/index.html"),
+    "/browse":         ("text/html; charset=utf-8",          "web/browse.html"),
+    "/stocksearch":    ("text/html; charset=utf-8",          "web/stocksearch.html"),
+    "/settings":       ("text/html; charset=utf-8",          "web/settings.html"),
+    "/help":           ("text/html; charset=utf-8",          "web/help.html"),
+    "/live-signals":   ("text/html; charset=utf-8",          "web/live_signals.html"),
+    "/live-patterns":  ("text/html; charset=utf-8",          "web/live_patterns.html"),
+    "/ohlc-capture":   ("text/html; charset=utf-8",          "web/ohlc_capture.html"),
 }
 
 
@@ -603,6 +737,28 @@ class Handler(BaseHTTPRequestHandler):
                 if changed:
                     _write_paper_trades(trades)
             self._json(trades)
+        elif parsed.path == "/live-portfolio":
+            self._json(_read_live_portfolio())
+        elif parsed.path == "/live-approved":
+            with _live_approved_lock:
+                self._json(_read_live_approved())
+        elif parsed.path == "/live-force-entry":
+            with _live_force_entry_lock:
+                self._json(_read_live_force_entry())
+        elif parsed.path == "/live-force-sell":
+            with _live_force_sell_lock:
+                self._json(_read_force_sell_file(LIVE_FORCE_SELL_PATH))
+        elif parsed.path == "/live-patterns-force-sell":
+            with _live_patterns_force_sell_lock:
+                self._json(_read_force_sell_file(LIVE_PATTERNS_FORCE_SELL_PATH))
+        elif parsed.path == "/ohlc-status":
+            self._json(ohlc_capture.ohlc_status())
+        elif parsed.path == "/live-patterns-portfolio":
+            self._json(_read_live_patterns_portfolio())
+        elif parsed.path == "/live-patterns-log":
+            self._json({"text": _read_last_log_run_at(LIVE_PATTERNS_LOG_PATH)})
+        elif parsed.path == "/live-log":
+            self._json({"text": _read_last_log_run(), "running": _live_running["running"]})
         elif parsed.path in STATIC:
             mime, filename = STATIC[parsed.path]
             self._file(mime, os.path.join(BASE_DIR, filename))
@@ -709,6 +865,74 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"started": True})
             else:
                 self._json({"error": "already running"})
+            return
+        if self.path == "/live-run":
+            self._json(_start_live_run())
+            return
+        if self.path == "/live-approved":
+            try:
+                data   = json.loads(raw.decode())
+                action = data.get("action", "add")
+                ticker = str(data.get("ticker", "")).strip()
+                if not ticker:
+                    self._json({"error": "missing ticker"})
+                    return
+                with _live_approved_lock:
+                    approved = _read_live_approved()
+                    if action == "add" and ticker not in approved:
+                        approved.append(ticker)
+                    elif action == "remove" and ticker in approved:
+                        approved.remove(ticker)
+                    _write_live_approved(approved)
+                self._json({"ok": True, "approved": sorted(set(approved))})
+            except Exception as e:
+                self._json({"error": str(e)})
+            return
+        if self.path == "/live-force-entry":
+            try:
+                data   = json.loads(raw.decode())
+                action = data.get("action", "add")
+                ticker = str(data.get("ticker", "")).strip()
+                if not ticker:
+                    self._json({"error": "missing ticker"})
+                    return
+                with _live_force_entry_lock:
+                    forced = _read_live_force_entry()
+                    if action == "add" and ticker not in forced:
+                        forced.append(ticker)
+                    elif action == "remove" and ticker in forced:
+                        forced.remove(ticker)
+                    _write_live_force_entry(forced)
+                self._json({"ok": True, "forced": sorted(set(forced))})
+            except Exception as e:
+                self._json({"error": str(e)})
+            return
+        if self.path in ("/live-force-sell", "/live-patterns-force-sell"):
+            # Queue (or unqueue) a user-requested "sell now" for one position.
+            # Same shape as /live-force-entry — the engine executes it on the
+            # next run via apply_exit_checks(force_sells=...).
+            is_patterns = self.path.endswith("/live-patterns-force-sell")
+            path_const  = (LIVE_PATTERNS_FORCE_SELL_PATH if is_patterns
+                           else LIVE_FORCE_SELL_PATH)
+            lock        = (_live_patterns_force_sell_lock if is_patterns
+                           else _live_force_sell_lock)
+            try:
+                data   = json.loads(raw.decode())
+                action = data.get("action", "add")
+                ticker = str(data.get("ticker", "")).strip()
+                if not ticker:
+                    self._json({"error": "missing ticker"})
+                    return
+                with lock:
+                    queued = _read_force_sell_file(path_const)
+                    if action == "add" and ticker not in queued:
+                        queued.append(ticker)
+                    elif action == "remove" and ticker in queued:
+                        queued.remove(ticker)
+                    _write_force_sell_file(path_const, queued)
+                self._json({"ok": True, "queued": sorted(set(queued))})
+            except Exception as e:
+                self._json({"error": str(e)})
             return
 
         body = urllib.parse.parse_qs(raw.decode())
@@ -865,7 +1089,7 @@ class Handler(BaseHTTPRequestHandler):
             stock = {}
 
         try:
-            tpl_path = os.path.join(BASE_DIR, 'stock_template.html')
+            tpl_path = os.path.join(WEB_DIR, 'stock_template.html')
             with open(tpl_path, encoding='utf-8') as f:
                 tpl = f.read()
 
@@ -1169,10 +1393,22 @@ def _startup_refresh():
     print("[startup] Full startup update complete.")
 
 
+class QuietHTTPServer(HTTPServer):
+    """Suppress benign connection-reset tracebacks from clients that drop
+    mid-request (mobile / Tailscale roaming, tab closes, browser prefetch
+    cancels). Real errors still log normally."""
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, ConnectionAbortedError,
+                            BrokenPipeError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 PORT = 8765
 threading.Thread(target=_auto_refresh_loop, daemon=True).start()
 threading.Thread(target=_startup_refresh, daemon=True).start()
-server = HTTPServer(("0.0.0.0", PORT), Handler)
+server = QuietHTTPServer(("0.0.0.0", PORT), Handler)
 print(f"Opening browser at http://localhost:{PORT}")
 webbrowser.open(f"http://localhost:{PORT}")
 server.serve_forever()

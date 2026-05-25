@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Search</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 1100px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+
+    .toolbar {
+      display: flex; gap: 8px; align-items: center;
+      margin-bottom: 16px; flex-wrap: wrap;
+    }
+    #search-box {
+      flex: 1; min-width: 200px; padding: 8px 12px; font-size: 14px;
+      border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      box-sizing: border-box; background: var(--surface); color: var(--text);
+      font-family: Arial, sans-serif;
+    }
+    #search-box:focus { outline: none; border-color: var(--accent); }
+
+    .filter-select {
+      padding: 7px 10px; font-size: 13px; border: 1px solid var(--border-input);
+      border-radius: var(--radius-sm); background: var(--surface); color: var(--text-subtle);
+      font-family: Arial, sans-serif; cursor: pointer;
+    }
+    .filter-select:focus { outline: none; border-color: var(--accent); }
+
+    .sort-group {
+      display: flex; border: 1px solid var(--border-input);
+      border-radius: var(--radius-sm); overflow: hidden; background: var(--surface);
+    }
+    .sort-btn {
+      padding: 6px 13px; border: none; border-right: 1px solid var(--border-input);
+      background: var(--surface); cursor: pointer; font-size: 12px;
+      font-family: Arial, sans-serif; color: var(--text-subtle); white-space: nowrap;
+    }
+    .sort-btn:last-child { border-right: none; }
+    .sort-btn:hover  { background: var(--surface-hover); }
+    .sort-btn.active { background: var(--accent); color: #fff; }
+
+    .stock-count { font-size: 12px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+
+    #results { list-style: none; padding: 0; margin: 0; }
+    #results li {
+      background: var(--surface); padding: 12px 14px;
+      border: 1px solid var(--border); border-radius: var(--radius-md);
+      margin-bottom: 6px; cursor: pointer;
+      transition: box-shadow 0.12s, border-color 0.12s;
+    }
+    #results li:hover {
+      box-shadow: 0 2px 10px rgba(0,82,204,0.08);
+      border-color: var(--accent);
+    }
+    .stock-name { font-size: 15px; font-weight: bold; color: var(--text); }
+    .stock-meta { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+    .csv-badge {
+      display: inline-block; font-size: 10px; background: var(--accent-soft);
+      color: var(--accent); border-radius: 3px; padding: 2px 6px;
+      margin-right: 4px; margin-top: 4px;
+      text-transform: uppercase; letter-spacing: 0.3px; font-weight: 600;
+    }
+    #empty { color: var(--text-muted); font-size: 14px; margin-top: 20px; text-align: center; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h2>Stock Search</h2>
+  <div class="subtitle">Find any instrument by name, insref, type, or currency.</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch" class="active">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live-signals">Live Signals</a>
+    <a href="/live-patterns">Live Patterns</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="toolbar">
+    <input id="search-box" type="text" placeholder="Search by name, insref, type or currency..." oninput="onSearch()">
+    <select id="filter-curr" class="filter-select" onchange="render()">
+      <option value="">All currencies</option>
+    </select>
+    <select id="filter-type" class="filter-select" onchange="render()">
+      <option value="">All types</option>
+    </select>
+    <div class="sort-group">
+      <button class="sort-btn active" id="sort-name"     onclick="setSort('name')"     title="Sort alphabetically by stock name">Name ▲</button>
+      <button class="sort-btn"        id="sort-type"     onclick="setSort('type')"     title="Sort by instrument type">Type</button>
+      <button class="sort-btn"        id="sort-currency" onclick="setSort('currency')" title="Sort by currency">Currency</button>
+    </div>
+    <span class="stock-count" id="stock-count"></span>
+  </div>
+
+  <ul id="results"></ul>
+  <div id="empty" style="display:none">No stocks with CSV data found.</div>
+
+  <script>
+    let searchDebounce;
+    let lastResults = [];
+    let sortKey = 'name';
+    let sortAsc = true;
+    const SORT_DEFAULT_ASC = { name: true, type: true, currency: true };
+    const SORT_LABELS      = { name: 'Name', type: 'Type', currency: 'Currency' };
+
+    function onSearch() {
+      clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(doSearch, 250);
+    }
+
+    function doSearch() {
+      const q = document.getElementById('search-box').value;
+      fetch('/search?q=' + encodeURIComponent(q))
+        .then(r => r.json()).then(data => {
+          lastResults = data;
+          populateFilters(data);
+          render();
+        });
+    }
+
+    function populateFilters(stocks) {
+      const currSel = document.getElementById('filter-curr');
+      const typeSel = document.getElementById('filter-type');
+      const prevCurr = currSel.value;
+      const prevType = typeSel.value;
+      const currencies = [...new Set(stocks.map(s => s.currency))].sort();
+      const types      = [...new Set(stocks.map(s => s.type))].sort();
+      currSel.innerHTML = '<option value="">All currencies</option>';
+      typeSel.innerHTML = '<option value="">All types</option>';
+      currencies.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; currSel.appendChild(o); });
+      types.forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t; typeSel.appendChild(o); });
+      // Preserve selection if still valid
+      if (currencies.includes(prevCurr)) currSel.value = prevCurr;
+      if (types.includes(prevType))      typeSel.value = prevType;
+    }
+
+    function setSort(key) {
+      if (sortKey === key) {
+        sortAsc = !sortAsc;
+      } else {
+        sortKey = key;
+        sortAsc = SORT_DEFAULT_ASC[key];
+      }
+      updateSortButtons();
+      render();
+    }
+
+    function updateSortButtons() {
+      Object.keys(SORT_LABELS).forEach(key => {
+        const btn = document.getElementById('sort-' + key);
+        if (!btn) return;
+        const isActive = key === sortKey;
+        btn.classList.toggle('active', isActive);
+        btn.textContent = isActive ? SORT_LABELS[key] + (sortAsc ? ' ▲' : ' ▼') : SORT_LABELS[key];
+      });
+    }
+
+    function render() {
+      const curr = document.getElementById('filter-curr').value;
+      const type = document.getElementById('filter-type').value;
+      let filtered = lastResults;
+      if (curr) filtered = filtered.filter(s => s.currency === curr);
+      if (type) filtered = filtered.filter(s => s.type === type);
+      filtered = sortResults(filtered);
+      renderResults(filtered);
+    }
+
+    function sortResults(stocks) {
+      const dir = sortAsc ? 1 : -1;
+      return [...stocks].sort((a, b) => dir * String(a[sortKey] || '').localeCompare(String(b[sortKey] || '')));
+    }
+
+    function renderResults(data) {
+      const ul    = document.getElementById('results');
+      const empty = document.getElementById('empty');
+      const count = document.getElementById('stock-count');
+      ul.innerHTML = '';
+      count.textContent = data.length + ' stock' + (data.length !== 1 ? 's' : '');
+      if (!data.length) { empty.style.display = ''; return; }
+      empty.style.display = 'none';
+      data.forEach(s => {
+        const li     = document.createElement('li');
+        const sep    = s.folder.indexOf('_');
+        const insref = sep >= 0 ? s.folder.slice(0, sep) : '';
+        const badges = s.csvs.map(f => `<span class="csv-badge">${esc(f)}</span>`).join('');
+        li.innerHTML =
+          `<div class="stock-name">${esc(s.name)}</div>` +
+          `<div class="stock-meta">${esc(s.type)} &nbsp;|&nbsp; ${esc(s.currency)}` +
+          (insref ? ` &nbsp;|&nbsp; #${esc(insref)}` : '') + `</div>` +
+          `<div style="margin-top:5px">${badges}</div>`;
+        li.onclick = () => {
+          li.style.opacity = '0.5';
+          li.style.pointerEvents = 'none';
+          li.querySelector('.stock-name').textContent += '  Updating…';
+          fetch('/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'path=' + encodeURIComponent(s.path)
+          })
+          .finally(() => {
+            window.location.href = '/view?path=' + encodeURIComponent(s.path);
+          });
+        };
+        ul.appendChild(li);
+      });
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    doSearch();
+  </script>
+  <script src="/nav.js"></script>
+</body>
+</html>

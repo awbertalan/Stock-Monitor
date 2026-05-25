@@ -1,17 +1,62 @@
+:root {
+  /* Surfaces */
+  --bg:              #f0f3fa;
+  --surface:         #fff;
+  --surface-alt:     #fafbfd;
+  --surface-hover:   #f8faff;
+  --border:          #e8ecf5;
+  --border-input:    #dde1ec;
+
+  /* Text */
+  --text:            #1a1f36;
+  --text-muted:      #8a94a6;
+  --text-subtle:     #555;
+
+  /* Accent + semantic */
+  --accent:          #0052cc;
+  --accent-hover:    #003d99;
+  --accent-soft:     #e8f0fe;
+  --positive:        #1a8042;
+  --positive-soft:   #e6f6ee;
+  --negative:        #b32a36;
+  --negative-soft:   #fce8ea;
+  --warning:         #b08000;
+  --warning-soft:    #fff4d6;
+  --star:            #f0b429;
+
+  /* Spacing + radii (use sparingly — only when sharing values) */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+}
+
 body { font-family: Arial, sans-serif; max-width: 600px; margin: 60px auto; padding: 0 20px; }
 h2 { margin-bottom: 8px; }
 a { color: #0066cc; }
 
-nav { margin-bottom: 28px; display: flex; gap: 12px; }
-nav a { text-decoration: none; padding: 7px 18px; border-radius: 4px; background: #e8e8e8; color: #333; font-weight: bold; }
-nav a.active { background: #0066cc; color: white; }
-.nav-update-btn {
-  margin-left: auto; padding: 6px 16px; border: none; border-radius: 4px;
-  background: #1a7f37; color: #fff; font-size: 13px; font-weight: bold;
-  font-family: Arial, sans-serif; cursor: pointer; white-space: nowrap;
+nav {
+  display: flex; gap: 2px; align-items: center;
+  margin-bottom: 24px; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
-.nav-update-btn:hover    { background: #166130; }
-.nav-update-btn:disabled { background: #8a94a6; cursor: default; }
+nav a {
+  text-decoration: none; padding: 10px 14px;
+  color: var(--text-muted); font-size: 13px; font-weight: 600;
+  font-family: Arial, sans-serif;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+nav a:hover  { color: var(--text); }
+nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+.nav-update-btn {
+  margin-left: auto; padding: 7px 16px; border: none; border-radius: var(--radius-sm);
+  background: var(--positive); color: #fff; font-size: 12px; font-weight: bold;
+  font-family: Arial, sans-serif; cursor: pointer; white-space: nowrap;
+  transition: background 0.12s;
+}
+.nav-update-btn:hover    { background: #156b30; }
+.nav-update-btn:disabled { background: var(--text-muted); cursor: default; }
 
 /* Watchlist star — dashboard cards */
 .card-star-btn {
@@ -25,3 +70,53 @@ nav a.active { background: #0066cc; color: white; }
 /* Watchlist section heading on dashboard */
 .section-heading { font-size: 14px; font-weight: bold; color: #1a1f36; margin-bottom: 10px; }
 .section-divider { border: none; border-top: 1px solid #e0e4ef; margin: 24px 0 20px; }
+
+/* ───── Mobile (≤720px) ─────
+   Global responsive layer. Per-page styles override as needed.
+   Strategy: full-width body, horizontally scrollable nav, tighter
+   spacing, smaller typography. Desktop look is preserved above 720px. */
+@media (max-width: 720px) {
+  body {
+    max-width: 100% !important;
+    margin: 16px auto;
+    padding: 0 14px;
+  }
+  h2 { font-size: 22px !important; letter-spacing: -0.3px !important; }
+  .subtitle { font-size: 12px !important; margin-bottom: 14px !important; }
+
+  /* Nav: horizontal scroll instead of wrapping into 2-3 cramped rows */
+  nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    margin-bottom: 16px;
+  }
+  nav::-webkit-scrollbar { display: none; }
+  nav a { padding: 10px 11px; font-size: 12px; }
+  .nav-update-btn {
+    margin-left: 8px; padding: 6px 12px; font-size: 11px;
+  }
+
+  /* Section cards: tighter padding on phones */
+  .section, .detail-section, .chart-card, .stock-header,
+  .stat-card, .action-row, #pattern-panel {
+    padding: 14px 16px !important;
+    border-radius: var(--radius-md) !important;
+  }
+
+  /* Tables that don't fit: let them scroll horizontally within their card.
+     The card itself stays full-width so it visually frames the scroll area. */
+  .section table, .detail-section table, .chart-card table {
+    display: block; overflow-x: auto; white-space: nowrap;
+    width: 100%; max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+  table { font-size: 12px; }
+  th, td { padding: 8px 10px !important; }
+
+  /* Stat rows stack on phones */
+  .stat-row { flex-direction: column; }
+  .stat-card { min-width: 0 !important; }
+}

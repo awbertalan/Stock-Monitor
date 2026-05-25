@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OHLC Capture</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 1100px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+
+    .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .stat-card {
+      flex: 1; min-width: 160px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+    }
+    .stat-label {
+      font-size: 10px; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
+    }
+    .stat-value { font-size: 22px; font-weight: bold; color: var(--text); font-variant-numeric: tabular-nums; }
+    .stat-sub   { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 22px; margin-bottom: 18px;
+    }
+    .section-title {
+      font-size: 11px; font-weight: bold; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 12px;
+    }
+    .section-desc { font-size: 13px; color: var(--text-subtle); margin: 0 0 14px; line-height: 1.6; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      text-align: left; padding: 9px 12px; background: var(--surface-alt);
+      color: var(--text-muted); font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.4px; border-bottom: 1px solid var(--border); font-weight: 600;
+    }
+    td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface-hover); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .small { font-size: 11px; color: var(--text-muted); }
+    .empty-row { text-align: center; color: var(--text-muted); padding: 24px; font-style: italic; }
+
+    .pill {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      border-radius: 4px; padding: 3px 7px; text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .pill-on   { background: var(--positive-soft); color: var(--positive); }
+    .pill-warn { background: var(--warning-soft);  color: var(--warning); }
+    .pill-info { background: var(--accent-soft);   color: var(--accent); }
+
+    .progress {
+      background: var(--border); border-radius: 4px; height: 8px;
+      overflow: hidden; margin-top: 10px;
+    }
+    .progress-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+  </style>
+</head>
+<body>
+  <h2>OHLC Capture</h2>
+  <div class="subtitle">Daily open/high/low/close/volume per OMX large cap — foundation for the candlestick-pattern engine. Captured once per trading day from <code>live_signals.run_eod_sweep()</code>.</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live-signals">Live Signals</a>
+    <a href="/live-patterns">Live Patterns</a>
+    <a href="/ohlc-capture" class="active">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Stocks captured</div>
+      <div class="stat-value" id="stat-stocks">—</div>
+      <div class="stat-sub" id="stat-stocks-sub">of OMX large cap</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total bars</div>
+      <div class="stat-value" id="stat-bars">—</div>
+      <div class="stat-sub" id="stat-bars-sub">across all files</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Earliest bar</div>
+      <div class="stat-value" id="stat-earliest" style="font-size:16px;">—</div>
+      <div class="stat-sub" id="stat-earliest-sub">capture started</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Latest bar</div>
+      <div class="stat-value" id="stat-latest" style="font-size:16px;">—</div>
+      <div class="stat-sub" id="stat-latest-sub">most recent close</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Engine readiness</div>
+      <div class="stat-value" id="stat-progress">—</div>
+      <div class="stat-sub" id="stat-progress-sub">bars per stock (need ~30)</div>
+      <div class="progress"><div class="progress-fill" id="stat-progress-bar"></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Why we're collecting this</div>
+    <p class="section-desc">
+      The existing daily <code>*_History.csv</code> files store close prices only — no open/high/low. Candlestick patterns
+      (Hammer, Engulfing, Morning Star, etc.) are defined by within-bar geometry and are impossible to detect from closes alone.
+      Starting <strong>2026-05-23</strong>, every trading day's EOD sweep captures a fresh OHLC bar from the Millistream live quote endpoint
+      (which exposes <code>openprice / dayhighprice / daylowprice / lastprice / quantity</code>) and appends it to a per-stock CSV in <code>ohlc/</code>.
+      Once ~30 bars per stock have accumulated (early July 2026) the candlestick-pattern engine can be built on top, running parallel to Live Signals
+      with a separate paper wallet. See <a href="/help#live-signals-page">Live Signals help</a> for the planned engine specifics
+      (TP +0.5% / SL −2% / max 3-day hold, no-Friday, top-6 bullish patterns).
+    </p>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Sample latest bars <span id="sample-name" class="small" style="font-weight:normal; text-transform:none; letter-spacing:0;"></span></div>
+    <table id="sample-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th class="num">Open</th>
+          <th class="num">High</th>
+          <th class="num">Low</th>
+          <th class="num">Close</th>
+          <th class="num">Volume</th>
+        </tr>
+      </thead>
+      <tbody id="sample-body">
+        <tr><td colspan="6" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Per-stock progress</div>
+    <table>
+      <thead>
+        <tr>
+          <th class="num">insref</th>
+          <th class="num">Bars</th>
+          <th>Earliest</th>
+          <th>Latest</th>
+          <th class="num">Latest close</th>
+        </tr>
+      </thead>
+      <tbody id="perstock-body">
+        <tr><td colspan="5" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const fmt = (n, d=0) => Number(n).toLocaleString('sv-SE', {maximumFractionDigits:d, minimumFractionDigits:d});
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const ENGINE_TARGET_BARS = 30;
+
+    async function refresh() {
+      try {
+        const s = await fetch('/ohlc-status').then(r => r.json());
+        renderStatus(s);
+      } catch (e) {
+        console.error('refresh failed', e);
+      }
+    }
+
+    function renderStatus(s) {
+      document.getElementById('stat-stocks').textContent = fmt(s.stock_count);
+      document.getElementById('stat-bars').textContent   = fmt(s.total_bars);
+      document.getElementById('stat-earliest').textContent = s.earliest_date || '—';
+      document.getElementById('stat-latest').textContent   = s.latest_date   || '—';
+
+      // Engine readiness: bars-per-stock progress toward ~30.
+      const avg = s.stock_count ? (s.total_bars / s.stock_count) : 0;
+      const pct = Math.min(100, Math.round((avg / ENGINE_TARGET_BARS) * 100));
+      document.getElementById('stat-progress').textContent     = avg.toFixed(1);
+      document.getElementById('stat-progress-bar').style.width = pct + '%';
+      document.getElementById('stat-progress-sub').textContent =
+        pct >= 100 ? 'Ready to build the engine'
+                   : `bar avg per stock (need ~${ENGINE_TARGET_BARS} — ${pct}%)`;
+
+      // Sample table
+      const sampleBody = document.getElementById('sample-body');
+      const sampleName = document.getElementById('sample-name');
+      if (s.sample_latest_bars && s.sample_latest_bars.length) {
+        sampleName.textContent = `(insref ${esc(s.sample_insref || '?')})`;
+        sampleBody.innerHTML = s.sample_latest_bars.map(b => `
+          <tr>
+            <td>${esc(b.date)}</td>
+            <td class="num">${fmt(b.open, 2)}</td>
+            <td class="num">${fmt(b.high, 2)}</td>
+            <td class="num">${fmt(b.low, 2)}</td>
+            <td class="num">${fmt(b.close, 2)}</td>
+            <td class="num">${fmt(b.volume, 0)}</td>
+          </tr>`).join('');
+      } else {
+        sampleName.textContent = '';
+        sampleBody.innerHTML = '<tr><td colspan="6" class="empty-row">No OHLC bars captured yet — first capture runs at the next post-close EOD sweep (Mon–Fri ~18:00 local)</td></tr>';
+      }
+
+      // Per-stock
+      const perBody = document.getElementById('perstock-body');
+      if (s.per_stock && s.per_stock.length) {
+        perBody.innerHTML = s.per_stock.map(p => `
+          <tr>
+            <td class="num">${esc(p.insref)}</td>
+            <td class="num">${fmt(p.bars)}</td>
+            <td>${esc(p.earliest)}</td>
+            <td>${esc(p.latest)}</td>
+            <td class="num">${p.latest_close != null ? fmt(p.latest_close, 2) : '—'}</td>
+          </tr>`).join('');
+      } else {
+        perBody.innerHTML = '<tr><td colspan="5" class="empty-row">No OHLC files yet</td></tr>';
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 60000);  // 1 min
+  </script>
+  <script src="/nav.js"></script>
+</body>
+</html>
