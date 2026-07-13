@@ -27,13 +27,16 @@ window can't corrupt the file.
 import csv
 import glob
 import os
+from collections import defaultdict
+from datetime import datetime, timezone
 
 import env_loader
 env_loader.load_env()
 import infoScrapper    # noqa: E402
 
-ROOT     = os.path.dirname(os.path.abspath(__file__))
+ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root (this module lives in lib/)
 OHLC_DIR = os.path.join(ROOT, "ohlc")
+BASE     = os.path.join(ROOT, "Instrumenttype", "Equity", "SEK")
 
 
 def capture_eod_ohlc(today, tradable, fetch_quotes_parallel):
@@ -93,6 +96,96 @@ def capture_eod_ohlc(today, tradable, fetch_quotes_parallel):
         except OSError:
             pass
     return captured
+
+
+def backfill_from_intraday(skip_today=True):
+    """One-shot historical backfill: aggregate each `*_7d.csv` into daily
+    OHLC bars and write them to `ohlc/{insref}_OHLC.csv`. Only fills bars
+    that are NOT already present in the per-stock CSV — safe to re-run.
+
+    Returns {"stocks_touched": int, "bars_added": int, "bars_skipped": int}.
+
+    Caveats:
+      · *_7d.csv carries minute closes only, not true OHLC. The derived
+        O/H/L/C use first/max/min/last of minute closes — identical to the
+        proxy live_patterns.py already uses. Real EOD captures (which start
+        accumulating Monday 2026-06-15 via maybe_capture_eod_ohlc) will use
+        proper Millistream openprice/dayhighprice/daylowprice fields.
+      · Volume cannot be reconstructed from minute closes; backfilled rows
+        carry volume=0. Real captures fill volume correctly.
+      · skip_today=True (default) drops today's in-progress bar so we don't
+        write a partial day. Set False for a synthetic test.
+    """
+    os.makedirs(OHLC_DIR, exist_ok=True)
+    today_str = datetime.now(timezone.utc).date().isoformat()
+    folders = sorted(glob.glob(os.path.join(BASE, "*")))
+    stocks_touched = 0
+    bars_added     = 0
+    bars_skipped   = 0
+    for folder in folders:
+        basename = os.path.basename(folder)
+        try:
+            insref = int(basename.split("_", 1)[0])
+        except (ValueError, IndexError):
+            continue
+        cand = glob.glob(os.path.join(folder, "*_7d.csv"))
+        if not cand:
+            continue
+        minute_rows = []
+        try:
+            with open(cand[0], encoding="utf-8") as f:
+                for r in csv.reader(f):
+                    try:
+                        minute_rows.append((int(float(r[0])), float(r[1])))
+                    except (ValueError, IndexError):
+                        pass
+        except OSError:
+            continue
+        if not minute_rows:
+            continue
+        minute_rows.sort()
+        # Aggregate to daily buckets (UTC date)
+        by_day = defaultdict(list)
+        for ts, p in minute_rows:
+            d = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).date().isoformat()
+            by_day[d].append(p)
+        out_path = os.path.join(OHLC_DIR, f"{insref}_OHLC.csv")
+        existing_dates = set()
+        existing_rows  = []
+        if os.path.exists(out_path):
+            try:
+                with open(out_path, encoding="utf-8") as f:
+                    for r in csv.reader(f):
+                        if r:
+                            existing_rows.append(r)
+                            existing_dates.add(r[0])
+            except OSError:
+                pass
+        new_rows = []
+        for d in sorted(by_day):
+            if skip_today and d == today_str:
+                continue
+            if d in existing_dates:
+                bars_skipped += 1
+                continue
+            prices = by_day[d]
+            new_rows.append([d, f"{prices[0]:g}", f"{max(prices):g}",
+                             f"{min(prices):g}", f"{prices[-1]:g}", "0"])
+        if not new_rows:
+            continue
+        merged = sorted(existing_rows + new_rows, key=lambda r: r[0])
+        try:
+            with open(out_path, "w", encoding="utf-8", newline="") as f:
+                csv.writer(f).writerows(merged)
+            stocks_touched += 1
+            bars_added += len(new_rows)
+        except OSError:
+            pass
+    return {
+        "stocks_touched": stocks_touched,
+        "bars_added":     bars_added,
+        "bars_skipped":   bars_skipped,
+    }
 
 
 def ohlc_status():

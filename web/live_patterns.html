@@ -10,72 +10,14 @@
     h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
     .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
 
-    .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
-    .stat-card {
-      flex: 1; min-width: 140px;
-      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-      padding: 14px 16px;
-    }
-    .stat-label {
-      font-size: 10px; color: var(--text-muted);
-      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
-    }
-    .stat-value { font-size: 22px; font-weight: bold; color: var(--text); font-variant-numeric: tabular-nums; }
-    .stat-sub   { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-    .up   { color: var(--positive); }
-    .down { color: var(--negative); }
-
     .section {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       padding: 18px 22px; margin-bottom: 18px;
     }
-    .section-title {
-      font-size: 11px; font-weight: bold; color: var(--text-muted);
-      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 12px;
-    }
 
     .sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .sig-table th {
-      text-align: left; padding: 9px 12px; background: var(--surface-alt);
-      color: var(--text-muted); font-size: 10px; text-transform: uppercase;
-      letter-spacing: 0.4px; border-bottom: 1px solid var(--border); font-weight: 600;
-    }
-    .sig-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
-    .sig-table tr:last-child td { border-bottom: none; }
-    .sig-table tr:hover td { background: var(--surface-hover); }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ticker { font-weight: 600; }
-    .ticker-link { color: inherit; text-decoration: none; border-bottom: 1px dotted transparent; }
-    .ticker-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
-    .small  { font-size: 11px; color: var(--text-muted); }
-    .empty-row { text-align: center; color: var(--text-muted); padding: 24px; font-style: italic; }
-    .pill {
-      display: inline-block; font-size: 10px; font-weight: bold;
-      border-radius: 4px; padding: 3px 7px; text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
-    .reason-TP      { background: var(--positive-soft); color: var(--positive); }
-    .reason-SL      { background: var(--negative-soft); color: var(--negative); }
-    .reason-TIMEOUT { background: var(--warning-soft);  color: var(--warning); }
     .pattern-pill   { background: var(--accent-soft);   color: var(--accent); font-weight: 600; }
-
-    .sell-btn {
-      background: var(--surface); color: var(--warning); border: 1px solid #e0c060;
-      border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
-      cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap;
-    }
-    .sell-btn:hover:not(:disabled) { background: var(--warning-soft); }
-    .sell-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: not-allowed; background: var(--surface); }
-    .sell-btn.queued { background: var(--warning); color: #fff; border-color: var(--warning); }
-    .sell-btn.queued:hover { background: #8a6500; }
-
-    #log-panel {
-      background: #0f1419; color: #c5cbd6; padding: 14px 16px;
-      border-radius: var(--radius-md); font-size: 12px;
-      font-family: ui-monospace, Menlo, Consolas, monospace;
-      max-height: 360px; overflow-y: auto; white-space: pre-wrap;
-    }
     .log-empty { color: var(--text-muted); font-style: italic; }
     @media (max-width: 720px) {
       .sig-table .mobile-hide { display: none; }
@@ -89,14 +31,20 @@
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
     <a href="/browse">Browse Folders</a>
-    <a href="/live-signals">Live Signals</a>
-    <a href="/live-patterns" class="active">Live Patterns</a>
+    <a href="/live" class="active">Live</a>
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
     <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
+
+  <div class="tab-bar">
+    <a class="tab"        href="/live-overview">Overview</a>
+    <a class="tab"        href="/live-signals">Signals</a>
+    <a class="tab active" href="/live-patterns">Patterns</a>
+    <a class="tab"        href="/live-cross">Cross</a>
+  </div>
 
   <div class="stat-row">
     <div class="stat-card">
@@ -150,6 +98,26 @@
   </div>
 
   <div class="section">
+    <div class="section-title">SL cooldown — entries currently blocked</div>
+    <div class="section-subtitle" id="cooldown-summary">
+      Tickers that hit an SL today are blocked from same-day re-entry; the next trading day is fine. Listed here so you know which names are paused right now.
+    </div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th class="mobile-hide">Last SL date</th>
+          <th class="num">Days elapsed</th>
+          <th class="num">Days remaining</th>
+        </tr>
+      </thead>
+      <tbody id="cooldown-body">
+        <tr><td colspan="4" class="empty-row">(none)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
     <div class="section-title">Closed trades</div>
     <table class="sig-table">
       <thead>
@@ -175,16 +143,10 @@
     <div id="log-panel"><span class="log-empty">Loading…</span></div>
   </div>
 
+  <script src="/live_common.js"></script>
   <script>
-    const fmt  = (n, d=0) => Number(n).toLocaleString('sv-SE', {maximumFractionDigits:d, minimumFractionDigits:d});
-    const fmtTs = ts => ts ? String(ts).replace('T', ' ').slice(0, 19) : '';
-    const pct  = (n, d=2) => `${n>=0?'+':''}${(n*100).toFixed(d)}%`;
-    const sign = n => n >= 0 ? `+${fmt(n,0)}` : fmt(n,0);
-    const cls  = n => n > 0 ? 'up' : (n < 0 ? 'down' : '');
-    const esc  = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
     let forceSellSet = new Set();
-    const SELL_MIN_RET = 0.0075;   // UI gate: button unlocks at ≥+0.75% unrealized
+    let tickerPaths = {};
 
     async function refresh() {
       try {
@@ -196,9 +158,56 @@
         forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
         renderPortfolio(pf);
         renderLog(log);
+        renderCooldowns(pf);
       } catch (e) {
         console.error('refresh failed', e);
       }
+    }
+
+    /* Trading-days helper — mirrors live_patterns.py:trading_days_between. */
+    function tradingDaysSince(dateStr) {
+      const d1 = new Date(dateStr + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      let n = 0;
+      const d = new Date(d1.getTime());
+      while (d < today) {
+        d.setDate(d.getDate() + 1);
+        const w = d.getDay();
+        if (w !== 0 && w !== 6) n += 1;
+      }
+      return n;
+    }
+    const COOLDOWN_DAYS = 1;   // matches live_patterns.py — same-day SL block only (was 7 pre-2026-06-13)
+    function renderCooldowns(p) {
+      const closed = Array.isArray(p.closed_trades) ? p.closed_trades : [];
+      const latestByTicker = {};
+      for (const t of closed) {
+        if (!t.ticker || !t.exit_date) continue;
+        const cur = latestByTicker[t.ticker];
+        if (!cur || t.exit_date > cur.exit_date) latestByTicker[t.ticker] = t;
+      }
+      const rows = [];
+      for (const t of Object.values(latestByTicker)) {
+        if (t.reason !== 'SL') continue;
+        const elapsed = tradingDaysSince(t.exit_date);
+        const remaining = COOLDOWN_DAYS - elapsed;
+        if (remaining <= 0) continue;
+        rows.push({ ticker: t.ticker, exit_date: t.exit_date, elapsed, remaining });
+      }
+      rows.sort((a, b) => a.remaining - b.remaining);
+      const body = document.getElementById('cooldown-body');
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="4" class="empty-row">(none — no tickers in active SL cooldown)</td></tr>';
+        return;
+      }
+      body.innerHTML = rows.map(r => `
+        <tr>
+          <td class="ticker">${tickerLink(r.ticker)}</td>
+          <td class="small mobile-hide">${esc(r.exit_date)}</td>
+          <td class="num">${r.elapsed}d</td>
+          <td class="num down">${r.remaining}d</td>
+        </tr>`).join('');
     }
 
     async function toggleForceSell(ticker, btn) {
@@ -225,6 +234,7 @@
       const cash = p.cash || 0;
       const positions = p.positions || {};
       const closed    = p.closed_trades || [];
+      tickerPaths = (p.ticker_paths && typeof p.ticker_paths === 'object') ? p.ticker_paths : {};
       const openVal   = Object.entries(positions).reduce((s, [tk, pos]) => {
         const last = (p.last_quotes && p.last_quotes[tk] && p.last_quotes[tk].last) || pos.entry_price;
         return s + pos.shares * last;
@@ -278,7 +288,7 @@
                  : `Sell button unlocks at +${(SELL_MIN_RET*100).toFixed(2)}% unrealized (currently ${ret>=0?'+':''}${(ret*100).toFixed(2)}%)`);
           return `
             <tr>
-              <td class="ticker">${esc(tk)}</td>
+              <td class="ticker">${tickerLink(tk)}</td>
               <td><span class="pill pattern-pill">${esc(pat)}</span></td>
               <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
               <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
@@ -311,7 +321,7 @@
           const pat      = (t.signal_info || {}).pattern || '?';
           return `
             <tr>
-              <td class="ticker">${esc(t.ticker)}</td>
+              <td class="ticker">${tickerLink(t.ticker)}</td>
               <td><span class="pill pattern-pill">${esc(pat)}</span></td>
               <td class="small">${esc(inLabel)}<br>→ ${esc(outLabel)}</td>
               <td class="num mobile-hide">${fmt(t.entry_price, 2)}</td>
@@ -339,5 +349,6 @@
     setInterval(refresh, 120000);  // 2 min
   </script>
   <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
 </body>
 </html>

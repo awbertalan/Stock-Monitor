@@ -58,6 +58,132 @@ nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
 .nav-update-btn:hover    { background: #156b30; }
 .nav-update-btn:disabled { background: var(--text-muted); cursor: default; }
 
+/* Sub-tab bar — used inside multi-mode pages (Dashboard, Live).
+   Sits below the main <nav>; one click switches engine/mode. The :hover
+   and .active rules mirror the main-nav accent so the two tiers feel
+   consistent.  Works as either <button class="tab"> (JS-driven, dashboard)
+   or <a class="tab"> (anchor-driven, live pages). */
+.tab-bar {
+  display: flex; border-bottom: 2px solid var(--border);
+  margin-bottom: 16px; overflow-x: auto;
+}
+.tab-bar::-webkit-scrollbar { height: 0; }
+.tab {
+  padding: 9px 16px; border: none; background: none;
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  color: var(--text-muted); border-bottom: 2px solid transparent;
+  margin-bottom: -2px; font-family: Arial, sans-serif;
+  white-space: nowrap; transition: color 0.12s; flex-shrink: 0;
+  text-decoration: none;
+}
+.tab:hover  { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Section header helper — short explanatory paragraph under a .section-title */
+.section-subtitle {
+  font-size: 12px; color: var(--text-muted);
+  margin-bottom: 12px; line-height: 1.5;
+}
+
+/* Live widget — floating left-side summary of all 3 engines, injected by
+   /live_widget.js on every page except /live*. Hidden below 1280px viewport
+   so it never overlaps the centred page content. */
+.live-widget {
+  position: fixed; top: 16px; bottom: 16px; left: 16px;
+  width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 14px 12px;
+  font-family: Arial, sans-serif; font-size: 12px; color: var(--text);
+  box-shadow: 0 4px 14px rgba(26, 31, 54, 0.06);
+  z-index: 50;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.live-widget .lw-head {
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px;
+}
+.live-widget .lw-title {
+  font-size: 10px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.live-widget .lw-open {
+  font-size: 13px; color: var(--accent); text-decoration: none;
+  font-weight: 600;
+}
+.live-widget .lw-open:hover { color: var(--accent-hover); }
+.live-widget .lw-loading { color: var(--text-muted); font-style: italic; padding: 8px 0; }
+.live-widget .lw-block { margin-bottom: 10px; }
+.live-widget .lw-block:last-child { margin-bottom: 0; }
+.live-widget .lw-lbl {
+  font-size: 9.5px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 2px;
+}
+.live-widget .lw-val {
+  font-size: 16px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+}
+.live-widget .lw-unit { font-size: 10px; color: var(--text-muted); font-weight: 500; }
+.live-widget .lw-sub  { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+.live-widget .lw-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Per-position detail rows (replace the old per-engine count rows) */
+.live-widget .lw-positions { margin-top: 6px; }
+.live-widget .lw-pos {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 0; font-size: 11.5px; color: var(--text);
+  text-decoration: none; border-bottom: 1px dashed var(--border);
+}
+.live-widget .lw-pos:last-child { border-bottom: none; }
+.live-widget .lw-pos:hover { color: var(--accent); }
+.live-widget .lw-pos-tk {
+  flex: 1; min-width: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  font-weight: 500;
+}
+.live-widget .lw-pos-ret {
+  font-variant-numeric: tabular-nums; font-weight: 600;
+  font-size: 11px; white-space: nowrap;
+}
+.live-widget .lw-empty {
+  font-size: 11px; color: var(--text-muted); font-style: italic;
+  padding: 6px 0;
+}
+
+/* Compact per-engine count strip under the position list */
+.live-widget .lw-engine-counts {
+  display: flex; gap: 10px; margin-top: 8px;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+.live-widget .lw-mini {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-muted);
+  text-decoration: none; font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.live-widget .lw-mini:hover { color: var(--text); }
+
+.live-widget .up   { color: var(--positive); }
+.live-widget .down { color: var(--negative); }
+
+/* Push body content right when the sidebar is present AND the viewport has
+   room. Using :has() means the sidebar's DOM presence directly drives the
+   layout — no JS-added class needed, and the rule auto-clears on pages
+   where the widget JS self-suppresses (/live*).
+   Breakpoint 1360px = 16 (left inset) + 220 (sidebar) + 16 (gap) + 1100
+   (widest content max-width) + 8 (visual breathing room).  */
+@media (min-width: 1360px) {
+  body:has(.live-widget) { margin-left: 252px; }
+}
+@media (max-width: 1359px) {
+  .live-widget { display: none; }
+}
+
 /* Watchlist star — dashboard cards */
 .card-star-btn {
   position: absolute; top: 8px; right: 8px;
@@ -70,6 +196,44 @@ nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
 /* Watchlist section heading on dashboard */
 .section-heading { font-size: 14px; font-weight: bold; color: #1a1f36; margin-bottom: 10px; }
 .section-divider { border: none; border-top: 1px solid #e0e4ef; margin: 24px 0 20px; }
+
+/* ───── Live-engine pages — shared components ─────
+   Canonical look for live_signals / live_patterns / live_cross / live_overview /
+   ohlc_capture. Previously every page carried its own copy of this block; these
+   are live_signals' definitions (the chosen canonical), so the other pages adopt
+   its palette/shape. Non-live pages either don't use these classes or override
+   them with their own inline <style> (which loads after this sheet). */
+.stat-row   { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.stat-card  { flex: 1; min-width: 140px; background: #fff; border: 1px solid #e8ecf5; border-radius: 10px; padding: 14px 16px; }
+.stat-label { font-size: 10px; color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
+.stat-value { font-size: 22px; font-weight: bold; color: #1a1f36; letter-spacing: -0.5px; line-height: 1.1; }
+.stat-sub   { font-size: 11px; color: #8a94a6; margin-top: 4px; }
+.up   { color: #16c784; }
+.down { color: #ea3943; }
+.neutral { color: #0052cc; }
+.pill { display: inline-block; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; }
+.section-title { font-size: 11px; font-weight: bold; color: #8a94a6; text-transform: uppercase; letter-spacing: 0.5px; margin: 22px 0 8px; }
+table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sig-table th { text-align: left; padding: 9px 12px; font-size: 10px; font-weight: bold; color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid #e8ecf5; background: #fafbfd; white-space: nowrap; }
+.sig-table td { padding: 10px 12px; border-bottom: 1px solid #f4f6fb; color: #1a1f36; }
+.sig-table tr:last-child td { border-bottom: none; }
+.sig-table tr:hover td { background: #f8faff; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ticker { font-weight: 600; }
+.ticker-link { color: inherit; text-decoration: none; border-bottom: 1px dotted transparent; }
+.ticker-link:hover { color: #0052cc; border-bottom-color: #0052cc; }
+.small { font-size: 11px; color: #8a94a6; }
+.empty-row { text-align: center; color: #8a94a6; padding: 24px; font-style: italic; }
+.reason-TP      { background: #e6f6ee; color: #1a8042; }
+.reason-SL      { background: #fce8ea; color: #b32a36; }
+.reason-TIMEOUT { background: #f0f0f5; color: #555;   }
+.sell-btn { background: #fff; color: #b08000; border: 1px solid #e0c060; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap; }
+.sell-btn:hover:not(:disabled) { background: #fff4d6; }
+.sell-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: not-allowed; background: #fff; }
+.sell-btn.queued { background: #b08000; color: #fff; border-color: #b08000; }
+.sell-btn.queued:hover { background: #8a6500; }
+#log-panel { background: #1a1f36; color: #c0ccee; border-radius: 10px; padding: 14px 16px; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.5; max-height: 420px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+#log-panel .log-empty { color: #6b7596; font-style: italic; }
 
 /* ───── Mobile (≤720px) ─────
    Global responsive layer. Per-page styles override as needed.

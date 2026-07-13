@@ -18,8 +18,10 @@ retired 2026-05-23 — see project_live_strategy_negative_ev memory).
              that opening-volatility was knocking out many valid mean-reversion
              trades on the -1% stop. Note: this raises the break-even WR from
              33% (at 2:1 reward:risk) to 50% (at 1:1) — re-check EV in ~30 trades.
-  Cooldown:  SL exits block re-entry on the same ticker for 7 trading days;
-             TP/TIMEOUT exits block same-day re-entry only.
+  Cooldown:  SL/TP/TIMEOUT exits all block same-day re-entry only — re-entry
+             allowed on the next trading day. (SL cooldown was 7 trading days
+             pre-2026-06-13; reduced to 1 to maximise opportunity to re-enter
+             after the volatility that triggered the stop has passed.)
   Approval:  watchlist tickers approved via the UI are one-shot — the approval
              is consumed automatically the first time a position is opened
 
@@ -37,7 +39,6 @@ repeatedly (e.g. every 3 min) without double-entering positions.
 
 import csv
 import glob
-import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -47,6 +48,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 
 import env_loader      # noqa: E402
 env_loader.load_env()
+import engine_common as ec  # noqa: E402
 import infoScrapper    # noqa: E402
 import tradesScrapper  # noqa: E402
 import ohlc_capture    # noqa: E402
@@ -60,6 +62,7 @@ STATE_PATH    = os.path.join(STATE_DIR, "live_portfolio.json")
 APPROVED_PATH    = os.path.join(STATE_DIR, "live_approved.json")
 FORCE_ENTRY_PATH = os.path.join(STATE_DIR, "live_force_entry.json")
 FORCE_SELL_PATH  = os.path.join(STATE_DIR, "live_force_sell.json")
+LIMIT_ORDERS_PATH = os.path.join(STATE_DIR, "live_limit_orders.json")
 LOG_PATH      = os.path.join(LOGS_DIR,  "live_signals.log")
 SPX_HIST_GLOB = os.path.join(ROOT, "Instrumenttype", "Index", "USD",
                               "72823_*", "*_History.csv")
@@ -86,7 +89,7 @@ CONVICTION_SIZING = {
 TP_PCT        = 0.020   # +2.0%
 SL_PCT        = -0.020  # -2.0% (widened from -1.0% on 2026-05-25 to survive opening volatility)
 MAX_HOLD_DAYS = 7
-COOLDOWN_DAYS = 7       # block re-entry on a ticker for N trading days after an SL exit only
+COOLDOWN_DAYS = 1       # block re-entry on a ticker for N trading days after an SL exit only (was 7, reduced 2026-06-13 to same-day-only block — re-enter next trading day)
 DOD_THRESHOLD = -0.010  # require day-over-day close <= -1% to enter
 CRASH_GUARD   = -0.15   # require 20-day ret > -15% (skip total-blowout regimes)
 
@@ -110,35 +113,24 @@ MARKET_CLOSE     = (17, 30)
 # ----------------------------------------------------------------------------- helpers
 
 def load_state():
-    if os.path.exists(STATE_PATH):
-        with open(STATE_PATH) as f:
-            return json.load(f)
-    return {
+    return ec.load_state(STATE_PATH, {
         "cash":              WALLET_START,
         "positions":         {},
         "closed_trades":     [],
         "last_run":          None,
         "last_universe":     [],
         "last_watchlist":    [],
-    }
+    })
 
 
 def save_state(state):
-    state["last_run"] = datetime.now(timezone.utc).isoformat()
-    with open(STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2, default=str)
+    ec.save_state(STATE_PATH, state)
 
 
 def load_approved():
     """Load the list of watchlist tickers the user has approved for trading."""
-    if not os.path.exists(APPROVED_PATH):
-        return set()
-    try:
-        with open(APPROVED_PATH) as f:
-            data = json.load(f)
-        return set(data) if isinstance(data, list) else set()
-    except (json.JSONDecodeError, OSError):
-        return set()
+    data = ec.read_json(APPROVED_PATH, [])
+    return set(data) if isinstance(data, list) else set()
 
 
 def consume_approvals(consumed):
@@ -146,10 +138,8 @@ def consume_approvals(consumed):
     new approvals added via the web UI during the run aren't clobbered."""
     if not consumed:
         return
-    fresh = load_approved()
-    remaining = fresh - set(consumed)
-    with open(APPROVED_PATH, "w") as f:
-        json.dump(sorted(remaining), f, ensure_ascii=False, indent=2)
+    remaining = load_approved() - set(consumed)
+    ec.write_json_atomic(APPROVED_PATH, sorted(remaining), ensure_ascii=False)
 
 
 def load_force_entries():
@@ -157,23 +147,15 @@ def load_force_entries():
     — bypasses the validated filter entirely. Use case: a near-miss the user
     wants to take anyway (e.g. DoD -0.9% instead of the required -1.0%).
     One-shot — consumed on entry, like watchlist approvals."""
-    if not os.path.exists(FORCE_ENTRY_PATH):
-        return set()
-    try:
-        with open(FORCE_ENTRY_PATH) as f:
-            data = json.load(f)
-        return set(data) if isinstance(data, list) else set()
-    except (json.JSONDecodeError, OSError):
-        return set()
+    data = ec.read_json(FORCE_ENTRY_PATH, [])
+    return set(data) if isinstance(data, list) else set()
 
 
 def consume_force_entries(consumed):
     if not consumed:
         return
-    fresh = load_force_entries()
-    remaining = fresh - set(consumed)
-    with open(FORCE_ENTRY_PATH, "w") as f:
-        json.dump(sorted(remaining), f, ensure_ascii=False, indent=2)
+    remaining = load_force_entries() - set(consumed)
+    ec.write_json_atomic(FORCE_ENTRY_PATH, sorted(remaining), ensure_ascii=False)
 
 
 def load_force_sells(path=None):
@@ -184,24 +166,43 @@ def load_force_sells(path=None):
     `path` defaults to the Live Signals queue but the same helper is reused
     by live_patterns.py with its own per-engine path."""
     p = path or FORCE_SELL_PATH
-    if not os.path.exists(p):
-        return set()
-    try:
-        with open(p) as f:
-            data = json.load(f)
-        return set(data) if isinstance(data, list) else set()
-    except (json.JSONDecodeError, OSError):
-        return set()
+    data = ec.read_json(p, [])
+    return set(data) if isinstance(data, list) else set()
 
 
 def consume_force_sells(consumed, path=None):
     if not consumed:
         return
     p = path or FORCE_SELL_PATH
-    fresh = load_force_sells(p)
-    remaining = fresh - set(consumed)
-    with open(p, "w") as f:
-        json.dump(sorted(remaining), f, ensure_ascii=False, indent=2)
+    remaining = load_force_sells(p) - set(consumed)
+    ec.write_json_atomic(p, sorted(remaining), ensure_ascii=False)
+
+
+def load_limit_orders():
+    """User-placed buy limit orders for primary signals (manual approve+price
+    flow). Dict keyed by ticker:
+        {ticker: {insref, limit_price, placed_date, placed_ts, info,
+                  from_watchlist, forced}}
+    Each run the engine fills an order at its limit_price once the live price
+    trades at/below it. Orders are good-for-the-day only — any whose
+    placed_date != today are expired (see consume_limit_orders in main())."""
+    data = ec.read_json(LIMIT_ORDERS_PATH, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_limit_orders(orders):
+    ec.write_json_atomic(LIMIT_ORDERS_PATH, orders, ensure_ascii=False, default=str)
+
+
+def consume_limit_orders(remove):
+    """Remove `remove` tickers (filled + expired + cancelled) from the queue.
+    Re-reads first so any order the UI placed mid-run isn't clobbered."""
+    if not remove:
+        return
+    fresh = load_limit_orders()
+    for tk in remove:
+        fresh.pop(tk, None)
+    save_limit_orders(fresh)
 
 
 def load_history_closes(path):
@@ -218,25 +219,6 @@ def load_history_closes(path):
                 pass
     rows.sort(key=lambda x: x[0])
     return rows
-
-
-def rsi(closes, period=14):
-    if len(closes) < period + 1:
-        return None
-    window = closes[-(period + 1):]
-    gains = losses = 0.0
-    for i in range(1, len(window)):
-        ch = window[i] - window[i - 1]
-        if ch > 0:
-            gains += ch
-        else:
-            losses -= ch
-    avg_g = gains / period
-    avg_l = losses / period
-    if avg_l == 0:
-        return 100.0
-    rs = avg_g / avg_l
-    return 100 - 100 / (1 + rs)
 
 
 def add_trading_days(start_date, n):
@@ -340,55 +322,10 @@ def probe_data_lag():
 
 
 def rotate_log():
-    """Trim live_signals.log so it only keeps the last LOG_RETAIN_HOURS of
-    output. Called at the very top of main()/EOD-sweep before any print, so
-    there's no race with our own stdout. launchd's open file descriptor is
-    unaffected — `open(LOG_PATH, "wb")` truncates the same inode in place,
-    and the next print() in this process is appended at the new end.
-
-    A run is kept iff its `Live signal run @ <ts>` header is within the
-    retention window. Skips work entirely when the file is below
-    LOG_ROTATE_MIN_BYTES so the 3-min cron isn't doing useless I/O."""
-    try:
-        size = os.path.getsize(LOG_PATH)
-    except OSError:
-        return
-    if size < LOG_ROTATE_MIN_BYTES:
-        return
-    cutoff = (datetime.now() - timedelta(hours=LOG_RETAIN_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with open(LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-    except OSError:
-        return
-    # Find the index of the first run header at or after the cutoff
-    keep_from = None
-    for i, ln in enumerate(lines):
-        if " Live signal run @ " in ln:
-            ts_str = ln.split("@", 1)[1].strip().replace(" local", "").strip()
-            if ts_str >= cutoff:
-                keep_from = i
-                break
-    if keep_from is None:
-        # No run within the retention window — file is pure history, drop it
-        # entirely (next run will write a fresh header).
-        try:
-            with open(LOG_PATH, "wb"): pass
-        except OSError:
-            pass
-        return
-    if keep_from == 0:
-        return  # already starts within the window, nothing to trim
-    # The `===` separator immediately before the run header is also worth
-    # keeping so the first surviving run still has a header banner.
-    if keep_from > 0 and lines[keep_from - 1].startswith("==="):
-        keep_from -= 1
-    new_content = "".join(lines[keep_from:])
-    try:
-        with open(LOG_PATH, "wb") as f:
-            f.write(new_content.encode("utf-8"))
-    except OSError:
-        pass
+    """Trim live_signals.log to the last LOG_RETAIN_HOURS of output. Called at
+    the top of main()/EOD-sweep before any print, so there's no race with our
+    own stdout. See engine_common.rotate_log for the truncation mechanism."""
+    ec.rotate_log(LOG_PATH, " Live signal run @ ", LOG_RETAIN_HOURS, LOG_ROTATE_MIN_BYTES)
 
 
 def read_spx_context():
@@ -566,8 +503,14 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
     closed_now = []
     for tk in list(state["positions"].keys()):
         pos = state["positions"][tk]
-        cur_price = live.get(tk, {}).get("last")
+        lq = live.get(tk, {})
+        cur_price = lq.get("last")
         if cur_price is None:
+            continue
+        # csv-fallback / stale = the live fetch failed and we substituted a
+        # synthetic price (last CSV row or entry price). Never trigger price-
+        # based exits on a non-live quote — wait for the next good run.
+        if lq.get("source") in ("csv-fallback", "stale"):
             continue
         target_date = (datetime.fromisoformat(pos["target_exit_date"]).date()
                        if isinstance(pos["target_exit_date"], str)
@@ -611,6 +554,75 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
             closed_now.append(closed)
             del state["positions"][tk]
     return closed_now
+
+
+def maybe_capture_eod_ohlc(state, today):
+    """Self-gated daily OHLC capture, decoupled from run_eod_sweep().
+
+    Runs at most once per trading day. Safe to call from every launchd tick
+    after market close — idempotent on `state["last_ohlc_capture_date"]`,
+    and capture_eod_ohlc() itself dedupes today's row inside each per-stock
+    CSV. Decoupled from run_eod_sweep so an empty `state["positions"]`
+    doesn't block capture (that early-return at run_eod_sweep:693-697 is
+    what kept capture from ever firing pre-2026-06-13).
+
+    Gating:
+      · skip if already captured today
+      · skip on weekends (no Stockholm close to capture)
+      · skip if local clock is still before MARKET_CLOSE (17:30)
+      · skip if the feed probe (SEB A trade timestamp) fails outright
+      · skip if the feed trade is from a different date than `today` —
+        guards against writing today's bar using yesterday's OHLC fields
+        when the feed hasn't yet advanced past the previous close
+      · skip if the feed is still before today's 17:30 close
+    Any skip leaves `last_ohlc_capture_date` unset so the next tick retries.
+
+    Any weekday tick after 17:30 (inside or outside the EOD window) will
+    capture once the feed has settled. Missing the narrow 17:45-18:30
+    window no longer means missing the day.
+    """
+    if state.get("last_ohlc_capture_date") == today.isoformat():
+        return
+
+    now_local = datetime.now()
+    if now_local.weekday() >= 5:
+        return
+    mins_now = now_local.hour * 60 + now_local.minute
+    close_mins = MARKET_CLOSE[0] * 60 + MARKET_CLOSE[1]
+    if mins_now < close_mins:
+        return
+
+    lag = probe_data_lag()
+    state["data_lag"] = lag
+    state["us_context"] = read_spx_context()
+    trade_dt_iso = lag.get("trade_dt")
+    trade_dt = None
+    if trade_dt_iso:
+        try:
+            trade_dt = datetime.fromisoformat(trade_dt_iso)
+        except ValueError:
+            trade_dt = None
+    if trade_dt is None:
+        print(f" OHLC capture: feed probe failed ({lag.get('error','unknown')}); retry next run")
+        return
+    if trade_dt.date() != today:
+        print(f" OHLC capture: feed still on {trade_dt.date().isoformat()} "
+              f"(today {today.isoformat()}); retry next run")
+        return
+    close_time = trade_dt.replace(hour=MARKET_CLOSE[0], minute=MARKET_CLOSE[1],
+                                  second=0, microsecond=0)
+    if trade_dt < close_time:
+        gap = int((close_time - trade_dt).total_seconds() // 60)
+        print(f" OHLC capture: feed only at {trade_dt.strftime('%H:%M:%S')} "
+              f"({gap}m before close); retry next run")
+        return
+
+    primary, _ = build_universe()
+    n_ohlc = ohlc_capture.capture_eod_ohlc(today, primary, fetch_live_parallel)
+    state["last_ohlc_capture_date"] = today.isoformat()
+    state["ohlc_bars_total"] = n_ohlc
+    print(f" OHLC capture: wrote {n_ohlc} bars for {today.isoformat()} → ./ohlc/")
+    save_state(state)
 
 
 def run_eod_sweep(state, today, now_local_ts):
@@ -704,14 +716,11 @@ def run_eod_sweep(state, today, now_local_ts):
                   f"entered {pos['entry_date']} @ {pos['entry_price']:.2f}   "
                   f"close {cur_price:.2f}   P&L {pnl:+,.0f} SEK ({ret*100:+.2f}%)")
 
-    # Capture today's OHLC for every tradable ticker so a future
-    # candlestick-pattern engine has bars to operate on. Foundation laid
-    # 2026-05-23; engine to be built once ~30-60 days of bars accumulate.
+    # OHLC capture moved to maybe_capture_eod_ohlc() — it now runs as a
+    # self-gated daily step in main(), independent of positions being open
+    # and of the narrow 17:45-18:30 EOD window. We still build the universe
+    # here so the calendar refresh below has the primary insref list.
     primary, _ = build_universe()
-    n_ohlc = ohlc_capture.capture_eod_ohlc(today, primary, fetch_live_parallel)
-    state["last_ohlc_capture_date"] = today.isoformat()
-    state["ohlc_bars_total"] = n_ohlc
-    print(f"   captured OHLC for {n_ohlc} stocks  → ./ohlc/")
 
     # Refresh the corporate-event calendar so tomorrow's entries see the
     # latest dividends/earnings. The cache itself has a 24h staleness check
@@ -739,7 +748,8 @@ def main():
 
     state = load_state()
     now = datetime.now(timezone.utc)
-    today = now.date()
+    today = ec.today_local()   # local Stockholm trade date — must agree with the
+                               # Friday / market-hours gates (feed is market-local)
     now_local_ts = datetime.now().replace(microsecond=0).isoformat()  # 2026-05-19T10:23:45
 
     print("=" * 72)
@@ -747,6 +757,16 @@ def main():
     print("=" * 72)
 
     if not is_market_open():
+        # OHLC capture is independent of the EOD sweep — runs on any post-close
+        # weekday tick (idempotent via last_ohlc_capture_date). Catches days
+        # when the 17:45-18:30 window was missed (Mac asleep, feed late, etc.)
+        # and days with no open positions (where run_eod_sweep early-returns
+        # before what used to be the capture step). Called first so its feed
+        # probe also primes state['data_lag'] for the EOD sweep that follows.
+        try:
+            maybe_capture_eod_ohlc(state, today)
+        except Exception as e:
+            print(f" OHLC capture: unexpected error: {e!r}")
         if is_in_eod_window() and state.get("last_eod_sweep_date") != today.isoformat():
             run_eod_sweep(state, today, now_local_ts)
         else:
@@ -820,6 +840,7 @@ def main():
     # ---------- 2. Live quotes for tradable universe (parallel) — primary + approved
     primary_by_name = {t["name"]: t for t in tradable}
     live = fetch_live_parallel(tradable)
+    fallback_names = []
     for name, t in primary_by_name.items():
         lq = live.get(name, {"ok": False})
         if not lq.get("ok") or lq.get("last") in (None, 0):
@@ -827,9 +848,15 @@ def main():
             if rows:
                 lq = {"last": rows[-1][1], "ask": rows[-1][1], "bid": rows[-1][1],
                       "ok": True, "source": "csv-fallback"}
+                fallback_names.append(name)
         else:
             lq["source"] = "live"
         live[name] = lq
+    if fallback_names:
+        print(f"   API fetch failed for {len(fallback_names)} ticker(s); "
+              f"using csv-fallback for scan only (UI/exits skip these): "
+              f"{', '.join(fallback_names[:10])}"
+              f"{' …' if len(fallback_names) > 10 else ''}")
 
     # Also fetch live for any open positions whose ticker fell out of universe
     for tk in state["positions"]:
@@ -882,7 +909,8 @@ def main():
             ok = True
         if not ok:
             if "err" not in info:
-                primary_filtered_info.append((name, info))
+                primary_filtered_info.append(
+                    {"name": name, "info": info, "insref": t["insref"], "last": live_close})
             continue
         candidates.append({"t": t, "lq": lq, "info": info, "live_close": live_close})
 
@@ -897,74 +925,122 @@ def main():
     # Includes exits closed earlier in *this same run* (already appended to
     # closed_trades by apply_exit_checks), so an SL/TP at 15:19 cannot be
     # immediately re-bought at 15:19.
-    recent_exits = {}   # ticker -> (exit_date_str, reason)
-    for tr in state.get("closed_trades", []):
-        ex = tr.get("exit_date")
-        if not ex:
-            continue
-        cur = recent_exits.get(tr["ticker"])
-        if cur is None or ex > cur[0]:
-            recent_exits[tr["ticker"]] = (ex, tr.get("reason"))
+    recent_exits = ec.build_recent_exits(state)   # ticker -> (exit_date_str, reason)
 
     # Dedupe by company stem so we don't take A and B of the same name
     held_stems = {company_stem(tk) for tk in state["positions"]}
-    new_signals = []
+    pending         = []   # candidates that passed every gate — await user approve+price
+    skipped_signals = []   # informational skips surfaced in the UI
     consumed_approvals    = set()
     consumed_force_entries = set()
     # Load the corporate-event cache once per run — used to block entries
     # near ex-dividend dates / earnings reports (added 2026-05-25 after
     # Tele2 A was bought into a 6-days-stale ex-dividend tick).
     events_cache = calendar_cache.load_cache()
+    # MANUAL-ONLY flow (2026-05-27): primary signals no longer auto-enter. Each
+    # candidate that clears every gate is surfaced as a *pending* signal; the
+    # user approves it and sets a buy limit price in the UI, which becomes a
+    # same-day limit order (filled in section 4b below when live <= limit).
     for c in candidates:
         t, lq, info, live_close = c["t"], c["lq"], c["info"], c["live_close"]
         name = t["name"]
         stem = company_stem(name)
         if stem in held_stems:
-            new_signals.append({"ticker": name, "skipped": f"duplicate of held '{stem}'"})
+            skipped_signals.append({"ticker": name, "skipped": f"duplicate of held '{stem}'"})
             continue
         blocked, why = calendar_cache.has_nearby_event(t["insref"], today, cache=events_cache)
         if blocked:
             # Force-entry override still respected — user can bypass the
             # event filter by explicitly approving the near-miss.
             if name not in force_entry_set:
-                new_signals.append({"ticker": name, "skipped": f"event window: {why}"})
+                skipped_signals.append({"ticker": name, "skipped": f"event window: {why}"})
                 continue
-        last = recent_exits.get(name)
-        if last:
-            last_date, last_reason = last
-            last_d = (datetime.fromisoformat(last_date).date()
-                      if isinstance(last_date, str) else last_date)
-            if last_reason == "SL":
-                tds = trading_days_between(last_d, today)
-                if tds < COOLDOWN_DAYS:
-                    new_signals.append({"ticker": name,
-                                        "skipped": f"cooldown {tds}d/{COOLDOWN_DAYS}d since SL {last_date}"})
-                    continue
-            elif last_d >= today:
-                new_signals.append({"ticker": name,
-                                    "skipped": f"same-day re-entry blocked (just exited {last_reason} {last_date})"})
-                continue
+        cd = ec.cooldown_status(recent_exits, name, today, COOLDOWN_DAYS, trading_days_between)
+        if cd:
+            if cd["kind"] == "SL":
+                skipped_signals.append({"ticker": name,
+                                        "skipped": f"cooldown {cd['tds']}d/{COOLDOWN_DAYS}d since SL {cd['last_date']}"})
+            else:
+                skipped_signals.append({"ticker": name,
+                                        "skipped": f"same-day re-entry blocked (just exited {cd['last_reason']} {cd['last_date']})"})
+            continue
         if state["cash"] < POS_MIN:
-            new_signals.append({"ticker": name, "skipped": f"low cash {state['cash']:.0f}"})
+            skipped_signals.append({"ticker": name, "skipped": f"low cash {state['cash']:.0f}"})
             continue
-        entry_price = lq.get("ask") or live_close
+        suggested = lq.get("ask") or live_close
+        pending.append({
+            "ticker":          name,
+            "insref":          t["insref"],
+            "last":            lq.get("last"),
+            "bid":             lq.get("bid"),
+            "ask":             lq.get("ask"),
+            "suggested_price": suggested,
+            "tp_preview":      round(suggested * (1 + TP_PCT), 4) if suggested else None,
+            "sl_preview":      round(suggested * (1 + SL_PCT), 4) if suggested else None,
+            "info":            info,
+            "from_watchlist":  bool(t.get("from_watchlist")),
+            "forced":          bool(info.get("forced")),
+        })
+
+    state["pending_signals"] = pending
+
+    # ---------- 4b. Fill user-placed buy limit orders (manual approve+price)
+    # Good-for-the-day: any order whose placed_date != today is expired. A live
+    # order fills at its limit_price once the market trades at/below it. Sizing,
+    # stem-dedup, cooldown and event gates were already applied when the
+    # candidate was surfaced, but cash + stem are re-checked at fill time.
+    orders = load_limit_orders()
+    orders_to_remove = {tk for tk, o in orders.items()
+                        if o.get("placed_date") != today.isoformat()}
+    filled_now = []
+    for tk, o in orders.items():
+        if tk in orders_to_remove:
+            continue
+        if tk in state["positions"]:
+            orders_to_remove.add(tk)          # already holding — clear the order
+            continue
+        lq = live.get(tk)
+        if (not lq or lq.get("last") is None) and o.get("insref"):
+            q = get_live(o["insref"])         # ticker not in scanned universe — fetch on demand
+            if q.get("ok"):
+                lq = q
+        market = lq.get("last") if lq else None
+        if market is None:
+            continue                          # no price yet — leave the order pending
+        limit_price = o.get("limit_price")
+        if not isinstance(limit_price, (int, float)) or limit_price <= 0:
+            orders_to_remove.add(tk)          # malformed — drop
+            continue
+        if market > limit_price:
+            continue                          # limit not reached — stay pending
+        stem = company_stem(tk)
+        if stem in held_stems:
+            orders_to_remove.add(tk)          # took a sibling share class — cancel
+            continue
+        if state["cash"] < POS_MIN:
+            continue                          # can't afford yet — keep waiting for cash
+        # Carry the order's source attribution onto the position's signal_info so
+        # the UI tag + entry-source analytics (auto / watchlist / forced) are right.
+        info = dict(o.get("info") or {})
+        if o.get("from_watchlist"):
+            info["from_watchlist"] = True
+        if o.get("forced"):
+            info["forced"] = True
+            info["entry_tag"] = "forced"
+        info.setdefault("conviction", "normal")
         conviction = info.get("conviction", "normal")
-        target, cap = CONVICTION_SIZING[conviction]
-        size = min(target, state["cash"], cap)
-        shares = int(size // entry_price)
-        if shares <= 0 or shares * entry_price < POS_MIN:
-            new_signals.append({"ticker": name, "skipped": f"size <{POS_MIN/1000:.0f}k after rounding"})
+        target, cap = CONVICTION_SIZING.get(conviction, CONVICTION_SIZING["normal"])
+        shares, cost = ec.position_size(state["cash"], limit_price, target, cap, POS_MIN)
+        if shares <= 0:
+            orders_to_remove.add(tk)          # can't make the min size at this price — drop
             continue
-
-        cost     = shares * entry_price
-        tp_price = round(entry_price * (1 + TP_PCT), 4)
-        sl_price = round(entry_price * (1 + SL_PCT), 4)
+        tp_price = round(limit_price * (1 + TP_PCT), 4)
+        sl_price = round(limit_price * (1 + SL_PCT), 4)
         exit_by  = add_trading_days(today, MAX_HOLD_DAYS)
-
         state["cash"] -= cost
-        state["positions"][name] = {
-            "insref":           t["insref"],
-            "entry_price":      entry_price,
+        state["positions"][tk] = {
+            "insref":           o.get("insref") or (lq.get("insref") if lq else None),
+            "entry_price":      limit_price,
             "shares":           shares,
             "entry_date":       today.isoformat(),
             "entry_ts":         now_local_ts,
@@ -973,22 +1049,21 @@ def main():
             "target_exit_date": exit_by.isoformat(),
             "cost_sek":         cost,
             "signal_info":      info,
+            "fill_type":        "limit",
         }
         held_stems.add(stem)
-        if t.get("from_watchlist"):
-            consumed_approvals.add(name)
-        if info.get("forced"):
-            consumed_force_entries.add(name)
-        new_signals.append({
-            "ticker":   name,
-            "entry":    entry_price,
-            "tp":       tp_price,
-            "sl":       sl_price,
-            "shares":   shares,
-            "cost":     cost,
-            "exit_by":  exit_by.isoformat(),
-            "info":     info,
+        orders_to_remove.add(tk)
+        if o.get("from_watchlist"):
+            consumed_approvals.add(tk)
+        if o.get("forced"):
+            consumed_force_entries.add(tk)
+        filled_now.append({
+            "ticker":  tk, "entry": limit_price, "limit": limit_price, "market": market,
+            "tp": tp_price, "sl": sl_price, "shares": shares, "cost": cost,
+            "exit_by": exit_by.isoformat(), "info": info,
         })
+
+    consume_limit_orders(orders_to_remove)
 
     if consumed_approvals:
         consume_approvals(consumed_approvals)
@@ -1041,24 +1116,36 @@ def main():
                   f"P&L {t['pnl_sek']:+,.0f} SEK ({t['ret_pct']*100:+.2f}%)   "
                   f"opened {t['entry_date']}")
 
-    entered = [s for s in new_signals if "skipped" not in s]
-    skipped = [s for s in new_signals if "skipped" in s]
-    if entered or skipped:
-        print(f"\n--- NEW SIGNALS ({len(entered)} entered, {len(skipped)} skipped) ---")
-        for s in entered:
+    if filled_now:
+        print(f"\n--- LIMIT ORDERS FILLED THIS RUN ({len(filled_now)}) ---")
+        for s in filled_now:
             tag_str = format_signal_tag(s["info"])
-            print(f"  BUY {tag_str:<10} {s['ticker']:<18}  {s['shares']:>5} sh @ {s['entry']:.2f}  "
-                  f"= {s['cost']:>9,.0f} SEK")
+            print(f"  FILL {tag_str:<10} {s['ticker']:<18}  {s['shares']:>5} sh @ {s['entry']:.2f}  "
+                  f"= {s['cost']:>9,.0f} SEK  (limit {s['limit']:.2f}, market {s['market']:.2f})")
             print(f"      target exit {s['tp']:.2f} (+{TP_PCT*100:.2f}%)   "
                   f"stop {s['sl']:.2f} ({SL_PCT*100:+.2f}%)   "
                   f"exit by {s['exit_by']}")
+
+    open_orders = load_limit_orders()
+    if open_orders:
+        print(f"\n--- OPEN LIMIT ORDERS ({len(open_orders)}) — awaiting fill ---")
+        for tk, o in sorted(open_orders.items()):
+            mk = live.get(tk, {}).get("last")
+            mk_str = f"{mk:.2f}" if isinstance(mk, (int, float)) else "?"
+            print(f"  {tk:<22} limit {o.get('limit_price', 0):.2f}   market {mk_str}   placed {o.get('placed_date')}")
+
+    if pending or skipped_signals:
+        print(f"\n--- NEW SIGNALS ({len(pending)} pending approval, {len(skipped_signals)} skipped) ---")
+        for s in pending:
+            tag_str = format_signal_tag(s["info"])
             i = s["info"]
-            print(f"      signal:  DoD {i['dod']*100:+.2f}%   "
-                  f"20d ret {i['ret_20d']*100:+.1f}%")
-        for s in skipped[:3]:
+            print(f"  PENDING {tag_str:<10} {s['ticker']:<18}  last {s['last'] if s['last'] is not None else '?'}   "
+                  f"suggested {s['suggested_price']:.2f}   "
+                  f"DoD {i['dod']*100:+.2f}%   20d {i['ret_20d']*100:+.1f}%")
+        for s in skipped_signals[:3]:
             print(f"  skipped: {s['ticker']:<22} ({s['skipped']})")
-        if len(skipped) > 3:
-            print(f"  ... +{len(skipped) - 3} more skipped")
+        if len(skipped_signals) > 3:
+            print(f"  ... +{len(skipped_signals) - 3} more skipped")
     else:
         print("\n--- NO NEW SIGNALS IN PRIMARY UNIVERSE ---")
 
@@ -1107,12 +1194,12 @@ def main():
             checks.append(f"20d:{info['ret_20d']*100:+.1f}%")
         return checks
 
-    ranked_near_misses = sorted(primary_filtered_info, key=lambda x: closeness(x[1]))
+    ranked_near_misses = sorted(primary_filtered_info, key=lambda x: closeness(x["info"]))
     if ranked_near_misses:
         print(f"\n--- CLOSEST TO SIGNAL (top 5 of {len(ranked_near_misses)} primary) ---")
-        for name, info in ranked_near_misses[:5]:
-            checks = fails_for(info)
-            print(f"  {name:<26} fails: {', '.join(checks) if checks else 'borderline'}")
+        for nm in ranked_near_misses[:5]:
+            checks = fails_for(nm["info"])
+            print(f"  {nm['name']:<26} fails: {', '.join(checks) if checks else 'borderline'}")
 
     state["last_universe"] = primary_names
     state["last_watchlist"] = watchlist_names
@@ -1121,40 +1208,48 @@ def main():
     state["force_entry_approved"] = sorted(force_entry_set)
 
     # Top 10 near-misses persisted for the UI's "approve to override" panel.
-    # Same `info` dict the candidate had at signal_check time, plus a fails
+    # Same `info` dict the candidate had at signal_check time, plus insref +
+    # last price (so the user can place a buy limit order on it) and a fails
     # list naming which rule(s) it missed.
     state["last_near_misses"] = [
-        {"ticker": name, "info": info, "fails": fails_for(info)}
-        for name, info in ranked_near_misses[:10]
+        {"ticker": nm["name"], "insref": nm["insref"], "last": nm["last"],
+         "info": nm["info"], "fails": fails_for(nm["info"])}
+        for nm in ranked_near_misses[:10]
     ]
 
     # ---------- 7. Snapshot quotes + recent signals for the UI
     interesting = set(state["positions"].keys())
-    for s in new_signals:
+    for s in pending:
         interesting.add(s["ticker"])
+    for s in filled_now:
+        interesting.add(s["ticker"])
+    for tk in load_limit_orders():
+        interesting.add(tk)
     for w in watchlist_hits:
         interesting.add(w["ticker"])
 
-    last_quotes = {}
-    for name in interesting:
-        lq = live.get(name)
-        if not lq:
-            continue
-        last_quotes[name] = {
-            "last":     lq.get("last"),
-            "bid":      lq.get("bid"),
-            "ask":      lq.get("ask"),
-            "diff_pct": lq.get("diffprc"),
-            "source":   lq.get("source"),
-        }
-    state["last_quotes"] = last_quotes
+    # Build last_quotes from this run's live values, but never overwrite a
+    # prior known-good quote with a csv-fallback / stale synthetic price —
+    # that's how Securitas B ended up showing 154.20 in the UI while the
+    # real close was 152.20. When the live fetch fails for a ticker, we
+    # preserve the previous run's quote (re-tagged 'stale') so the UI keeps
+    # showing the last real price instead of yesterday's CSV close.
+    prior_quotes = state.get("last_quotes", {}) or {}
+    state["last_quotes"] = ec.build_quote_snapshot(interesting, live, prior_quotes)
 
     def _mid(b, a):
         return round((b + a) / 2, 4) if isinstance(b, (int, float)) and isinstance(a, (int, float)) else None
 
+    # Log this run's signal events for the UI / history. Manual-flow actions:
+    #   "filled"  — a user limit order filled into a position this run
+    #   "skipped" — candidate dropped by a gate (dedup/event/cooldown/cash)
+    # Pending candidates awaiting approval are surfaced separately via
+    # state["pending_signals"]; we don't log them here to avoid churn.
     signal_events = []
     ts_iso = now.isoformat()
-    for s in new_signals:
+    combined = ([{**s, "_action": "filled"}  for s in filled_now] +
+                [{**s, "_action": "skipped"} for s in skipped_signals])
+    for s in combined:
         name = s["ticker"]
         lq = live.get(name, {})
         bid, ask, last = lq.get("bid"), lq.get("ask"), lq.get("last")
@@ -1164,7 +1259,7 @@ def main():
         evt = {
             "ts":            ts_iso,
             "ticker":        name,
-            "action":        "skipped" if "skipped" in s else "entered",
+            "action":        s["_action"],
             "skip_reason":   s.get("skipped"),
             "last":          last,
             "bid":           bid,
@@ -1172,6 +1267,7 @@ def main():
             "spread":        spread,
             "suggested_bid": mid,        # mid-price = patient compromise
             "entry":         s.get("entry"),
+            "limit":         s.get("limit"),
             "tp":            s.get("tp"),
             "sl":            s.get("sl"),
             "shares":        s.get("shares"),
@@ -1202,4 +1298,13 @@ if __name__ == "__main__":
     except Exception as e:
         import traceback
         print("\n[live_patterns crash]")
+        traceback.print_exc()
+    # Cross engine runs LAST so it can read the fresh recent_pattern_fires
+    # the patterns engine just wrote.
+    try:
+        import live_cross
+        live_cross.main()
+    except Exception as e:
+        import traceback
+        print("\n[live_cross crash]")
         traceback.print_exc()

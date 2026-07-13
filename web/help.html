@@ -107,8 +107,7 @@
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
     <a href="/browse">Browse Folders</a>
-    <a href="/live-signals">Live Signals</a>
-    <a href="/live-patterns">Live Patterns</a>
+    <a href="/live">Live</a>
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
@@ -288,14 +287,47 @@
       Live Signals ⚡
     </div>
     <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
-      An automated paper-trading engine that runs every <strong>3 minutes</strong> during market hours (Stockholm OMX 09:00–17:30 Mon–Fri).
-      Unlike the Strategy ★ tab (a screener for manual entries), Live Signals <em>opens and closes positions on its own</em>
+      A paper-trading engine that runs every <strong>3 minutes</strong> during market hours (Stockholm OMX 09:00–17:30 Mon–Fri)
       against a virtual 500k SEK wallet, persisting state in <code>live_portfolio.json</code>.
-      The strategy is a <strong>backtest-validated mean-reversion setup</strong>: enter after a single sharp down day, exit on a +2% bounce or −1% stop within 7 days.
+      The strategy is a <strong>backtest-validated mean-reversion setup</strong>: enter after a single sharp down day, exit on a +2% bounce or −2% stop within 7 days.
       Switched from the prior 0.5% / −2% / 5d pullback strategy on <strong>2026-05-23</strong> after backtest showed the old setup was −EV (needed 80% WR to break even, delivered 60%).
     </p>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px; padding:10px 12px; background:#fff8e6; border:1px solid #f0d98a; border-radius:8px;">
+      <strong>Manual entry (since 2026-05-27).</strong> The engine no longer auto-buys. Each run it surfaces signals that pass the filter as
+      <strong>Pending</strong> rows in the <em>New signals</em> table; <em>you</em> approve which to buy and type a <strong>buy limit price</strong>.
+      The engine still manages exits (TP / SL / time-out) on its own. See "Manual entry — approve + set a buy limit price" below.
+    </p>
 
-    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin-bottom:10px;">Entry conditions (all four must pass)</div>
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Manual entry — approve + set a buy limit price</div>
+    <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
+      Every candidate that clears the entry filter (and the dedup / cooldown / event-window / cash gates) appears in the
+      <strong>New signals</strong> table as a <strong>Pending</strong> row with a <strong>Buy limit</strong> input pre-filled with the current ask.
+      Adjust the price if you want and click <strong>Approve buy</strong> to place a same-day buy limit order. The row then shows
+      <strong>Queued</strong> with a cancel button.
+    </p>
+    <div class="strategy-rule">
+      <span class="rule-label">Limit fill</span>
+      <span class="rule-val">On the next run the engine fills the order at <strong>your limit price</strong> once the market trades at/below it. If the market never reaches your price, nothing is bought.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Good for the day</span>
+      <span class="rule-val">Unfilled orders expire at the close — re-approve the next day if you still want the trade. Orders are stored in <code>live_limit_orders.json</code>.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Sizing at fill</span>
+      <span class="rule-val">When an order fills, the usual 70k target / 85k cap / 35k floor sizing is applied against available cash at that moment. TP/SL are then anchored to your fill price.</span>
+    </div>
+    <p style="font-size:13px; color:#444; line-height:1.6; margin:10px 0 0;">
+      The table also shows this run's <strong>Filled</strong> rows (just bought → also appear under Open positions) and <strong>Skipped</strong> rows
+      (a signal dropped by a gate, with the reason). Watchlist-approved and near-miss-override tickers flow through this same approve+price gate before any buy.
+    </p>
+    <p style="font-size:13px; color:#444; line-height:1.6; margin:10px 0 0;">
+      The <strong>Pending orders — approved, awaiting fill</strong> table (just above Open positions) is a single consolidated view of every queued buy limit order,
+      whatever table you placed it from. It shows the source (Auto / Watchlist / Forced), your limit, the current market price, how far the market is from filling,
+      and a Cancel button. Orders move from here into Open positions the moment they fill.
+    </p>
+
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Entry conditions (all four must pass)</div>
     <div class="strategy-rule">
       <span class="rule-label">DoD ≤ −1%</span>
       <span class="rule-val">Today closed at least 1% below yesterday — a real down day, not noise.</span>
@@ -328,7 +360,7 @@
     </div>
     <div class="strategy-rule">
       <span class="rule-label">Cooldown</span>
-      <span class="rule-val">After an <strong>SL</strong> exit: ticker blocked from re-entry for 7 trading days. After <strong>TP</strong> or <strong>TIMEOUT</strong>: blocked for the same calendar day only — next day is fine. The same-day block exists because the live tick that triggers a TP is the same tick the next signal evaluation would use; without it the engine round-trips at the same price.</span>
+      <span class="rule-val">After any exit (<strong>SL</strong>, <strong>TP</strong>, <strong>TIMEOUT</strong>, <strong>MANUAL</strong>): ticker blocked for the same calendar day only — re-entry is allowed on the next trading day. The same-day block exists because the live tick that triggers an exit is the same tick the next signal evaluation would use; without it the engine round-trips at the same price. (SL cooldown was 7 trading days pre-2026-06-13; reduced to match TP/TIMEOUT so SL'd names aren't locked out for a week.)</span>
     </div>
 
     <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Position sizing</div>
@@ -360,22 +392,19 @@
     <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Watchlist approval — opt mid/small caps into trading</div>
     <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
       The Live Signals page has a <strong>Watchlist signals — approve to trade</strong> table showing every mid/small-cap ticker
-      that is currently signalling. Click <strong>Approve</strong> next to any ticker to add it to <code>live_approved.json</code>.
-      On the next signal check, approved tickers are scanned alongside the large-cap universe with the same 70k target / 85k cap sizing
-      — the global 35k SEK floor still applies, so if the ticker is too low-priced to round to 35k it will be skipped automatically.
-      Approved tickers appear in BUY/OPEN/CLOSED log lines with a <code>-WL</code> suffix on the tag
-      (e.g. <code>[VAL-WL]</code>) so you can later split win-rate by origin.
+      that is currently signalling. Each row has a <strong>Buy limit</strong> price input (pre-filled with the last price). Set a price and click
+      <strong>Approve buy</strong> to place a <strong>same-day buy limit order</strong> (stored in <code>live_limit_orders.json</code> with a <code>from_watchlist</code> flag).
+      The engine fills it at your limit price once the market trades at/below it, with the normal 70k target / 85k cap / 35k floor sizing applied at fill.
+      Filled watchlist entries carry a <code>-WL</code> suffix on the tag (e.g. <code>[VAL-WL]</code>) so you can split win-rate by origin.
     </p>
     <div class="highlight-box blue" style="margin-top:0; margin-bottom:10px;">
-      <strong>Approvals are one-shot.</strong> The moment the engine opens a position for an approved watchlist ticker,
-      its approval is automatically consumed and removed from <code>live_approved.json</code>. If you want the same ticker
-      to enter again later (after the cooldown), you must re-approve it explicitly. This prevents an "approve once, buy forever" surprise
-      — every watchlist entry requires a deliberate user decision.
+      <strong>Good for the day.</strong> An unfilled watchlist order expires at the close — re-approve the next day if you still want it.
+      Each fill is independent: there is no "approve once, buy forever" — every buy is a deliberate price + approve action.
     </div>
     <div class="highlight-box" style="margin-top:0;">
       <strong>When to approve:</strong> the validated filter found a signal on a mid/small-cap stock you trust, the order size
       will be modest (35–85k), and you've sanity-checked that the average daily turnover is comfortably
-      larger than the order. The auto-engine will not size up a thinly-traded name beyond the 85k cap.
+      larger than the order. Pick a buy limit at or below the current price to avoid chasing a thin book.
     </div>
 
     <div class="highlight-box blue" style="margin-top:14px;">
@@ -406,16 +435,14 @@
     <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Near-misses — approve to override the filter</div>
     <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
       The Live Signals page has a <strong>Near-misses</strong> table showing the top 10 primary-universe tickers that came closest to passing the entry filter
-      but missed on one or more rules (DoD, 5d high, Friday, or 20d crash guard). Each row shows the exact reason it failed.
-      Click <strong>Override</strong> next to a ticker to add it to <code>live_force_entry.json</code> — on the next signal check the engine will
-      <em>bypass the validated filter entirely</em> for that ticker and enter the trade with the normal sizing (70k target / 85k cap).
-      Approved entries are tagged <code>[FORCED]</code> in BUY/OPEN/CLOSED log lines and on the closed-trades table.
+      but missed on one or more rules (DoD, 5d high, Friday, or 20d crash guard). Each row shows the exact reason it failed and a <strong>Buy limit</strong> price input.
+      Set a price and click <strong>Override + buy</strong> to place a <strong>same-day buy limit order</strong> that <em>bypasses the validated filter entirely</em>
+      (stored in <code>live_limit_orders.json</code> with a <code>forced</code> flag). The engine fills it at your limit price once the market reaches it, with normal sizing.
+      Forced entries are tagged <code>[FORCED]</code> in the log and on the closed-trades table.
     </p>
     <div class="highlight-box blue" style="margin-top:0; margin-bottom:10px;">
-      <strong>Force-entries are one-shot.</strong> The moment the engine opens a position for an override-approved ticker,
-      its approval is automatically consumed and removed from <code>live_force_entry.json</code>. If you want to override the filter
-      on the same ticker again later, you must re-approve it explicitly. Same semantics as the watchlist approval — every override
-      requires a deliberate user decision.
+      <strong>Good for the day.</strong> An unfilled override order expires at the close — re-approve the next day if you still want it.
+      Every override is a deliberate price + approve action; nothing is bought automatically.
     </div>
     <div class="highlight-box" style="margin-top:0;">
       <strong>When to override:</strong> sparingly. The filter exists because the backtest showed each rule contributes positive EV.
@@ -697,5 +724,6 @@
   </div>
 
   <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
 </body>
 </html>

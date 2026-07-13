@@ -72,7 +72,6 @@
     }
     .ctrl-select:disabled { opacity: 0.4; cursor: not-allowed; }
     #price-chart  { width: 100%; display: block; cursor: crosshair; }
-    #volume-chart { width: 100%; display: none;  cursor: crosshair; margin-top: 4px; }
     #chart-hint   { font-size: 11px; color: var(--text-muted); text-align: right; margin-top: 6px; }
 
     /* Detail sections (fundamentals, analyst, news, trades) */
@@ -138,6 +137,27 @@
     .news-item.open .news-body { display: block; }
     .news-item.open .news-headline { color: var(--accent); }
 
+    /* Reports & Dividends calendar */
+    .cal-sub {
+      font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px;
+      color: var(--text-muted); margin: 10px 0 4px;
+    }
+    .cal-sub:first-child { margin-top: 0; }
+    .cal-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12.5px;
+    }
+    .cal-row:last-child { border-bottom: none; }
+    .cal-date { font-variant-numeric: tabular-nums; color: var(--text); min-width: 86px; }
+    .cal-badge {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      border-radius: 3px; padding: 2px 6px; text-transform: uppercase; letter-spacing: 0.3px;
+      min-width: 62px; text-align: center;
+    }
+    .cal-badge.cal-div { background: var(--positive-soft); color: var(--positive); }
+    .cal-badge.cal-rep { background: var(--accent-soft);   color: var(--accent); }
+    .cal-detail { color: var(--text-subtle); }
+
     /* Pattern recognition panel */
     #pattern-panel {
       background: var(--surface-alt); border: 1px solid var(--border);
@@ -183,8 +203,7 @@
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
     <a href="/browse">Browse Folders</a>
-    <a href="/live-signals">Live Signals</a>
-    <a href="/live-patterns">Live Patterns</a>
+    <a href="/live">Live</a>
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
@@ -274,7 +293,6 @@
     <!-- Chart area -->
     <div style="flex:1; min-width:0;">
       <canvas id="price-chart"  height="320"></canvas>
-      <canvas id="volume-chart" height="80" style="display:none;"></canvas>
       <canvas id="rsi-chart"    height="80" style="display:none; margin-top:4px;"></canvas>
       <div id="chart-hint">Scroll to zoom &nbsp;&middot;&nbsp; Drag to measure</div>
     </div>
@@ -339,6 +357,13 @@
     <div id="analyst-target" style="font-size:13px; color:var(--text);"></div>
   </div>
 
+  <!-- Reports & Dividends calendar -->
+  <div id="calendar-section" class="detail-section" style="display:none;">
+    <div class="detail-title">Reports &amp; Dividends</div>
+    <div id="calendar-upcoming"></div>
+    <div id="calendar-past"></div>
+  </div>
+
   <!-- News -->
   <div id="news-section" class="detail-section" style="display:none;">
     <div class="detail-title">News</div>
@@ -377,5 +402,6 @@
   <script src="/pattern_engine.js"></script>
   <script src="/stock_page.js"></script>
   <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
 </body>
 </html>

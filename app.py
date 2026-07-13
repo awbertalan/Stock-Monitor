@@ -10,6 +10,8 @@ import infoScrapper
 import newsScrapper
 import tradesScrapper
 import ohlc_capture
+import calendar_cache
+import engine_common as ec
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR    = os.path.join(BASE_DIR, "web")
@@ -47,9 +49,14 @@ LIVE_SCRIPT_PATH     = os.path.join(BASE_DIR,  "live_signals.py")
 LIVE_APPROVED_PATH    = os.path.join(STATE_DIR, "live_approved.json")
 LIVE_FORCE_ENTRY_PATH = os.path.join(STATE_DIR, "live_force_entry.json")
 LIVE_FORCE_SELL_PATH  = os.path.join(STATE_DIR, "live_force_sell.json")
+LIVE_LIMIT_ORDERS_PATH = os.path.join(STATE_DIR, "live_limit_orders.json")
 LIVE_PATTERNS_PORTFOLIO_PATH  = os.path.join(STATE_DIR, "live_patterns_portfolio.json")
 LIVE_PATTERNS_LOG_PATH        = os.path.join(LOGS_DIR,  "live_patterns.log")
 LIVE_PATTERNS_FORCE_SELL_PATH = os.path.join(STATE_DIR, "live_patterns_force_sell.json")
+LIVE_CROSS_PORTFOLIO_PATH  = os.path.join(STATE_DIR, "live_cross_portfolio.json")
+LIVE_CROSS_LOG_PATH        = os.path.join(LOGS_DIR,  "live_cross.log")
+LIVE_CROSS_APPROVED_PATH   = os.path.join(STATE_DIR, "live_cross_approved.json")
+LIVE_CROSS_FORCE_SELL_PATH = os.path.join(STATE_DIR, "live_cross_force_sell.json")
 
 
 def _load_names():
@@ -80,6 +87,9 @@ _live_approved_lock              = threading.Lock()
 _live_force_entry_lock           = threading.Lock()
 _live_force_sell_lock            = threading.Lock()
 _live_patterns_force_sell_lock   = threading.Lock()
+_live_cross_approved_lock        = threading.Lock()
+_live_cross_force_sell_lock      = threading.Lock()
+_live_limit_orders_lock          = threading.Lock()
 _dashboard_cache    = {}
 _dashboard_cache_lock = threading.Lock()
 
@@ -134,46 +144,66 @@ def _read_live_patterns_portfolio():
         return {"cash": 500000, "positions": {}, "closed_trades": [], "last_run": None}
 
 
-def _read_live_approved():
+def _read_live_cross_portfolio():
     try:
-        with open(LIVE_APPROVED_PATH, encoding='utf-8') as f:
-            data = json.load(f)
-        return list(data) if isinstance(data, list) else []
+        with open(LIVE_CROSS_PORTFOLIO_PATH, encoding='utf-8') as f:
+            return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return []
+        return {"cash": 500000, "positions": {}, "closed_trades": [],
+                "pending_candidates": [], "last_run": None}
 
 
-def _write_live_approved(approved):
-    with open(LIVE_APPROVED_PATH, 'w', encoding='utf-8') as f:
-        json.dump(sorted(set(approved)), f, ensure_ascii=False, indent=2)
-
-
-def _read_live_force_entry():
-    try:
-        with open(LIVE_FORCE_ENTRY_PATH, encoding='utf-8') as f:
-            data = json.load(f)
-        return list(data) if isinstance(data, list) else []
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
-
-
-def _write_live_force_entry(tickers):
-    with open(LIVE_FORCE_ENTRY_PATH, 'w', encoding='utf-8') as f:
-        json.dump(sorted(set(tickers)), f, ensure_ascii=False, indent=2)
-
+# A handful of state files are flat "list of tickers" queues shared with the
+# live engines (approvals, forced entries, force-sells). They all read/write the
+# same way — one parameterized pair backs them, with named wrappers per file so
+# call sites stay self-documenting. Writes go through engine_common's atomic
+# writer so a UI write can't corrupt a file the engine is reading concurrently.
 
 def _read_force_sell_file(path):
-    try:
-        with open(path, encoding='utf-8') as f:
-            data = json.load(f)
-        return list(data) if isinstance(data, list) else []
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
+    data = ec.read_json(path, [])
+    return list(data) if isinstance(data, list) else []
 
 
 def _write_force_sell_file(path, tickers):
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(sorted(set(tickers)), f, ensure_ascii=False, indent=2)
+    ec.write_json_atomic(path, sorted(set(tickers)), ensure_ascii=False)
+
+
+def _read_live_cross_approved():       return _read_force_sell_file(LIVE_CROSS_APPROVED_PATH)
+def _write_live_cross_approved(items): _write_force_sell_file(LIVE_CROSS_APPROVED_PATH, items)
+def _read_live_approved():             return _read_force_sell_file(LIVE_APPROVED_PATH)
+def _write_live_approved(items):       _write_force_sell_file(LIVE_APPROVED_PATH, items)
+def _read_live_force_entry():          return _read_force_sell_file(LIVE_FORCE_ENTRY_PATH)
+def _write_live_force_entry(items):    _write_force_sell_file(LIVE_FORCE_ENTRY_PATH, items)
+
+
+def _read_live_limit_orders():
+    try:
+        with open(LIVE_LIMIT_ORDERS_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _calendar_events(insref):
+    """Corporate-event calendar (dividend ex-dates + earnings/reports) for one
+    stock. Cache-first (instant for the ~112 tracked stocks); falls back to a
+    live Millistream fetch for anything not in the cache."""
+    if not insref:
+        return {"events": []}
+    try:
+        cache = calendar_cache.load_cache()
+        evts = (cache.get("events") or {}).get(str(insref))
+        if not evts:
+            evts = calendar_cache.fetch_calendar(insref, timeout=6)
+        return {"events": evts or []}
+    except Exception as e:
+        return {"events": [], "error": str(e)}
+
+
+def _write_live_limit_orders(orders):
+    with open(LIVE_LIMIT_ORDERS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(orders, f, ensure_ascii=False, indent=2)
 
 
 def _read_last_log_run(max_chars=12000):
@@ -630,14 +660,19 @@ STATIC = {
     "/stock_page.js":      ("text/javascript; charset=utf-8",   "web/stock_page.js"),
     "/pattern_engine.js":  ("text/javascript; charset=utf-8",   "web/patternEngine.js"),
     "/nav.js":             ("text/javascript; charset=utf-8",   "web/nav.js"),
+    "/live_common.js":     ("text/javascript; charset=utf-8",   "web/live_common.js"),
+    "/live_widget.js":     ("text/javascript; charset=utf-8",   "web/live_widget.js"),
     "/":               ("text/html; charset=utf-8",          "web/dashboard.html"),
     "/scrape":         ("text/html; charset=utf-8",          "web/index.html"),
     "/browse":         ("text/html; charset=utf-8",          "web/browse.html"),
     "/stocksearch":    ("text/html; charset=utf-8",          "web/stocksearch.html"),
     "/settings":       ("text/html; charset=utf-8",          "web/settings.html"),
     "/help":           ("text/html; charset=utf-8",          "web/help.html"),
+    "/live":           ("text/html; charset=utf-8",          "web/live_overview.html"),
+    "/live-overview":  ("text/html; charset=utf-8",          "web/live_overview.html"),
     "/live-signals":   ("text/html; charset=utf-8",          "web/live_signals.html"),
     "/live-patterns":  ("text/html; charset=utf-8",          "web/live_patterns.html"),
+    "/live-cross":     ("text/html; charset=utf-8",          "web/live_cross.html"),
     "/ohlc-capture":   ("text/html; charset=utf-8",          "web/ohlc_capture.html"),
 }
 
@@ -718,6 +753,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(newsScrapper.fetch_news(insref))
             else:
                 self._json({"error": "missing insref"})
+        elif parsed.path == "/calendar":
+            params = urllib.parse.parse_qs(parsed.query)
+            self._json(_calendar_events(params.get("insref", [""])[0]))
         elif parsed.path == "/trades":
             params = urllib.parse.parse_qs(parsed.query)
             insref = params.get("insref", [""])[0]
@@ -748,6 +786,9 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/live-force-sell":
             with _live_force_sell_lock:
                 self._json(_read_force_sell_file(LIVE_FORCE_SELL_PATH))
+        elif parsed.path == "/live-limit-orders":
+            with _live_limit_orders_lock:
+                self._json(_read_live_limit_orders())
         elif parsed.path == "/live-patterns-force-sell":
             with _live_patterns_force_sell_lock:
                 self._json(_read_force_sell_file(LIVE_PATTERNS_FORCE_SELL_PATH))
@@ -757,6 +798,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_read_live_patterns_portfolio())
         elif parsed.path == "/live-patterns-log":
             self._json({"text": _read_last_log_run_at(LIVE_PATTERNS_LOG_PATH)})
+        elif parsed.path == "/live-cross-portfolio":
+            self._json(_read_live_cross_portfolio())
+        elif parsed.path == "/live-cross-approved":
+            with _live_cross_approved_lock:
+                self._json(_read_live_cross_approved())
+        elif parsed.path == "/live-cross-force-sell":
+            with _live_cross_force_sell_lock:
+                self._json(_read_force_sell_file(LIVE_CROSS_FORCE_SELL_PATH))
+        elif parsed.path == "/live-cross-log":
+            self._json({"text": _read_last_log_run_at(LIVE_CROSS_LOG_PATH)})
         elif parsed.path == "/live-log":
             self._json({"text": _read_last_log_run(), "running": _live_running["running"]})
         elif parsed.path in STATIC:
@@ -767,7 +818,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            length = 0
         raw    = self.rfile.read(length)
 
         if self.path == "/settings":
@@ -870,52 +924,37 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_start_live_run())
             return
         if self.path == "/live-approved":
-            try:
-                data   = json.loads(raw.decode())
-                action = data.get("action", "add")
-                ticker = str(data.get("ticker", "")).strip()
-                if not ticker:
-                    self._json({"error": "missing ticker"})
-                    return
-                with _live_approved_lock:
-                    approved = _read_live_approved()
-                    if action == "add" and ticker not in approved:
-                        approved.append(ticker)
-                    elif action == "remove" and ticker in approved:
-                        approved.remove(ticker)
-                    _write_live_approved(approved)
-                self._json({"ok": True, "approved": sorted(set(approved))})
-            except Exception as e:
-                self._json({"error": str(e)})
+            self._mutate_ticker_list(raw, _live_approved_lock,
+                                     _read_live_approved, _write_live_approved, "approved")
+            return
+        if self.path == "/live-cross-approved":
+            self._mutate_ticker_list(raw, _live_cross_approved_lock,
+                                     _read_live_cross_approved, _write_live_cross_approved, "approved")
             return
         if self.path == "/live-force-entry":
-            try:
-                data   = json.loads(raw.decode())
-                action = data.get("action", "add")
-                ticker = str(data.get("ticker", "")).strip()
-                if not ticker:
-                    self._json({"error": "missing ticker"})
-                    return
-                with _live_force_entry_lock:
-                    forced = _read_live_force_entry()
-                    if action == "add" and ticker not in forced:
-                        forced.append(ticker)
-                    elif action == "remove" and ticker in forced:
-                        forced.remove(ticker)
-                    _write_live_force_entry(forced)
-                self._json({"ok": True, "forced": sorted(set(forced))})
-            except Exception as e:
-                self._json({"error": str(e)})
+            self._mutate_ticker_list(raw, _live_force_entry_lock,
+                                     _read_live_force_entry, _write_live_force_entry, "forced")
             return
-        if self.path in ("/live-force-sell", "/live-patterns-force-sell"):
+        if self.path in ("/live-force-sell", "/live-patterns-force-sell", "/live-cross-force-sell"):
             # Queue (or unqueue) a user-requested "sell now" for one position.
-            # Same shape as /live-force-entry — the engine executes it on the
-            # next run via apply_exit_checks(force_sells=...).
-            is_patterns = self.path.endswith("/live-patterns-force-sell")
-            path_const  = (LIVE_PATTERNS_FORCE_SELL_PATH if is_patterns
-                           else LIVE_FORCE_SELL_PATH)
-            lock        = (_live_patterns_force_sell_lock if is_patterns
-                           else _live_force_sell_lock)
+            # The engine executes it on the next run via apply_exit_checks(force_sells=...).
+            if self.path.endswith("/live-patterns-force-sell"):
+                path_const, lock = LIVE_PATTERNS_FORCE_SELL_PATH, _live_patterns_force_sell_lock
+            elif self.path.endswith("/live-cross-force-sell"):
+                path_const, lock = LIVE_CROSS_FORCE_SELL_PATH, _live_cross_force_sell_lock
+            else:
+                path_const, lock = LIVE_FORCE_SELL_PATH, _live_force_sell_lock
+            self._mutate_ticker_list(raw, lock,
+                                     lambda: _read_force_sell_file(path_const),
+                                     lambda items: _write_force_sell_file(path_const, items),
+                                     "queued")
+            return
+        if self.path == "/live-limit-orders":
+            # Place (or cancel) a user buy limit order for a pending primary
+            # signal. The engine fills it at limit_price on the next run once the
+            # market trades at/below it; good-for-the-day only (see live_signals
+            # section 4b). insref/info are enriched from the engine's latest
+            # pending_signals snapshot so the queue is self-contained.
             try:
                 data   = json.loads(raw.decode())
                 action = data.get("action", "add")
@@ -923,14 +962,48 @@ class Handler(BaseHTTPRequestHandler):
                 if not ticker:
                     self._json({"error": "missing ticker"})
                     return
-                with lock:
-                    queued = _read_force_sell_file(path_const)
-                    if action == "add" and ticker not in queued:
-                        queued.append(ticker)
-                    elif action == "remove" and ticker in queued:
-                        queued.remove(ticker)
-                    _write_force_sell_file(path_const, queued)
-                self._json({"ok": True, "queued": sorted(set(queued))})
+                with _live_limit_orders_lock:
+                    orders = _read_live_limit_orders()
+                    if action == "add":
+                        try:
+                            price = float(data.get("price"))
+                        except (TypeError, ValueError):
+                            self._json({"error": "invalid price"})
+                            return
+                        if price <= 0:
+                            self._json({"error": "price must be > 0"})
+                            return
+                        # Enrich insref/info/source from whichever of the three
+                        # signal lists the ticker is in: primary pending signals,
+                        # watchlist hits (from_watchlist), or near-misses (forced).
+                        pf = _read_live_portfolio()
+                        pend = {p["ticker"]: p for p in (pf.get("pending_signals") or [])}
+                        wl   = {w["ticker"]: w for w in (pf.get("last_watchlist_hits") or [])}
+                        nm   = {n["ticker"]: n for n in (pf.get("last_near_misses") or [])}
+                        if ticker in pend:
+                            src = pend[ticker]
+                            from_watchlist, forced = bool(src.get("from_watchlist")), bool(src.get("forced"))
+                        elif ticker in wl:
+                            src, from_watchlist, forced = wl[ticker], True, False
+                        elif ticker in nm:
+                            src, from_watchlist, forced = nm[ticker], False, True
+                        else:
+                            self._json({"error": f"{ticker} is not a current signal/watchlist/near-miss"})
+                            return
+                        import datetime as _dt
+                        orders[ticker] = {
+                            "insref":         src.get("insref"),
+                            "limit_price":    round(price, 4),
+                            "placed_date":    _dt.datetime.now(_dt.timezone.utc).date().isoformat(),
+                            "placed_ts":      _dt.datetime.now().replace(microsecond=0).isoformat(),
+                            "info":           src.get("info"),
+                            "from_watchlist": from_watchlist,
+                            "forced":         forced,
+                        }
+                    elif action == "remove":
+                        orders.pop(ticker, None)
+                    _write_live_limit_orders(orders)
+                self._json({"ok": True, "orders": orders})
             except Exception as e:
                 self._json({"error": str(e)})
             return
@@ -942,8 +1015,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
         elif self.path == "/start" and not webController.status["running"]:
-            start_index = int(body.get("start", [0])[0])
-            end_index   = int(body.get("end",   [1000])[0])
+            try:
+                start_index = int(body.get("start", [0])[0])
+                end_index   = int(body.get("end",   [1000])[0])
+            except (TypeError, ValueError, IndexError):
+                start_index, end_index = 0, 1000
             threading.Thread(target=webController.run_search, args=(start_index, end_index), daemon=True).start()
             self.send_response(200)
             self.end_headers()
@@ -1060,6 +1136,29 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
+
+    def _mutate_ticker_list(self, raw, lock, read_fn, write_fn, result_key):
+        """Add/remove one ticker in a shared list-of-tickers queue file under
+        `lock`, then reply {ok, <result_key>: sorted list}. Backs the approval /
+        forced-entry / force-sell POST endpoints, which differ only by which
+        file+lock they touch and the key they echo back."""
+        try:
+            data   = json.loads(raw.decode())
+            action = data.get("action", "add")
+            ticker = str(data.get("ticker", "")).strip()
+            if not ticker:
+                self._json({"error": "missing ticker"})
+                return
+            with lock:
+                items = read_fn()
+                if action == "add" and ticker not in items:
+                    items.append(ticker)
+                elif action == "remove" and ticker in items:
+                    items.remove(ticker)
+                write_fn(items)
+            self._json({"ok": True, result_key: sorted(set(items))})
+        except Exception as e:
+            self._json({"error": str(e)})
 
     def _stock_page(self, rel_path):
         if not rel_path:
@@ -1370,12 +1469,16 @@ def _auto_refresh_loop():
             interval = settings.get("auto_refresh_off_hours_minutes", 60) * 60
             label    = f"{settings.get('auto_refresh_off_hours_minutes', 60)}-min (off-hours)"
         time.sleep(interval)
-        if not _refresh_all_status["running"]:
-            uf = settings.get("update_filter")
-            update_filter = uf if isinstance(uf, dict) else None
-            _refresh_all_status["running"] = True
-            _refresh_all_status["done"]    = 0
-            _refresh_all_status["total"]   = 0
+        started = False
+        with _refresh_status_lock:
+            if not _refresh_all_status["running"]:
+                uf = settings.get("update_filter")
+                update_filter = uf if isinstance(uf, dict) else None
+                _refresh_all_status["running"] = True
+                _refresh_all_status["done"]    = 0
+                _refresh_all_status["total"]   = 0
+                started = True
+        if started:
             print(f"[auto-refresh] Starting {label} scheduled update…")
             _do_refresh_all(update_filter)
             print("[auto-refresh] Scheduled update complete.")
@@ -1385,10 +1488,14 @@ def _startup_refresh():
     if not _load_settings().get("auto_refresh_enabled", True):
         print("[startup] Auto-refresh disabled — skipping startup update.")
         return
+    with _refresh_status_lock:
+        if _refresh_all_status["running"]:
+            print("[startup] A refresh is already running — skipping startup update.")
+            return
+        _refresh_all_status["running"] = True
+        _refresh_all_status["done"]    = 0
+        _refresh_all_status["total"]   = 0
     print("[startup] Starting full update of all stocks…")
-    _refresh_all_status["running"] = True
-    _refresh_all_status["done"]    = 0
-    _refresh_all_status["total"]   = 0
     _do_refresh_all(None)
     print("[startup] Full startup update complete.")
 
@@ -1406,9 +1513,11 @@ class QuietHTTPServer(HTTPServer):
 
 
 PORT = 8765
-threading.Thread(target=_auto_refresh_loop, daemon=True).start()
-threading.Thread(target=_startup_refresh, daemon=True).start()
-server = QuietHTTPServer(("0.0.0.0", PORT), Handler)
-print(f"Opening browser at http://localhost:{PORT}")
-webbrowser.open(f"http://localhost:{PORT}")
-server.serve_forever()
+
+if __name__ == "__main__":
+    threading.Thread(target=_auto_refresh_loop, daemon=True).start()
+    threading.Thread(target=_startup_refresh, daemon=True).start()
+    server = QuietHTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"Opening browser at http://localhost:{PORT}")
+    webbrowser.open(f"http://localhost:{PORT}")
+    server.serve_forever()

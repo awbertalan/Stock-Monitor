@@ -509,24 +509,5 @@ window.PE = (() => {
     }));
   }
 
-  // ── Intraday helpers ──────────────────────────────────────────────────────────
-
-  // Returns true if the proposed order value is large enough to avoid the
-  // minimum-commission trap. At 0.06% commission, the minimum kicks in below
-  // 20 / 0.0006 = 33,333 SEK. Below that threshold the round-trip costs 40 SEK
-  // minimum regardless of profit, requiring >0.36% just to break even on fees.
-  function isCommissionViable(orderValueSEK, commissionRate = 0.0006, minCommission = 20) {
-    return orderValueSEK >= (minCommission / commissionRate);
-  }
-
-  // Returns a score in [0, 1] representing how close `price` is to the session
-  // high. Score 1.0 = at the high; score 0.0 = at or below session low.
-  // Values above 0.8 (within ~0.2% of high) indicate poor long-entry timing.
-  function sessionHighProximity(price, sessionHigh, sessionLow) {
-    const range = sessionHigh - sessionLow;
-    if (range <= 0) return 1;
-    return Math.max(0, Math.min(1, (price - sessionLow) / range));
-  }
-
-  return { detect, calcATR, projectProbabilities, isCommissionViable, sessionHighProximity };
+  return { detect, calcATR, projectProbabilities };
 })();

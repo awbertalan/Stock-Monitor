@@ -40,7 +40,7 @@ from urllib.request import urlopen
 import env_loader
 env_loader.load_env()
 
-ROOT       = os.path.dirname(os.path.abspath(__file__))
+ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root (this module lives in lib/)
 STATE_DIR  = os.path.join(ROOT, "state")
 CACHE_PATH = os.path.join(STATE_DIR, "events_calendar.json")
 TOKEN      = os.environ["MILLISTREAM_TOKEN"]

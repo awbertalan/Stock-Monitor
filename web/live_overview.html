@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Overview</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 1200px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 22px; margin-bottom: 18px;
+    }
+
+    .engine-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+    .engine-card {
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: var(--radius-md); padding: 14px 16px;
+    }
+    .engine-name {
+      font-size: 13px; font-weight: 700; color: var(--text);
+      margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+    }
+    .engine-name a {
+      color: var(--accent); text-decoration: none; font-size: 11px; font-weight: 600;
+    }
+    .engine-name a:hover { text-decoration: underline; }
+    .engine-line { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; }
+    .engine-line .lbl { color: var(--text-muted); }
+    .engine-line .val { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+
+    .curve-wrap { position: relative; }
+    .curve-svg  { width: 100%; height: 260px; display: block; }
+    .legend     { display: flex; gap: 16px; font-size: 12px; margin-top: 8px; flex-wrap: wrap; }
+    .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+    @media (max-width: 720px) {
+      .engine-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h2>Live — Overview</h2>
+  <p class="subtitle">Combined view across all three paper-trade engines. Each engine has its own 500k SEK wallet; this page sums them.</p>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live" class="active">Live</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="tab-bar">
+    <a class="tab active" href="/live-overview">Overview</a>
+    <a class="tab"        href="/live-signals">Signals</a>
+    <a class="tab"        href="/live-patterns">Patterns</a>
+    <a class="tab"        href="/live-cross">Cross</a>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Combined equity</div>
+      <div class="stat-value" id="combined-equity">—</div>
+      <div class="stat-sub" id="combined-equity-sub">of 1,500k start</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Combined cash</div>
+      <div class="stat-value" id="combined-cash">—</div>
+      <div class="stat-sub" id="combined-cash-sub">— SEK deployed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open positions</div>
+      <div class="stat-value" id="combined-open">—</div>
+      <div class="stat-sub" id="combined-open-sub">across all engines</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value" id="combined-realized">—</div>
+      <div class="stat-sub" id="combined-realized-sub">— total trades</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Combined WR</div>
+      <div class="stat-value" id="combined-wr">—</div>
+      <div class="stat-sub" id="combined-wr-sub">across closed trades</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Equity curve — cumulative realized P&amp;L by entry date</div>
+    <div class="curve-wrap">
+      <svg class="curve-svg" id="curve-svg" preserveAspectRatio="none" viewBox="0 0 800 260"></svg>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#0052cc;"></span>Signals</span>
+        <span><span class="legend-dot" style="background:#1a8042;"></span>Patterns</span>
+        <span><span class="legend-dot" style="background:#b08000;"></span>Cross</span>
+        <span><span class="legend-dot" style="background:#1a1f36;"></span>Combined</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Per engine</div>
+    <div class="engine-grid" id="engine-grid">
+      <div class="engine-card"><div class="engine-name">Loading…</div></div>
+    </div>
+  </div>
+
+  <script src="/live_common.js"></script>
+  <script>
+    async function refresh() {
+      try {
+        const [sig, pat, crs] = await Promise.all([
+          fetch('/live-portfolio').then(r => r.json()),
+          fetch('/live-patterns-portfolio').then(r => r.json()),
+          fetch('/live-cross-portfolio').then(r => r.json()),
+        ]);
+        render({ signals: sig, patterns: pat, cross: crs });
+      } catch (e) {
+        console.error('refresh failed', e);
+      }
+    }
+
+    function engineStats(p, color, label, link) {
+      const cash = p.cash || 0;
+      const positions = p.positions || {};
+      const closed = p.closed_trades || [];
+      const quotes = (p.last_quotes && typeof p.last_quotes === 'object') ? p.last_quotes : {};
+      let openVal = 0;
+      for (const [tk, pos] of Object.entries(positions)) {
+        const last = (quotes[tk] && quotes[tk].last) || pos.entry_price;
+        openVal += pos.shares * last;
+      }
+      const equity = cash + openVal;
+      const realized = closed.reduce((s, t) => s + (t.pnl_sek || 0), 0);
+      const wins = closed.filter(t => (t.pnl_sek || 0) > 0).length;
+      const wr = closed.length ? wins / closed.length : null;
+      return { label, link, color, cash, openVal, equity, realized, wins,
+               losses: closed.length - wins, total: closed.length, wr,
+               openCount: Object.keys(positions).length, closed };
+    }
+
+    function render(d) {
+      const sStats = engineStats(d.signals,  '#0052cc', 'Signals',  '/live-signals');
+      const pStats = engineStats(d.patterns, '#1a8042', 'Patterns', '/live-patterns');
+      const xStats = engineStats(d.cross,    '#b08000', 'Cross',    '/live-cross');
+      const all    = [sStats, pStats, xStats];
+
+      const combinedEquity   = all.reduce((s, e) => s + e.equity, 0);
+      const combinedCash     = all.reduce((s, e) => s + e.cash, 0);
+      const combinedDeployed = all.reduce((s, e) => s + e.openVal, 0);
+      const combinedOpen     = all.reduce((s, e) => s + e.openCount, 0);
+      const combinedRealized = all.reduce((s, e) => s + e.realized, 0);
+      const combinedTrades   = all.reduce((s, e) => s + e.total, 0);
+      const combinedWins     = all.reduce((s, e) => s + e.wins, 0);
+      const combinedWR       = combinedTrades ? combinedWins / combinedTrades : null;
+      const start = 1_500_000;
+
+      document.getElementById('combined-equity').textContent = fmt(combinedEquity, 0) + ' SEK';
+      document.getElementById('combined-equity-sub').textContent =
+        `${((combinedEquity / start - 1) * 100).toFixed(2)}% vs ${(start/1000).toFixed(0)}k start`;
+      document.getElementById('combined-cash').textContent = fmt(combinedCash, 0) + ' SEK';
+      document.getElementById('combined-cash-sub').textContent = `${fmt(combinedDeployed, 0)} SEK deployed`;
+      document.getElementById('combined-open').textContent = combinedOpen;
+      document.getElementById('combined-open-sub').textContent = 'across all engines';
+      const realizedEl = document.getElementById('combined-realized');
+      realizedEl.textContent = sign(combinedRealized) + ' SEK';
+      realizedEl.className = 'stat-value ' + cls(combinedRealized);
+      document.getElementById('combined-realized-sub').textContent = `${combinedTrades} total trades`;
+      if (combinedWR === null) {
+        document.getElementById('combined-wr').textContent = '—';
+        document.getElementById('combined-wr-sub').textContent = 'no closed trades yet';
+      } else {
+        const wrEl = document.getElementById('combined-wr');
+        wrEl.textContent = (combinedWR*100).toFixed(0) + '%';
+        wrEl.className = 'stat-value ' + (combinedWR >= 0.5 ? 'up' : 'down');
+        document.getElementById('combined-wr-sub').textContent =
+          `${combinedWins}W / ${combinedTrades - combinedWins}L`;
+      }
+
+      // Per-engine cards
+      const grid = document.getElementById('engine-grid');
+      grid.innerHTML = all.map(e => `
+        <div class="engine-card">
+          <div class="engine-name">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${e.color};"></span>
+            ${e.label}
+            <a href="${e.link}" style="margin-left:auto;">open →</a>
+          </div>
+          <div class="engine-line"><span class="lbl">Equity</span>
+            <span class="val">${fmt(e.equity, 0)} SEK <span class="stat-sub">(${((e.equity/500000-1)*100).toFixed(2)}%)</span></span></div>
+          <div class="engine-line"><span class="lbl">Cash</span>
+            <span class="val">${fmt(e.cash, 0)} SEK</span></div>
+          <div class="engine-line"><span class="lbl">Open</span>
+            <span class="val">${e.openCount} (${fmt(e.openVal, 0)} SEK)</span></div>
+          <div class="engine-line"><span class="lbl">Realized</span>
+            <span class="val ${cls(e.realized)}">${sign(e.realized)} SEK</span></div>
+          <div class="engine-line"><span class="lbl">Trades</span>
+            <span class="val">${e.total} (${e.wins}W / ${e.losses}L)</span></div>
+          <div class="engine-line"><span class="lbl">Win rate</span>
+            <span class="val">${e.wr === null ? '—' : (e.wr*100).toFixed(0) + '%'}</span></div>
+        </div>`).join('');
+
+      renderCurve(all);
+    }
+
+    function renderCurve(engines) {
+      // Build daily-bucketed cumulative-realized series per engine.
+      const series = engines.map(e => {
+        const byDate = {};
+        for (const t of e.closed) {
+          if (!t.exit_date) continue;
+          byDate[t.exit_date] = (byDate[t.exit_date] || 0) + (t.pnl_sek || 0);
+        }
+        const dates = Object.keys(byDate).sort();
+        let cum = 0;
+        const points = dates.map(d => { cum += byDate[d]; return { date: d, cum }; });
+        return { color: e.color, label: e.label, points };
+      });
+
+      // Combined series across all engines on the union of dates
+      const allDates = new Set();
+      for (const s of series) for (const p of s.points) allDates.add(p.date);
+      const dates = Array.from(allDates).sort();
+      const combined = [];
+      let cum = 0;
+      // For each date in chronological order, sum pnl across engines on that date
+      const byDateAcross = {};
+      for (const e of engines) for (const t of e.closed) {
+        if (!t.exit_date) continue;
+        byDateAcross[t.exit_date] = (byDateAcross[t.exit_date] || 0) + (t.pnl_sek || 0);
+      }
+      for (const d of dates) {
+        cum += (byDateAcross[d] || 0);
+        combined.push({ date: d, cum });
+      }
+      const combinedSeries = { color: '#1a1f36', label: 'Combined', points: combined };
+
+      const svg = document.getElementById('curve-svg');
+      const W = 800, H = 260, padL = 50, padR = 16, padT = 12, padB = 26;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+
+      const allPoints = [...series, combinedSeries].flatMap(s => s.points);
+      if (!allPoints.length || !dates.length) {
+        svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="${getComputedStyle(document.body).getPropertyValue('--text-muted')}" font-size="13">No trades yet</text>`;
+        return;
+      }
+      const minY = Math.min(0, ...allPoints.map(p => p.cum));
+      const maxY = Math.max(0, ...allPoints.map(p => p.cum));
+      const padY = Math.max(100, (maxY - minY) * 0.08);
+      const lo = minY - padY, hi = maxY + padY;
+      const xOf = i => padL + (dates.length <= 1 ? plotW/2 : (i / (dates.length - 1)) * plotW);
+      const yOf = v => padT + (1 - (v - lo) / (hi - lo)) * plotH;
+
+      // Build path for each series, mapping each series' points onto the unified x axis
+      function pathFor(s) {
+        if (!s.points.length) return '';
+        const idxByDate = Object.fromEntries(dates.map((d, i) => [d, i]));
+        // forward-fill the line by holding last value across missing dates
+        let last = 0, has = false;
+        const segs = [];
+        for (let i = 0; i < dates.length; i++) {
+          const d = dates[i];
+          // Find an exact match for this engine on this date
+          const point = s.points.find(p => p.date === d);
+          if (point) { last = point.cum; has = true; }
+          if (has) {
+            const x = xOf(i), y = yOf(last);
+            segs.push(`${segs.length ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`);
+          }
+        }
+        return segs.join('');
+      }
+
+      // Zero baseline + Y grid (4 ticks)
+      const muted = '#dde1ec';
+      const axes  = '#8a94a6';
+      const ticks = [];
+      for (let i = 0; i <= 4; i++) {
+        const v = lo + (i / 4) * (hi - lo);
+        const y = yOf(v);
+        ticks.push(`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="${muted}" stroke-width="1"/>` +
+                   `<text x="${padL - 6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="${axes}">${fmt(v, 0)}</text>`);
+      }
+      // X labels — first and last date
+      const xLabels =
+        `<text x="${padL}" y="${H - 8}" font-size="10" fill="${axes}">${dates[0]}</text>` +
+        `<text x="${W - padR}" y="${H - 8}" text-anchor="end" font-size="10" fill="${axes}">${dates[dates.length-1]}</text>`;
+      // Series paths
+      const paths = [combinedSeries, ...series].map(s => {
+        const p = pathFor(s);
+        if (!p) return '';
+        const isCombined = s.label === 'Combined';
+        const stroke = s.color;
+        const sw = isCombined ? 2.5 : 1.8;
+        return `<path d="${p}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+      }).join('');
+
+      svg.innerHTML = ticks.join('') + xLabels + paths;
+    }
+
+    refresh();
+    setInterval(refresh, 120000);
+  </script>
+  <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
+</body>
+</html>

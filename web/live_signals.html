@@ -11,29 +11,6 @@
     h2 { color: #1a1f36; letter-spacing: -0.5px; margin-bottom: 4px; }
     .subtitle { font-size: 13px; color: #8a94a6; margin-bottom: 20px; }
 
-    /* Top stats row */
-    .stat-row {
-      display: flex; gap: 12px; flex-wrap: wrap;
-      margin-bottom: 18px;
-    }
-    .stat-card {
-      flex: 1; min-width: 140px;
-      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
-      padding: 14px 16px;
-    }
-    .stat-label {
-      font-size: 10px; color: #8a94a6;
-      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
-    }
-    .stat-value {
-      font-size: 22px; font-weight: bold; color: #1a1f36;
-      letter-spacing: -0.5px; line-height: 1.1;
-    }
-    .stat-sub { font-size: 11px; color: #8a94a6; margin-top: 4px; }
-    .up   { color: #16c784; }
-    .down { color: #ea3943; }
-    .neutral { color: #0052cc; }
-
     .toolbar {
       display: flex; gap: 8px; align-items: center; margin-bottom: 16px;
     }
@@ -47,44 +24,16 @@
     .toolbar .meta {
       font-size: 12px; color: #8a94a6; margin-left: auto;
     }
-    .pill {
-      display: inline-block; padding: 3px 8px; border-radius: 10px;
-      font-size: 10px; font-weight: bold; text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
     .pill-on  { background: #e6f6ee; color: #1a8042; }
     .pill-off { background: #fce8ea; color: #b32a36; }
     .pill-warn { background: #fff4d6; color: #8a5a00; }
     .pill-info { background: #e8f0fe; color: #0052cc; }
-
-    /* Section heads */
-    .section-title {
-      font-size: 11px; font-weight: bold; color: #8a94a6;
-      text-transform: uppercase; letter-spacing: 0.5px;
-      margin: 22px 0 8px;
-    }
 
     /* Tables */
     .table-wrap {
       background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
       overflow: hidden;
     }
-    table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .sig-table th {
-      text-align: left; padding: 9px 12px; font-size: 10px; font-weight: bold;
-      color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px;
-      border-bottom: 1px solid #e8ecf5; background: #fafbfd;
-      white-space: nowrap;
-    }
-    .sig-table td { padding: 10px 12px; border-bottom: 1px solid #f4f6fb; color: #1a1f36; }
-    .sig-table tr:last-child td { border-bottom: none; }
-    .sig-table tr:hover td { background: #f8faff; }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ticker { font-weight: 600; }
-    .ticker-link { color: inherit; text-decoration: none; border-bottom: 1px dotted transparent; }
-    .ticker-link:hover { color: #0052cc; border-bottom-color: #0052cc; }
-    .small  { font-size: 11px; color: #8a94a6; }
-    .empty-row { text-align: center; color: #8a94a6; padding: 24px; font-style: italic; }
     .pagination {
       display: flex; align-items: center; justify-content: flex-end;
       gap: 12px; padding: 10px 12px 4px; font-size: 12px;
@@ -140,20 +89,6 @@
       .sig-table .mobile-hide { display: none; }
     }
 
-    /* Log panel */
-    #log-panel {
-      background: #1a1f36; color: #c0ccee; border-radius: 10px;
-      padding: 14px 16px; font-family: 'SF Mono', Menlo, Consolas, monospace;
-      font-size: 11.5px; line-height: 1.5;
-      max-height: 420px; overflow-y: auto;
-      white-space: pre-wrap; word-break: break-word;
-    }
-    #log-panel .log-empty { color: #6b7596; font-style: italic; }
-
-    .reason-TP      { background: #e6f6ee; color: #1a8042; }
-    .reason-SL      { background: #fce8ea; color: #b32a36; }
-    .reason-TIMEOUT { background: #f0f0f5; color: #555;   }
-
     /* Approve toggle */
     .approve-btn {
       background: #fff; color: #0052cc; border: 1px solid #c0ccee;
@@ -163,15 +98,12 @@
     .approve-btn:hover { background: #f0f3fa; }
     .approve-btn.approved { background: #1a8042; color: #fff; border-color: #1a8042; }
     .approve-btn.approved:hover { background: #156634; }
-    .sell-btn {
-      background: #fff; color: #b08000; border: 1px solid #e0c060;
-      border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
-      cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap;
+    .limit-price-input {
+      width: 72px; padding: 3px 6px; font-size: 12px; text-align: right;
+      border: 1px solid var(--border-input, #dde1ec); border-radius: 6px;
+      font-family: Arial, sans-serif; font-variant-numeric: tabular-nums;
     }
-    .sell-btn:hover:not(:disabled) { background: #fff4d6; }
-    .sell-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: not-allowed; background: #fff; }
-    .sell-btn.queued { background: #b08000; color: #fff; border-color: #b08000; }
-    .sell-btn.queued:hover { background: #8a6500; }
+    .limit-price-input:focus { outline: none; border-color: #0052cc; }
     .tag-std      { background: #e8f0fe; color: #0052cc; }
     .tag-std-high { background: #e6f6ee; color: #0a7c4b; }
     .tag-deep-pb  { background: #f3effe; color: #7a4dcc; }
@@ -196,14 +128,20 @@
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
     <a href="/browse">Browse Folders</a>
-    <a href="/live-signals" class="active">Live Signals</a>
-    <a href="/live-patterns">Live Patterns</a>
+    <a href="/live" class="active">Live</a>
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
     <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
+
+  <div class="tab-bar">
+    <a class="tab"        href="/live-overview">Overview</a>
+    <a class="tab active" href="/live-signals">Signals</a>
+    <a class="tab"        href="/live-patterns">Patterns</a>
+    <a class="tab"        href="/live-cross">Cross</a>
+  </div>
 
   <div class="stat-row">
     <div class="stat-card">
@@ -242,30 +180,36 @@
   </div>
 
   <div class="section-title">New signals (latest run)</div>
+  <div class="approved-summary">Manual flow: approve a pending signal and set a <strong>buy limit price</strong>. The engine fills it once the market trades at/below your price — good for the trading day only (unfilled orders expire at close).</div>
   <div class="table-wrap">
     <table class="sig-table" id="newsig-table">
       <thead>
         <tr>
           <th>Ticker</th>
-          <th>Action</th>
+          <th>Status</th>
           <th class="num mobile-hide">Last</th>
           <th class="num mobile-hide">Bid</th>
           <th class="num mobile-hide">Ask</th>
-          <th class="num">Suggested bid</th>
-          <th class="num mobile-hide">Spread</th>
-          <th class="num">TP</th>
-          <th class="num">SL</th>
-          <th>Signal / Reason</th>
+          <th class="num">DoD</th>
+          <th class="num mobile-hide">20d ret</th>
+          <th class="num">Buy limit</th>
+          <th class="num mobile-hide">TP / SL</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody id="newsig-body">
         <tr><td colspan="10" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
+    <div class="pagination" id="newsig-pagination" style="display:none;">
+      <button class="page-btn" id="newsig-prev" onclick="newsigPageChange(-1)">‹ Prev</button>
+      <span class="page-info" id="newsig-page-info">Page 1 of 1</span>
+      <button class="page-btn" id="newsig-next" onclick="newsigPageChange(1)">Next ›</button>
+    </div>
   </div>
 
   <div class="section-title">Watchlist signals — approve to trade (min 35k SEK buy-in)</div>
-  <div class="approved-summary" id="approved-summary">No watchlist tickers approved yet.</div>
+  <div class="approved-summary" id="approved-summary">Set a <strong>buy limit price</strong> and click Approve to queue a same-day buy on a mid/small-cap signal. The engine fills at your price once the market reaches it.</div>
   <div class="table-wrap">
     <table class="sig-table">
       <thead>
@@ -274,19 +218,25 @@
           <th>Tag</th>
           <th class="num">Last</th>
           <th class="num">DoD</th>
-          <th class="num">At 5d high</th>
-          <th class="num">20d ret</th>
-          <th>Approve for trading</th>
+          <th class="num mobile-hide">At 5d high</th>
+          <th class="num mobile-hide">20d ret</th>
+          <th class="num">Buy limit</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody id="watchlist-body">
-        <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="8" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
+    <div class="pagination" id="watchlist-pagination" style="display:none;">
+      <button class="page-btn" id="watchlist-prev" onclick="watchlistPageChange(-1)">‹ Prev</button>
+      <span class="page-info" id="watchlist-page-info">Page 1 of 1</span>
+      <button class="page-btn" id="watchlist-next" onclick="watchlistPageChange(1)">Next ›</button>
+    </div>
   </div>
 
   <div class="section-title">Near-misses — approve to override filter</div>
-  <div class="approved-summary" id="forced-summary">No filter overrides queued.</div>
+  <div class="approved-summary" id="forced-summary">These nearly passed the filter. Set a <strong>buy limit price</strong> and click Override to queue a same-day buy anyway — the engine fills at your price once the market reaches it.</div>
   <div class="table-wrap">
     <table class="sig-table">
       <thead>
@@ -295,12 +245,34 @@
           <th class="num">DoD</th>
           <th class="num mobile-hide">At 5d high</th>
           <th class="num mobile-hide">Friday</th>
-          <th class="num">20d ret</th>
-          <th>Fails</th>
-          <th>Override</th>
+          <th class="num mobile-hide">20d ret</th>
+          <th class="mobile-hide">Fails</th>
+          <th class="num">Buy limit</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody id="nearmiss-body">
+        <tr><td colspan="8" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Pending orders — approved, awaiting fill</div>
+  <div class="approved-summary">Buy limit orders you've approved (from any of the tables above). Each fills into Open positions at your limit price once the market trades at/below it. Good for the trading day — unfilled orders expire at the close.</div>
+  <div class="table-wrap">
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Source</th>
+          <th class="num">Buy limit</th>
+          <th class="num">Market</th>
+          <th class="num">To fill</th>
+          <th class="mobile-hide">Placed</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="pending-orders-body">
         <tr><td colspan="7" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
@@ -344,6 +316,31 @@
       </thead>
       <tbody id="quotes-body">
         <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div class="pagination" id="quotes-pagination" style="display:none;">
+      <button class="page-btn" id="quotes-prev" onclick="quotesPageChange(-1)">‹ Prev</button>
+      <span class="page-info" id="quotes-page-info">Page 1 of 1</span>
+      <button class="page-btn" id="quotes-next" onclick="quotesPageChange(1)">Next ›</button>
+    </div>
+  </div>
+
+  <div class="section-title">SL cooldown — entries currently blocked</div>
+  <div class="approved-summary" id="cooldown-summary" style="margin-bottom:8px;">
+    Tickers that hit an SL today are blocked from same-day re-entry; the next trading day is fine. Listed here so you know which names are paused right now.
+  </div>
+  <div class="table-wrap" id="cooldown-wrap" style="margin-bottom:18px;">
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th class="mobile-hide">Last SL date</th>
+          <th class="num">Days elapsed</th>
+          <th class="num">Days remaining</th>
+        </tr>
+      </thead>
+      <tbody id="cooldown-body">
+        <tr><td colspan="4" class="empty-row">(none)</td></tr>
       </tbody>
     </table>
   </div>
@@ -416,51 +413,138 @@
   <div id="log-panel"><span class="log-empty">Loading…</span></div>
 
   <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
+  <script src="/live_common.js"></script>
   <script>
-    const fmt = (n, d=0) => Number(n).toLocaleString('sv-SE', {maximumFractionDigits:d, minimumFractionDigits:d});
-    // Compact-format an ISO timestamp like "2026-05-19T10:23:45" -> "2026-05-19 10:23:45"
-    const fmtTs = ts => ts ? String(ts).replace('T', ' ').slice(0, 19) : '';
-    const pct = (n, d=2) => `${n>=0?'+':''}${(n*100).toFixed(d)}%`;
-    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const cls = n => n > 0 ? 'up' : (n < 0 ? 'down' : 'neutral');
-    const sign = n => n >= 0 ? `+${fmt(n,0)}` : fmt(n,0);
-
-    let approvedSet  = new Set();
-    let forcedSet    = new Set();
     let forceSellSet = new Set();
-    const SELL_MIN_RET = 0.0075;   // UI gate: button enabled only at ≥+0.75% unrealized
     let lastWatchlistHits = [];
     let lastNearMisses    = [];
+    let lastLimitOrders   = {};        // ticker -> placed buy limit order
+    const pendingPriceDrafts = {};     // ticker -> in-progress price input (survives the 2-min auto-refresh)
+    let lastPortfolio     = null;      // most recent /live-portfolio payload (for standalone re-renders)
     let tickerPaths = {};
     let closedSortedCache = [];
     let closedPage = 1;
-    const CLOSED_PAGE_SIZE = 20;
+    const CLOSED_PAGE_SIZE = 10;
+    const PAGE_SIZE = 10;
 
-    function tickerLink(name) {
-      const path = tickerPaths[name];
-      if (!path) return esc(name);
-      return `<a href="/view?path=${encodeURIComponent(path)}" class="ticker-link">${esc(name)}</a>`;
+    // Generic 20-per-page paginator for tables. setData() caches the full array
+    // plus a row-renderer (capturing current closure scope, e.g. lastLimitOrders),
+    // so Prev/Next can re-slice between auto-refreshes without re-fetching.
+    function makePager(ids, colspan, emptyMsg) {
+      const state = { page: 1, data: [], rowFn: null };
+      function render() {
+        const body  = document.getElementById(ids.body);
+        const pager = document.getElementById(ids.pager);
+        if (!state.data.length) {
+          body.innerHTML = `<tr><td colspan="${colspan}" class="empty-row">${emptyMsg}</td></tr>`;
+          if (pager) pager.style.display = 'none';
+          return;
+        }
+        const totalPages = Math.max(1, Math.ceil(state.data.length / PAGE_SIZE));
+        if (state.page > totalPages) state.page = totalPages;
+        if (state.page < 1) state.page = 1;
+        const start = (state.page - 1) * PAGE_SIZE;
+        const pageRows = state.data.slice(start, start + PAGE_SIZE);
+        body.innerHTML = pageRows.map(state.rowFn).join('');
+        if (state.data.length <= PAGE_SIZE) {
+          if (pager) pager.style.display = 'none';
+        } else {
+          pager.style.display = '';
+          document.getElementById(ids.info).textContent =
+            `Showing ${start + 1}–${start + pageRows.length} of ${state.data.length}  ·  Page ${state.page} of ${totalPages}`;
+          document.getElementById(ids.prev).disabled = state.page <= 1;
+          document.getElementById(ids.next).disabled = state.page >= totalPages;
+        }
+      }
+      return {
+        setData(data, rowFn) { state.data = data; state.rowFn = rowFn; render(); },
+        change(delta) { state.page += delta; render(); },
+      };
     }
+
+    const newsigPager = makePager(
+      { body: 'newsig-body', pager: 'newsig-pagination', info: 'newsig-page-info', prev: 'newsig-prev', next: 'newsig-next' },
+      10, 'No signals in the latest run');
+    const watchlistPager = makePager(
+      { body: 'watchlist-body', pager: 'watchlist-pagination', info: 'watchlist-page-info', prev: 'watchlist-prev', next: 'watchlist-next' },
+      8, 'No watchlist signals in the latest run');
+    const quotesPager = makePager(
+      { body: 'quotes-body', pager: 'quotes-pagination', info: 'quotes-page-info', prev: 'quotes-prev', next: 'quotes-next' },
+      7, 'No tracked tickers');
+
+    function newsigPageChange(d)    { newsigPager.change(d); }
+    function watchlistPageChange(d) { watchlistPager.change(d); }
+    function quotesPageChange(d)    { quotesPager.change(d); }
 
     async function refresh() {
       try {
-        const [pf, log, approved, forced, sellQueue] = await Promise.all([
+        const [pf, log, sellQueue, limitOrders] = await Promise.all([
           fetch('/live-portfolio').then(r => r.json()),
           fetch('/live-log').then(r => r.json()),
-          fetch('/live-approved').then(r => r.json()).catch(() => []),
-          fetch('/live-force-entry').then(r => r.json()).catch(() => []),
           fetch('/live-force-sell').then(r => r.json()).catch(() => []),
+          fetch('/live-limit-orders').then(r => r.json()).catch(() => ({})),
         ]);
-        approvedSet  = new Set(Array.isArray(approved) ? approved : []);
-        forcedSet    = new Set(Array.isArray(forced)   ? forced   : []);
         forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
+        lastLimitOrders = (limitOrders && typeof limitOrders === 'object' && !Array.isArray(limitOrders)) ? limitOrders : {};
         renderPortfolio(pf);
         renderLog(log);
         renderWatchlist();
         renderNearMisses();
+        renderPendingOrders();
+        renderCooldowns(pf);
       } catch (e) {
         console.error('refresh failed', e);
       }
+    }
+
+    /* Trading-days helper (Sat/Sun excluded) — mirrors live_signals.py:trading_days_between. */
+    function tradingDaysSince(dateStr) {
+      const d1 = new Date(dateStr + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      let n = 0;
+      const d = new Date(d1.getTime());
+      while (d < today) {
+        d.setDate(d.getDate() + 1);
+        const w = d.getDay();   // 0=Sun, 6=Sat
+        if (w !== 0 && w !== 6) n += 1;
+      }
+      return n;
+    }
+
+    /* SL cooldown per live_signals.py:COOLDOWN_DAYS (1 trading day = same-day block only as of 2026-06-13). */
+    const COOLDOWN_DAYS = 1;   // matches live_signals.py — same-day SL block only (was 7 pre-2026-06-13)
+    function renderCooldowns(p) {
+      const closed = Array.isArray(p.closed_trades) ? p.closed_trades : [];
+      // Pick the LATEST exit per ticker; only keep if reason==SL AND cooldown still active
+      const latestByTicker = {};
+      for (const t of closed) {
+        if (!t.ticker || !t.exit_date) continue;
+        const cur = latestByTicker[t.ticker];
+        if (!cur || t.exit_date > cur.exit_date) latestByTicker[t.ticker] = t;
+      }
+      const rows = [];
+      for (const t of Object.values(latestByTicker)) {
+        if (t.reason !== 'SL') continue;
+        const elapsed = tradingDaysSince(t.exit_date);
+        const remaining = COOLDOWN_DAYS - elapsed;
+        if (remaining <= 0) continue;
+        rows.push({ ticker: t.ticker, exit_date: t.exit_date, elapsed, remaining });
+      }
+      rows.sort((a, b) => a.remaining - b.remaining);
+      const body = document.getElementById('cooldown-body');
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="4" class="empty-row">(none — no tickers in active SL cooldown)</td></tr>';
+        return;
+      }
+      body.innerHTML = rows.map(r => `
+        <tr>
+          <td class="ticker">${tickerLink(r.ticker)}</td>
+          <td class="small mobile-hide">${esc(r.exit_date)}</td>
+          <td class="num">${r.elapsed}d</td>
+          <td class="num down">${r.remaining}d</td>
+        </tr>`).join('');
     }
 
     function tagFor(info) {
@@ -493,138 +577,261 @@
     }
 
     function renderWatchlist() {
-      const body = document.getElementById('watchlist-body');
       const summary = document.getElementById('approved-summary');
       const hits = lastWatchlistHits;
 
-      // Build the union of (current watchlist signals) + (already-approved tickers
-      // that didn't appear in the latest hits list) so the user can always toggle
-      // off something they previously approved, even if it isn't signalling now.
+      // Union of (current watchlist signals) + (any watchlist limit order still
+      // queued, even if the ticker stopped signalling) so a queued order stays
+      // visible + cancellable.
       const byTicker = new Map();
       hits.forEach(h => byTicker.set(h.ticker, h));
-      approvedSet.forEach(t => {
-        if (!byTicker.has(t)) byTicker.set(t, { ticker: t, last: null, info: null, _stale: true });
+      Object.entries(lastLimitOrders).forEach(([tk, o]) => {
+        if (o.from_watchlist && !byTicker.has(tk)) {
+          byTicker.set(tk, { ticker: tk, insref: o.insref, last: null, info: o.info || null, _stale: true });
+        }
       });
       const rows = [...byTicker.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
 
-      if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="7" class="empty-row">No watchlist signals in the latest run</td></tr>';
-      } else {
-        body.innerHTML = rows.map(w => {
-          const tag = tagFor(w.info);
-          const isApproved = approvedSet.has(w.ticker);
-          const stale = w._stale ? ' <span class="small">(not signalling)</span>' : '';
-          const i = w.info || {};
-          return `
-            <tr>
-              <td class="ticker">${tickerLink(w.ticker)}${stale}</td>
-              <td><span class="pill ${tag.cls}">${tag.label}</span></td>
-              <td class="num">${w.last != null ? fmt(w.last, 2) : '—'}</td>
-              <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
-              <td class="num">${i.at_5d_high ? 'yes' : 'no'}</td>
-              <td class="num ${i.ret_20d != null ? cls(i.ret_20d) : ''}">${i.ret_20d != null ? pct(i.ret_20d, 1) : '—'}</td>
-              <td>
-                <button class="approve-btn${isApproved ? ' approved' : ''}"
-                        onclick="toggleApprove('${esc(w.ticker)}', this)">
-                  ${isApproved ? '✓ Approved' : 'Approve'}
-                </button>
-              </td>
-            </tr>`;
-        }).join('');
-      }
+      watchlistPager.setData(rows, w => {
+        const tag = tagFor(w.info);
+        const stale = w._stale ? ' <span class="small">(not signalling)</span>' : '';
+        const i = w.info || {};
+        return `
+          <tr>
+            <td class="ticker">${tickerLink(w.ticker)}${stale}</td>
+            <td><span class="pill ${tag.cls}">${tag.label}</span></td>
+            <td class="num">${w.last != null ? fmt(w.last, 2) : '—'}</td>
+            <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
+            <td class="num mobile-hide">${i.at_5d_high ? 'yes' : 'no'}</td>
+            <td class="num mobile-hide ${i.ret_20d != null ? cls(i.ret_20d) : ''}">${i.ret_20d != null ? pct(i.ret_20d, 1) : '—'}</td>
+            ${buyLimitCell(w.ticker, w.last)}
+            ${buyActionCell(w.ticker, 'Approve buy')}
+          </tr>`;
+      });
 
-      if (!approvedSet.size) {
-        summary.textContent = 'No watchlist tickers approved yet — approved tickers become tradable on the next signal check.';
+      const queuedWl = Object.values(lastLimitOrders).filter(o => o.from_watchlist).length;
+      if (!queuedWl) {
+        summary.innerHTML = 'Set a <strong>buy limit price</strong> and click Approve to queue a same-day buy on a mid/small-cap signal. The engine fills at your price once the market reaches it.';
       } else {
-        const chips = [...approvedSet].sort().map(t => `<span class="chip">${esc(t)}</span>`).join('');
-        summary.innerHTML = `<strong>${approvedSet.size} approved for trading:</strong> ${chips}`;
+        summary.innerHTML = `<strong>${queuedWl} watchlist buy${queuedWl===1?'':'s'} queued.</strong> Each fills at your limit price when the market reaches it; unfilled orders expire at the close.`;
       }
     }
 
-    async function toggleApprove(ticker, btn) {
-      const adding = !approvedSet.has(ticker);
+    // Keep the in-progress price as the user types so the 2-min auto-refresh
+    // re-render doesn't wipe it.
+    function setPriceDraft(ticker, value) {
+      pendingPriceDrafts[ticker] = value;
+    }
+
+    // Place a buy limit order for a pending signal, or cancel an existing one.
+    async function toggleLimitOrder(ticker, btn) {
+      const queued = !!lastLimitOrders[ticker];
+      let price = null;
+      if (!queued) {
+        const input = document.getElementById('limit-price-' + cssId(ticker));
+        price = input ? parseFloat(input.value) : NaN;
+        if (!(price > 0)) {
+          if (input) { input.focus(); input.style.borderColor = 'var(--negative)'; }
+          return;
+        }
+      }
       btn.disabled = true;
       try {
-        const res = await fetch('/live-approved', {
+        const res = await fetch('/live-limit-orders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
+          body: JSON.stringify(queued
+            ? { action: 'remove', ticker }
+            : { action: 'add', ticker, price }),
         }).then(r => r.json());
         if (res && res.ok) {
-          approvedSet = new Set(res.approved || []);
+          lastLimitOrders = res.orders || {};
+          if (!queued) delete pendingPriceDrafts[ticker]; else pendingPriceDrafts[ticker] = undefined;
+          // Re-render every section that reflects order state.
+          renderPendingSignals();
           renderWatchlist();
+          renderNearMisses();
+          renderPendingOrders();
+        } else if (res && res.error) {
+          alert(res.error);
         }
       } catch (e) {
-        console.error('toggle failed', e);
+        console.error('limit order failed', e);
       } finally {
         btn.disabled = false;
       }
+    }
+
+    // Safe id fragment for tickers with spaces/punctuation (e.g. "Tele2 B").
+    function cssId(s) { return String(s).replace(/[^a-zA-Z0-9]/g, '_'); }
+
+    // Shared buy-limit cells for the New signals / Watchlist / Near-misses tables.
+    // If a limit order is already queued for the ticker, show the placed price +
+    // a cancel button; otherwise a price input (pre-filled with the suggestion)
+    // and an approve button. All three tables drive the same /live-limit-orders.
+    function buyLimitCell(ticker, suggested) {
+      const order = lastLimitOrders[ticker];
+      if (order) return `<td class="num"><strong>${fmt(order.limit_price, 2)}</strong></td>`;
+      const draft = pendingPriceDrafts[ticker];
+      const val = (draft !== undefined && draft !== null && draft !== '')
+        ? draft
+        : (suggested != null ? fmt(suggested, 2) : '');
+      return `<td class="num"><input type="number" step="0.01" min="0" class="limit-price-input" id="limit-price-${cssId(ticker)}" value="${esc(val)}" oninput="setPriceDraft('${esc(ticker)}', this.value)"></td>`;
+    }
+    function buyActionCell(ticker, approveLabel) {
+      const order = lastLimitOrders[ticker];
+      if (order) return `<td><button class="approve-btn approved" onclick="toggleLimitOrder('${esc(ticker)}', this)">✓ Queued — cancel</button></td>`;
+      return `<td><button class="approve-btn" onclick="toggleLimitOrder('${esc(ticker)}', this)">${esc(approveLabel)}</button></td>`;
+    }
+
+    // New signals table: pending candidates (approve + set a buy limit price),
+    // plus this run's fills and skips. Uses the shared 10-per-page pager.
+    function renderPendingSignals() {
+      const p = lastPortfolio || {};
+      const pend   = Array.isArray(p.pending_signals) ? p.pending_signals : [];
+      const recent = Array.isArray(p.recent_signals) ? p.recent_signals : [];
+      let latest = [];
+      if (recent.length) {
+        const latestTs = recent[recent.length - 1].ts;
+        latest = recent.filter(e => e.ts === latestTs);
+      }
+      const filled  = latest.filter(e => e.action === 'filled');
+      const skipped = latest.filter(e => e.action === 'skipped');
+      const filledSet = new Set(filled.map(e => e.ticker));
+      const rows = [
+        ...pend.filter(s => !filledSet.has(s.ticker)).map(s => ({ _kind: 'pending', ...s })),
+        ...filled.map(e  => ({ _kind: 'filled',  ...e })),
+        ...skipped.map(e => ({ _kind: 'skipped', ...e })),
+      ];
+
+      newsigPager.setData(rows, r => {
+        const dod = (r.info && r.info.dod != null) ? r.info.dod : r.dod;
+        const r20 = (r.info && r.info.ret_20d != null) ? r.info.ret_20d : r.ret_20d;
+        const cellLast = `<td class="num mobile-hide">${r.last != null ? fmt(r.last, 2) : '—'}</td>`;
+        const cellBid  = `<td class="num mobile-hide">${r.bid  != null ? fmt(r.bid,  2) : '—'}</td>`;
+        const cellAsk  = `<td class="num mobile-hide">${r.ask  != null ? fmt(r.ask,  2) : '—'}</td>`;
+        const cellDod  = dod != null ? `<td class="num ${cls(dod)}">${pct(dod, 2)}</td>` : '<td class="num">—</td>';
+        const cell20   = r20 != null ? `<td class="num mobile-hide ${cls(r20)}">${pct(r20, 1)}</td>` : '<td class="num mobile-hide">—</td>';
+
+        if (r._kind === 'filled') {
+          const tpsl = `${r.tp != null ? fmt(r.tp, 2) : '—'} / ${r.sl != null ? fmt(r.sl, 2) : '—'}`;
+          const detail = r.shares != null ? `${r.shares} sh · ${fmt(r.cost, 0)} SEK` : 'bought';
+          return `<tr>
+            <td class="ticker">${tickerLink(r.ticker)}</td>
+            <td><span class="pill pill-on">Filled</span></td>
+            ${cellLast}${cellBid}${cellAsk}${cellDod}${cell20}
+            <td class="num"><strong>${r.entry != null ? fmt(r.entry, 2) : '—'}</strong></td>
+            <td class="num small mobile-hide">${tpsl}</td>
+            <td class="small">${detail}</td>
+          </tr>`;
+        }
+        if (r._kind === 'skipped') {
+          return `<tr>
+            <td class="ticker">${tickerLink(r.ticker)}</td>
+            <td><span class="pill pill-warn">Skipped</span></td>
+            ${cellLast}${cellBid}${cellAsk}${cellDod}${cell20}
+            <td class="num">—</td>
+            <td class="num small mobile-hide">—</td>
+            <td class="small">${esc(r.skip_reason || 'skipped')}</td>
+          </tr>`;
+        }
+        // pending — approve + set a buy limit price
+        const order = lastLimitOrders[r.ticker];
+        const tpsl = `${r.tp_preview != null ? fmt(r.tp_preview, 2) : '—'} / ${r.sl_preview != null ? fmt(r.sl_preview, 2) : '—'}`;
+        const statusPill = order ? '<span class="pill pill-on">Queued</span>' : '<span class="pill">Pending</span>';
+        return `<tr>
+          <td class="ticker">${tickerLink(r.ticker)}</td>
+          <td>${statusPill}</td>
+          ${cellLast}${cellBid}${cellAsk}${cellDod}${cell20}
+          ${buyLimitCell(r.ticker, r.suggested_price)}
+          <td class="num small mobile-hide">${tpsl}</td>
+          ${buyActionCell(r.ticker, 'Approve buy')}
+        </tr>`;
+      });
+    }
+
+    // Consolidated view of every queued buy limit order (auto / watchlist /
+    // forced), waiting to fill into Open positions. Reads lastLimitOrders +
+    // last_quotes for the current market price and distance to fill.
+    function renderPendingOrders() {
+      const body = document.getElementById('pending-orders-body');
+      const quotes = (lastPortfolio && lastPortfolio.last_quotes) || {};
+      const entries = Object.entries(lastLimitOrders).sort((a, b) => a[0].localeCompare(b[0]));
+      if (!entries.length) {
+        body.innerHTML = '<tr><td colspan="7" class="empty-row">No pending orders — approve a signal with a buy limit price to queue one</td></tr>';
+        return;
+      }
+      body.innerHTML = entries.map(([tk, o]) => {
+        const srcPill = o.forced ? '<span class="pill pill-warn">Forced</span>'
+                      : o.from_watchlist ? '<span class="pill pill-info">Watchlist</span>'
+                      : '<span class="pill">Auto</span>';
+        const mkt   = quotes[tk] && quotes[tk].last;
+        const limit = o.limit_price;
+        let fillCell;
+        if (mkt == null) {
+          fillCell = '<span class="small">—</span>';
+        } else if (mkt <= limit) {
+          fillCell = '<span class="up">ready</span>';
+        } else {
+          fillCell = `<span class="small">${pct(mkt / limit - 1, 2)} above</span>`;
+        }
+        return `<tr>
+          <td class="ticker">${tickerLink(tk)}</td>
+          <td>${srcPill}</td>
+          <td class="num"><strong>${fmt(limit, 2)}</strong></td>
+          <td class="num">${mkt != null ? fmt(mkt, 2) : '—'}</td>
+          <td class="num">${fillCell}</td>
+          <td class="small mobile-hide">${esc(o.placed_date || '')}</td>
+          <td><button class="approve-btn approved" onclick="toggleLimitOrder('${esc(tk)}', this)">Cancel</button></td>
+        </tr>`;
+      }).join('');
     }
 
     function renderNearMisses() {
-      const body    = document.getElementById('nearmiss-body');
       const summary = document.getElementById('forced-summary');
-      // Union of (current near-misses) + (already-approved overrides not in the
-      // latest near-miss list — e.g. approved earlier, no longer signalling).
+      // Union of (current near-misses) + (any forced limit order still queued,
+      // even if the ticker is no longer a near-miss this run) so a queued
+      // override stays visible + cancellable.
       const byTicker = new Map();
       lastNearMisses.forEach(nm => byTicker.set(nm.ticker, nm));
-      forcedSet.forEach(t => {
-        if (!byTicker.has(t)) byTicker.set(t, { ticker: t, info: {}, fails: [], _stale: true });
+      Object.entries(lastLimitOrders).forEach(([tk, o]) => {
+        if (o.forced && !byTicker.has(tk)) {
+          byTicker.set(tk, { ticker: tk, insref: o.insref, last: null, info: o.info || {}, fails: [], _stale: true });
+        }
       });
       const rows = [...byTicker.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
+      nearmissRender(rows);
 
-      if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="7" class="empty-row">No near-misses in the latest run</td></tr>';
+      const queuedForced = Object.values(lastLimitOrders).filter(o => o.forced).length;
+      if (!queuedForced) {
+        summary.innerHTML = 'These nearly passed the filter. Set a <strong>buy limit price</strong> and click Override to queue a same-day buy anyway — the engine fills at your price once the market reaches it.';
       } else {
-        body.innerHTML = rows.map(nm => {
-          const i = nm.info || {};
-          const isForced = forcedSet.has(nm.ticker);
-          const stale    = nm._stale ? ' <span class="small">(no longer near-miss)</span>' : '';
-          const failsStr = (nm.fails || []).join(', ') || 'borderline';
-          return `
-            <tr>
-              <td class="ticker">${tickerLink(nm.ticker)}${stale}</td>
-              <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
-              <td class="num mobile-hide">${i.at_5d_high ? 'yes' : 'no'}</td>
-              <td class="num mobile-hide">${i.is_friday  ? 'yes' : 'no'}</td>
-              <td class="num ${i.ret_20d != null ? cls(i.ret_20d) : ''}">${i.ret_20d != null ? pct(i.ret_20d, 1) : '—'}</td>
-              <td class="small">${esc(failsStr)}</td>
-              <td>
-                <button class="approve-btn${isForced ? ' approved' : ''}"
-                        onclick="toggleForceEntry('${esc(nm.ticker)}', this)">
-                  ${isForced ? '✓ Override' : 'Override'}
-                </button>
-              </td>
-            </tr>`;
-        }).join('');
-      }
-
-      if (!forcedSet.size) {
-        summary.textContent = 'No filter overrides queued. Approving a near-miss here will bypass the validated filter on the next run — one-shot, consumed on entry.';
-      } else {
-        const chips = [...forcedSet].sort().map(t => `<span class="chip">${esc(t)}</span>`).join('');
-        summary.innerHTML = `<strong>${forcedSet.size} override${forcedSet.size===1?'':'s'} queued:</strong> ${chips}`;
+        summary.innerHTML = `<strong>${queuedForced} override${queuedForced===1?'':'s'} queued.</strong> Each fills at your limit price when the market reaches it; unfilled orders expire at the close.`;
       }
     }
 
-    async function toggleForceEntry(ticker, btn) {
-      const adding = !forcedSet.has(ticker);
-      btn.disabled = true;
-      try {
-        const res = await fetch('/live-force-entry', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
-        }).then(r => r.json());
-        if (res && res.ok) {
-          forcedSet = new Set(res.forced || []);
-          renderNearMisses();
-        }
-      } catch (e) {
-        console.error('toggle force-entry failed', e);
-      } finally {
-        btn.disabled = false;
+    function nearmissRender(rows) {
+      const body = document.getElementById('nearmiss-body');
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="8" class="empty-row">No near-misses in the latest run</td></tr>';
+        return;
       }
+      body.innerHTML = rows.map(nm => {
+        const i = nm.info || {};
+        const stale    = nm._stale ? ' <span class="small">(no longer near-miss)</span>' : '';
+        const failsStr = (nm.fails || []).join(', ') || 'borderline';
+        return `
+          <tr>
+            <td class="ticker">${tickerLink(nm.ticker)}${stale}</td>
+            <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
+            <td class="num mobile-hide">${i.at_5d_high ? 'yes' : 'no'}</td>
+            <td class="num mobile-hide">${i.is_friday  ? 'yes' : 'no'}</td>
+            <td class="num mobile-hide ${i.ret_20d != null ? cls(i.ret_20d) : ''}">${i.ret_20d != null ? pct(i.ret_20d, 1) : '—'}</td>
+            <td class="small mobile-hide">${esc(failsStr)}</td>
+            ${buyLimitCell(nm.ticker, nm.last)}
+            ${buyActionCell(nm.ticker, 'Override + buy')}
+          </tr>`;
+      }).join('');
     }
 
     async function toggleForceSell(ticker, btn) {
@@ -890,7 +1097,12 @@
       lastNearMisses    = Array.isArray(p.last_near_misses)    ? p.last_near_misses    : [];
       tickerPaths = (p.ticker_paths && typeof p.ticker_paths === 'object') ? p.ticker_paths : {};
 
-      const openVal = Object.values(positions).reduce((s, pos) => s + (pos.shares * pos.entry_price), 0);
+      const lastQuotes = p.last_quotes || {};
+      const openVal = Object.entries(positions).reduce((s, [tk, pos]) => {
+        const q = lastQuotes[tk];
+        const now = (q && q.last != null) ? q.last : pos.entry_price;
+        return s + (pos.shares * now);
+      }, 0);
       const equity = cash + openVal;
       const totalRet = equity / WALLET_START - 1;
 
@@ -927,7 +1139,6 @@
 
       // Open positions
       const openBody  = document.getElementById('open-body');
-      const lastQuotes = p.last_quotes || {};
       const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
       if (!openList.length) {
         openBody.innerHTML = '<tr><td colspan="9" class="empty-row">No open positions</td></tr>';
@@ -972,67 +1183,28 @@
       renderClosedPage();
       renderAnalytics(closed);
 
-      // ---- New signals (latest run only) ----
-      const newsigBody = document.getElementById('newsig-body');
-      const recent = Array.isArray(p.recent_signals) ? p.recent_signals : [];
-      // Show the signal events from the latest run (same timestamp)
-      let latestRunSigs = [];
-      if (recent.length) {
-        const latestTs = recent[recent.length - 1].ts;
-        latestRunSigs = recent.filter(e => e.ts === latestTs);
-      }
-      if (!latestRunSigs.length) {
-        newsigBody.innerHTML = '<tr><td colspan="10" class="empty-row">No signals in the latest run</td></tr>';
-      } else {
-        newsigBody.innerHTML = latestRunSigs.map(e => {
-          const isEnt  = e.action === 'entered';
-          const reason = isEnt
-            ? `DoD ${e.dod != null ? pct(e.dod, 2) : '?'} · 20d ${e.ret_20d != null ? pct(e.ret_20d, 1) : '?'}`
-            : (e.skip_reason || 'skipped');
-          const sugg = e.suggested_bid != null ? fmt(e.suggested_bid, 2) : '—';
-          const spreadVal = (e.spread != null && e.last) ? `${fmt(e.spread, 2)} (${(e.spread/e.last*100).toFixed(2)}%)` : (e.spread != null ? fmt(e.spread, 2) : '—');
-          const actionCell = isEnt
-            ? '<span class="pill pill-on">Entered</span>'
-            : '<span class="pill pill-warn">Skipped</span>';
-          return `
-            <tr>
-              <td class="ticker">${tickerLink(e.ticker)}</td>
-              <td>${actionCell}</td>
-              <td class="num mobile-hide">${e.last != null ? fmt(e.last, 2) : '—'}</td>
-              <td class="num mobile-hide">${e.bid  != null ? fmt(e.bid,  2) : '—'}</td>
-              <td class="num mobile-hide">${e.ask  != null ? fmt(e.ask,  2) : '—'}</td>
-              <td class="num neutral"><strong>${sugg}</strong></td>
-              <td class="num small mobile-hide">${spreadVal}</td>
-              <td class="num">${e.tp != null ? fmt(e.tp, 2) : '—'}</td>
-              <td class="num">${e.sl != null ? fmt(e.sl, 2) : '—'}</td>
-              <td class="small">${esc(reason)}</td>
-            </tr>`;
-        }).join('');
-      }
+      // ---- New signals (pending approval + this run's fills/skips) ----
+      lastPortfolio = p;
+      renderPendingSignals();
 
       // ---- Live quotes (tracked tickers) ----
-      const quotesBody = document.getElementById('quotes-body');
       const quotes = p.last_quotes || {};
       const qList = Object.entries(quotes).sort((a,b) => a[0].localeCompare(b[0]));
-      if (!qList.length) {
-        quotesBody.innerHTML = '<tr><td colspan="7" class="empty-row">No tracked tickers</td></tr>';
-      } else {
-        quotesBody.innerHTML = qList.map(([tk, q]) => {
-          const spreadVal = (q.bid != null && q.ask != null) ? fmt(q.ask - q.bid, 2) : '—';
-          const dayVal = q.diff_pct != null ? `${q.diff_pct >= 0 ? '+' : ''}${q.diff_pct.toFixed(2)}%` : '—';
-          const dayCls = q.diff_pct != null ? cls(q.diff_pct) : '';
-          return `
-            <tr>
-              <td class="ticker">${tickerLink(tk)}</td>
-              <td class="num">${q.last != null ? fmt(q.last, 2) : '—'}</td>
-              <td class="num">${q.bid  != null ? fmt(q.bid,  2) : '—'}</td>
-              <td class="num">${q.ask  != null ? fmt(q.ask,  2) : '—'}</td>
-              <td class="num">${spreadVal}</td>
-              <td class="num ${dayCls}">${dayVal}</td>
-              <td class="small">${esc(q.source || '')}</td>
-            </tr>`;
-        }).join('');
-      }
+      quotesPager.setData(qList, ([tk, q]) => {
+        const spreadVal = (q.bid != null && q.ask != null) ? fmt(q.ask - q.bid, 2) : '—';
+        const dayVal = q.diff_pct != null ? `${q.diff_pct >= 0 ? '+' : ''}${q.diff_pct.toFixed(2)}%` : '—';
+        const dayCls = q.diff_pct != null ? cls(q.diff_pct) : '';
+        return `
+          <tr>
+            <td class="ticker">${tickerLink(tk)}</td>
+            <td class="num">${q.last != null ? fmt(q.last, 2) : '—'}</td>
+            <td class="num">${q.bid  != null ? fmt(q.bid,  2) : '—'}</td>
+            <td class="num">${q.ask  != null ? fmt(q.ask,  2) : '—'}</td>
+            <td class="num">${spreadVal}</td>
+            <td class="num ${dayCls}">${dayVal}</td>
+            <td class="small">${esc(q.source || '')}</td>
+          </tr>`;
+      });
 
       // Meta
       const last = p.last_run ? new Date(p.last_run) : null;

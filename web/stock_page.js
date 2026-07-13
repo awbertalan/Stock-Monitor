@@ -45,6 +45,7 @@ async function loadData() {
   loadQuote();
   loadOrderBook();
   loadNews();
+  loadCalendar();
   loadTrades();
 }
 
@@ -984,19 +985,65 @@ async function loadNews() {
 
     document.getElementById('news-list').innerHTML = items.map((item, i) => {
       const badgeCls = _BADGE_CLASS[item.newstype_label] || '';
-      const meta = [item.date, item.time].filter(Boolean).join(' ');
-      const src  = item.source ? ` &middot; ${item.source}` : '';
+      const meta = esc([item.date, item.time].filter(Boolean).join(' '));
+      const src  = item.source ? ` &middot; ${esc(item.source)}` : '';
       return `<div class="news-item" onclick="this.classList.toggle('open')">
-        <div class="news-headline">${item.headline}</div>
+        <div class="news-headline">${esc(item.headline)}</div>
         <div class="news-meta">
-          <span class="news-badge ${badgeCls}">${item.newstype_label}</span>${meta}${src}
+          <span class="news-badge ${badgeCls}">${esc(item.newstype_label)}</span>${meta}${src}
         </div>
-        ${item.body ? `<div class="news-body">${item.body}</div>` : ''}
+        ${item.body ? `<div class="news-body">${esc(item.body)}</div>` : ''}
       </div>`;
     }).join('');
 
     document.getElementById('news-section').style.display = '';
   } catch { /* news unavailable */ }
+}
+
+// ── Reports & Dividends calendar ────────────────────────────────────────────
+
+async function loadCalendar() {
+  try {
+    const d = await fetch('/calendar?insref=' + encodeURIComponent(STOCK.insref)).then(r => r.json());
+    const events = (d && Array.isArray(d.events)) ? d.events : [];
+    if (!events.length) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    events.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+    const row = (e) => {
+      const isDiv = (e.type === 0 || e.type === '0');
+      const label = isDiv ? 'Dividend' : 'Report';
+      const badgeCls = isDiv ? 'cal-div' : 'cal-rep';
+      let detail;
+      if (isDiv) {
+        const amt = (typeof e.dividend === 'number') ? `${e.dividend.toFixed(2)} SEK` : '';
+        const pay = e.paymentdate ? ` · pay ${e.paymentdate}` : '';
+        detail = `Ex-dividend${amt ? ' ' + amt : ''}${pay}`;
+      } else {
+        detail = e.period ? `${e.period} report` : 'Report';
+      }
+      return `<div class="cal-row">
+        <span class="cal-date">${e.date || '—'}</span>
+        <span class="cal-badge ${badgeCls}">${label}</span>
+        <span class="cal-detail">${detail}</span>
+      </div>`;
+    };
+
+    const upcoming = events.filter(e => (e.date || '') >= today);
+    const past = events.filter(e => (e.date || '') < today).reverse();  // most recent first
+
+    const upEl = document.getElementById('calendar-upcoming');
+    const paEl = document.getElementById('calendar-past');
+    upEl.innerHTML = upcoming.length
+      ? `<div class="cal-sub">Upcoming</div>${upcoming.map(row).join('')}`
+      : '';
+    paEl.innerHTML = past.length
+      ? `<div class="cal-sub">Past</div>${past.slice(0, 12).map(row).join('')}`
+      : '';
+
+    document.getElementById('calendar-section').style.display = '';
+  } catch { /* calendar unavailable */ }
 }
 
 // ── Trades ────────────────────────────────────────────────────────────────
@@ -1130,12 +1177,17 @@ async function loadQuote() {
 
     // Company info
     const infoLines = [];
-    if (d.sectorl3name) infoLines.push(`<span style="color:#888">Sector</span>&nbsp;&nbsp;${d.sectorl3name}`);
-    if (d.ceo)          infoLines.push(`<span style="color:#888">CEO</span>&nbsp;&nbsp;${d.ceo}`);
-    if (d.chairman)     infoLines.push(`<span style="color:#888">Chairman</span>&nbsp;&nbsp;${d.chairman}`);
-    if (d.isin)         infoLines.push(`<span style="color:#888">ISIN</span>&nbsp;&nbsp;${d.isin}`);
-    if (d.address)      infoLines.push(`<span style="color:#888">Address</span>&nbsp;&nbsp;${d.address}`);
-    if (d.website)      infoLines.push(`<span style="color:#888">Web</span>&nbsp;&nbsp;<a href="${d.website}" target="_blank" rel="noopener" style="color:#0066cc">${d.website}</a>`);
+    if (d.sectorl3name) infoLines.push(`<span style="color:#888">Sector</span>&nbsp;&nbsp;${esc(d.sectorl3name)}`);
+    if (d.ceo)          infoLines.push(`<span style="color:#888">CEO</span>&nbsp;&nbsp;${esc(d.ceo)}`);
+    if (d.chairman)     infoLines.push(`<span style="color:#888">Chairman</span>&nbsp;&nbsp;${esc(d.chairman)}`);
+    if (d.isin)         infoLines.push(`<span style="color:#888">ISIN</span>&nbsp;&nbsp;${esc(d.isin)}`);
+    if (d.address)      infoLines.push(`<span style="color:#888">Address</span>&nbsp;&nbsp;${esc(d.address)}`);
+    if (d.website) {
+      const safeUrl = /^https?:\/\//i.test(d.website) ? d.website : '';
+      infoLines.push(safeUrl
+        ? `<span style="color:#888">Web</span>&nbsp;&nbsp;<a href="${esc(safeUrl)}" target="_blank" rel="noopener" style="color:#0066cc">${esc(d.website)}</a>`
+        : `<span style="color:#888">Web</span>&nbsp;&nbsp;${esc(d.website)}`);
+    }
 
     if (infoLines.length) {
       document.getElementById('company-info').innerHTML = infoLines.join('<br>');
@@ -1150,6 +1202,12 @@ async function loadQuote() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function fmtVol(v) {
   if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';

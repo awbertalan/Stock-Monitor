@@ -10,28 +10,10 @@
     h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
     .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
 
-    .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
-    .stat-card {
-      flex: 1; min-width: 160px;
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 14px 16px;
-    }
-    .stat-label {
-      font-size: 10px; color: var(--text-muted);
-      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
-    }
-    .stat-value { font-size: 22px; font-weight: bold; color: var(--text); font-variant-numeric: tabular-nums; }
-    .stat-sub   { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-
     .section {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       padding: 18px 22px; margin-bottom: 18px;
-    }
-    .section-title {
-      font-size: 11px; font-weight: bold; color: var(--text-muted);
-      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 12px;
     }
     .section-desc { font-size: 13px; color: var(--text-subtle); margin: 0 0 14px; line-height: 1.6; }
 
@@ -44,15 +26,6 @@
     td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: var(--surface-hover); }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .small { font-size: 11px; color: var(--text-muted); }
-    .empty-row { text-align: center; color: var(--text-muted); padding: 24px; font-style: italic; }
-
-    .pill {
-      display: inline-block; font-size: 10px; font-weight: bold;
-      border-radius: 4px; padding: 3px 7px; text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
     .pill-on   { background: var(--positive-soft); color: var(--positive); }
     .pill-warn { background: var(--warning-soft);  color: var(--warning); }
     .pill-info { background: var(--accent-soft);   color: var(--accent); }
@@ -71,8 +44,7 @@
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
     <a href="/browse">Browse Folders</a>
-    <a href="/live-signals">Live Signals</a>
-    <a href="/live-patterns">Live Patterns</a>
+    <a href="/live">Live</a>
     <a href="/ohlc-capture" class="active">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
@@ -227,5 +199,6 @@
     setInterval(refresh, 60000);  // 1 min
   </script>
   <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
 </body>
 </html>

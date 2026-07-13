@@ -3,8 +3,9 @@ import csv, os, re, time, json, threading
 import env_loader
 env_loader.load_env()
 
-_TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stock_template.html')
-_NAMES_CSV     = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stock_names.csv')
+_ROOT          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root (this module lives in lib/)
+_TEMPLATE_PATH = os.path.join(_ROOT, 'web', 'stock_template.html')
+_NAMES_CSV     = os.path.join(_ROOT, 'stock_names.csv')
 _names_lock    = threading.Lock()
 TOKEN          = os.environ["MILLISTREAM_TOKEN"]
 _BASE          = "https://mws-2.millistream.com/mws.fcgi"

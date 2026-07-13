@@ -11,23 +11,7 @@
     h2 { color: #1a1f36; letter-spacing: -0.5px; margin-bottom: 4px; }
     .subtitle { font-size: 13px; color: #8a94a6; margin-bottom: 20px; }
 
-    /* Tab bar */
-    .tab-bar {
-      display: flex;
-      border-bottom: 2px solid #e8ecf5;
-      margin-bottom: 16px;
-      overflow-x: auto;
-    }
-    .tab-bar::-webkit-scrollbar { height: 0; }
-    .tab {
-      padding: 9px 16px; border: none; background: none;
-      cursor: pointer; font-size: 13px; font-weight: 600;
-      color: #8a94a6; border-bottom: 2px solid transparent;
-      margin-bottom: -2px; font-family: Arial, sans-serif;
-      white-space: nowrap; transition: color 0.12s; flex-shrink: 0;
-    }
-    .tab:hover { color: #1a1f36; }
-    .tab.active { color: #0052cc; border-bottom-color: #0052cc; }
+    /* Tab bar styles moved to shared style.css (used by Live pages too). */
 
     .toolbar {
       display: flex; gap: 8px; align-items: center;
@@ -179,8 +163,7 @@
     <a href="/" class="active">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
     <a href="/browse">Browse Folders</a>
-    <a href="/live-signals">Live Signals</a>
-    <a href="/live-patterns">Live Patterns</a>
+    <a href="/live">Live</a>
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
@@ -272,6 +255,8 @@
       document.getElementById('loading').style.display = 'none';
       populateFilters(data);
       renderGrid();
+    }).catch(err => {
+      document.getElementById('loading').textContent = 'Failed to load — ' + (err && err.message ? err.message : 'network error');
     });
 
     function fmtAge(ts) {
@@ -633,5 +618,6 @@
     }
   </script>
   <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
 </body>
 </html>

@@ -40,8 +40,8 @@ def stop_search():
     status["message"] = "Stop requested — finishing current requests…"
 
 
-def _write_history(entry, base_dir):
-    path = os.path.join(base_dir, "scrape_history.json")
+def _write_history(entry, out_dir):
+    path = os.path.join(out_dir, "scrape_history.json")
     try:
         with open(path, encoding='utf-8') as f:
             history = json.load(f)
@@ -54,7 +54,12 @@ def _write_history(entry, base_dir):
 
 def run_search(start_index, end_index):
     global _stop_requested
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    # This module lives in lib/, so project root is two levels up. Data (the
+    # Instrumenttype/ tree, stock_names.csv) lives at the project root; the
+    # stock_index.json / scrape_history.json state files live under state/.
+    base_dir  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    state_dir = os.path.join(base_dir, "state")
+    os.makedirs(state_dir, exist_ok=True)
     _stop_requested = False
     stocklist.clear()
 
@@ -142,7 +147,7 @@ def run_search(start_index, end_index):
         }
         for s in stocklist
     ]
-    with open(os.path.join(base_dir, "stock_index.json"), 'w', encoding='utf-8') as f:
+    with open(os.path.join(state_dir, "stock_index.json"), 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False)
 
     # Update master names CSV (merge with any existing entries)
@@ -178,7 +183,7 @@ def run_search(start_index, end_index):
         "duration_s":    duration_s,
         "scraped":       scraped,
         "scrape_errors": scrape_errors,
-    }, base_dir)
+    }, state_dir)
 
     totaltime  = datetime.timedelta(seconds=duration_s)
     early_note = " (early stop)" if stopped_early else ""
@@ -229,8 +234,8 @@ def urlinfo(page):
     clnname        = re.sub(r'[^a-zA-Z0-9]', '', raw_name)
     tradecurrency  = info[2].split(':')
     instrumenttype = info[5].split(':')
-    stock = [int(insref[1]), clnname, 
-             tradecurrency[1].strip("\""), int(instrumenttype[1])]
+    stock = [int(insref[1]), clnname,
+             tradecurrency[1].strip("\""), int(instrumenttype[1]), raw_name]
     stocklist.append(stock)
 
 

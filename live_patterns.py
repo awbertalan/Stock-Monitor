@@ -11,7 +11,7 @@ Strategy
                     Hammer | Bullish Engulfing | Morning Star | Piercing Line
                     Three White Soldiers | Tweezer Bottom
   Filters:        not Friday entry · not after 16:30 local · ret_20d > -15%
-                  · stem-dedup vs existing positions · SL cooldown 7d ·
+                  · stem-dedup vs existing positions · SL cooldown 1d (same-day block) ·
                   TP/TIMEOUT same-day block
   Exits:          TP +2.0%, SL -2.0%, max 7-day hold (limit-fill capped via
                   apply_exit_checks reused from live_signals)
@@ -36,7 +36,6 @@ Run lifecycle
 
 import csv
 import glob
-import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -46,7 +45,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 
 import env_loader                                    # noqa: E402
 env_loader.load_env()
-import infoScrapper                                  # noqa: E402
+import engine_common as ec                           # noqa: E402
 import live_signals as L                             # reuse helpers          # noqa: E402
 import calendar_cache                                # noqa: E402
 
@@ -66,9 +65,17 @@ CAP_SIZE      =  85_000.0
 TP_PCT        =  0.020
 SL_PCT        = -0.020   # -2.0% (matched to live_signals on 2026-05-25)
 MAX_HOLD_DAYS = 7
-COOLDOWN_DAYS = 7
+COOLDOWN_DAYS = 1   # SL-exit re-entry block (reduced from 7 → 1 on 2026-06-13: same-day block only, next trading day allowed)
 CRASH_GUARD   = -0.15
 LATE_ENTRY_CUTOFF_MIN = 16 * 60 + 30   # 16:30 — no new entries after this
+
+# Confluence gate (added 2026-06-13). When True, only enter if >= 2 distinct
+# bullish patterns fire on the same bar. Bullish Engulfing was the only
+# positively-validated pattern in the first 30 trades (+1,821 SEK n=8) while
+# Hammer/Morning Star ran net-negative — confluence biases entries toward
+# the higher-conviction setups. Flip to False to restore solo-pattern entries.
+CONFLUENCE_REQUIRED   = True
+CONFLUENCE_MIN_COUNT  = 2
 
 # Log retention (same in-place truncation trick as live_signals)
 LOG_RETAIN_HOURS     = 24
@@ -78,59 +85,21 @@ LOG_ROTATE_MIN_BYTES = 200_000
 # ── State persistence ────────────────────────────────────────────────────────
 
 def load_state():
-    if os.path.exists(STATE_PATH):
-        with open(STATE_PATH) as f:
-            return json.load(f)
-    return {
+    return ec.load_state(STATE_PATH, {
         "cash":          WALLET_START,
         "positions":     {},
         "closed_trades": [],
         "last_run":      None,
-    }
+    })
 
 
 def save_state(state):
-    state["last_run"] = datetime.now(timezone.utc).isoformat()
-    with open(STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2, default=str)
+    ec.save_state(STATE_PATH, state)
 
 
 def rotate_log():
-    """Same trim-to-last-24h logic as live_signals.rotate_log()."""
-    try:
-        size = os.path.getsize(LOG_PATH)
-    except OSError:
-        return
-    if size < LOG_ROTATE_MIN_BYTES:
-        return
-    from datetime import timedelta
-    cutoff = (datetime.now() - timedelta(hours=LOG_RETAIN_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with open(LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-    except OSError:
-        return
-    keep_from = None
-    for i, ln in enumerate(lines):
-        if " Live patterns run @ " in ln:
-            ts_str = ln.split("@", 1)[1].strip().replace(" local", "").strip()
-            if ts_str >= cutoff:
-                keep_from = i
-                break
-    if keep_from is None:
-        try:
-            with open(LOG_PATH, "wb"): pass
-        except OSError: pass
-        return
-    if keep_from == 0:
-        return
-    if lines[keep_from - 1].startswith("==="):
-        keep_from -= 1
-    try:
-        with open(LOG_PATH, "wb") as f:
-            f.write("".join(lines[keep_from:]).encode("utf-8"))
-    except OSError:
-        pass
+    """Trim live_patterns.log to the last 24h — see engine_common.rotate_log."""
+    ec.rotate_log(LOG_PATH, " Live patterns run @ ", LOG_RETAIN_HOURS, LOG_ROTATE_MIN_BYTES)
 
 
 # ── OHLC aggregation from intraday files ─────────────────────────────────────
@@ -198,12 +167,19 @@ def _downtrend_before(bars, idx, prior_daily_closes):
         prior_dates = sorted(d for d in prior_daily_closes if d < first_bar_date)
         for d in prior_dates[-need:]:
             closes.append(prior_daily_closes[d])
-    return len(closes) >= 3 and closes[0] < closes[-1]
+    if len(closes) < 3 or closes[0] >= closes[-1]:
+        return False
+    # Magnitude floor: closes[0] is the most-recent bar, closes[-1] the oldest;
+    # a real downtrend needs the recent close at least 1.5% below the older one,
+    # not just any tick-level drift.
+    return (closes[0] - closes[-1]) / closes[-1] <= -0.015
 
 
 def pat_hammer(bars, i, prior):
     if i < 1: return False
     b = bars[i]
+    if not _is_bull(b): return False
+    if _body(b) < 0.001 * b["close"]: return False   # kill doji degeneracy (body=0 trivially passes _lower>=2*body)
     if _body(b) > 0.3 * _range(b): return False
     if _lower(b) < 2 * _body(b):  return False
     if _upper(b) > 0.5 * _body(b): return False
@@ -302,12 +278,11 @@ def detect_patterns_on_yesterday(bars, daily_closes):
 # ── Universe + filters ───────────────────────────────────────────────────────
 
 def is_friday_today():
-    return datetime.now().weekday() == 4
+    return ec.is_friday()
 
 
 def past_late_entry_cutoff():
-    now = datetime.now()
-    return (now.hour * 60 + now.minute) >= LATE_ENTRY_CUTOFF_MIN
+    return ec.past_cutoff(LATE_ENTRY_CUTOFF_MIN)
 
 
 # ── Main run ─────────────────────────────────────────────────────────────────
@@ -322,7 +297,7 @@ def main():
 
     state = load_state()
     now_local_ts = datetime.now().replace(microsecond=0).isoformat()
-    today = datetime.now(timezone.utc).date()
+    today = ec.today_local()   # local Stockholm trade date (feed is market-local)
 
     out("=" * 72)
     out(f" Live patterns run @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} local")
@@ -347,7 +322,10 @@ def main():
             if q.get("ok"):
                 live[tk] = q
             else:
-                live[tk] = {"last": state["positions"][tk]["entry_price"], "ok": True}
+                # Tag as 'stale' so apply_exit_checks won't trigger TP/SL
+                # against the entry-price placeholder.
+                live[tk] = {"last": state["positions"][tk]["entry_price"],
+                            "ok": True, "source": "stale"}
 
     # ── 2. Apply exit checks (reuses live_signals' limit-fill logic).
     # Honour user-queued manual sells from live_patterns_force_sell.json.
@@ -379,13 +357,7 @@ def main():
         return
 
     # ── 4. Build cooldown lookup (same rules as live_signals) ────────────────
-    recent_exits = {}
-    for tr in state.get("closed_trades", []):
-        ex = tr.get("exit_date")
-        if not ex: continue
-        cur = recent_exits.get(tr["ticker"])
-        if cur is None or ex > cur[0]:
-            recent_exits[tr["ticker"]] = (ex, tr.get("reason"))
+    recent_exits = ec.build_recent_exits(state)
 
     held_stems = {L.company_stem(tk) for tk in state["positions"]}
 
@@ -429,6 +401,13 @@ def main():
     for fire in pattern_fires:
         t = fire["t"]
         name = t["name"]
+        # Confluence gate (2026-06-13) — solo-pattern fires were net-negative
+        # in the first 30 trades. CONFLUENCE_REQUIRED at module head can
+        # disable this without other changes.
+        if CONFLUENCE_REQUIRED and len(fire["patterns"]) < CONFLUENCE_MIN_COUNT:
+            new_skipped.append({"ticker": name,
+                                "reason": f"solo {fire['patterns'][0]} (confluence requires {CONFLUENCE_MIN_COUNT}+ patterns)"})
+            continue
         stem = L.company_stem(name)
         if stem in held_stems:
             new_skipped.append({"ticker": name, "reason": f"duplicate stem '{stem}'"})
@@ -437,19 +416,13 @@ def main():
         if blocked:
             new_skipped.append({"ticker": name, "reason": f"event window: {why}"})
             continue
-        last = recent_exits.get(name)
-        if last:
-            last_date, last_reason = last
-            last_d = (datetime.fromisoformat(last_date).date() if isinstance(last_date, str)
-                      else last_date)
-            if last_reason == "SL":
-                tds = L.trading_days_between(last_d, today)
-                if tds < COOLDOWN_DAYS:
-                    new_skipped.append({"ticker": name, "reason": f"SL cooldown {tds}/{COOLDOWN_DAYS}d since {last_date}"})
-                    continue
-            elif last_d >= today:
-                new_skipped.append({"ticker": name, "reason": f"same-day re-entry blocked (just exited {last_reason})"})
-                continue
+        cd = ec.cooldown_status(recent_exits, name, today, COOLDOWN_DAYS, L.trading_days_between)
+        if cd:
+            if cd["kind"] == "SL":
+                new_skipped.append({"ticker": name, "reason": f"SL cooldown {cd['tds']}/{COOLDOWN_DAYS}d since {cd['last_date']}"})
+            else:
+                new_skipped.append({"ticker": name, "reason": f"same-day re-entry blocked (just exited {cd['last_reason']})"})
+            continue
         lq = live.get(name)
         if not lq or not lq.get("ok") or lq.get("last") in (None, 0):
             new_skipped.append({"ticker": name, "reason": "no live quote"})
@@ -458,12 +431,10 @@ def main():
             new_skipped.append({"ticker": name, "reason": f"low cash {state['cash']:.0f}"})
             continue
         entry_price = lq.get("ask") or lq["last"]
-        size = min(TARGET_SIZE, state["cash"], CAP_SIZE)
-        shares = int(size // entry_price)
-        if shares <= 0 or shares * entry_price < POS_MIN:
+        shares, cost = ec.position_size(state["cash"], entry_price, TARGET_SIZE, CAP_SIZE, POS_MIN)
+        if shares <= 0:
             new_skipped.append({"ticker": name, "reason": f"size <{POS_MIN/1000:.0f}k after rounding"})
             continue
-        cost = shares * entry_price
         tp_price = round(entry_price * (1 + TP_PCT), 4)
         sl_price = round(entry_price * (1 + SL_PCT), 4)
         exit_by  = L.add_trading_days(today, MAX_HOLD_DAYS)
@@ -523,17 +494,29 @@ def main():
 
     _report_open(state, live, out)
 
-    # Persist UI snapshot
-    state["last_quotes"] = {
-        name: {
-            "last":     live.get(name, {}).get("last"),
-            "bid":      live.get(name, {}).get("bid"),
-            "ask":      live.get(name, {}).get("ask"),
-            "diff_pct": live.get(name, {}).get("diffprc"),
-            "source":   "live-patterns",
-        }
-        for name in state["positions"].keys()
-    }
+    # Build/refresh ticker -> stock-page rel_path map for UI click-through
+    # (mirrors live_signals.py). rel_path matches what /view?path=... expects.
+    ticker_paths = state.get("ticker_paths", {}) or {}
+    for t in primary:
+        if t.get("folder"):
+            ticker_paths[t["name"]] = f"Equity/SEK/{t['folder']}"
+    for tk, pos in state["positions"].items():
+        if tk in ticker_paths:
+            continue
+        insref = pos.get("insref")
+        if insref:
+            folder, _ = L._find_history_csv(insref)
+            if folder:
+                ticker_paths[tk] = f"Equity/SEK/{folder}"
+    state["ticker_paths"] = ticker_paths
+
+    # Persist UI snapshot. Preserve prior known-good quotes when this run's
+    # fetch failed or fell back to a synthetic price — same rationale as
+    # live_signals: never display a 'stale' / entry-price placeholder as
+    # 'Current price' in the Open positions table.
+    prior_quotes = state.get("last_quotes", {}) or {}
+    state["last_quotes"] = ec.build_quote_snapshot(
+        state["positions"].keys(), live, prior_quotes, "live-patterns")
     state["recent_pattern_fires"] = [
         {"ticker": f["t"]["name"], "patterns": f["patterns"], "ts": now_local_ts}
         for f in pattern_fires[-50:]
@@ -544,19 +527,7 @@ def main():
 
 
 def _report_open(state, live, out):
-    if not state["positions"]:
-        return
-    out(f"\n--- OPEN POSITIONS ({len(state['positions'])}) ---")
-    for tk, pos in state["positions"].items():
-        cur = live.get(tk, {}).get("last") or pos["entry_price"]
-        pnl = pos["shares"] * (cur - pos["entry_price"])
-        ret = cur / pos["entry_price"] - 1
-        pat = (pos.get("signal_info") or {}).get("pattern", "?")
-        out(f"  [PAT]     {tk:<22} {pos['shares']:>5} sh   "
-            f"entered {pos['entry_date']} @ {pos['entry_price']:.2f}   "
-            f"now {cur:.2f}   P&L {pnl:+,.0f} SEK ({ret*100:+.2f}%)   {pat}")
-        out(f"                          TP {pos['tp']:.2f}   SL {pos['sl']:.2f}   "
-            f"exit by {pos['target_exit_date']}")
+    ec.report_open(state, live, out, "  [PAT]     ")
 
 
 if __name__ == "__main__":
