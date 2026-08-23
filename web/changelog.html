@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Changelog</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 1200px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 18px 22px; margin-bottom: 18px;
+    }
+    .section-title {
+      font-size: 11px; font-weight: bold; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 14px;
+    }
+    .sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sig-table .num { text-align: right; }
+    .empty-row { color: var(--text-muted); font-style: italic; text-align: center; padding: 18px; }
+
+    /* engine strategy timelines */
+    .eng-block   { margin-bottom: 22px; }
+    .eng-block:last-child { margin-bottom: 0; }
+    .eng-head    { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    .eng-name    { font-size: 14px; font-weight: bold; color: var(--text); }
+    .eng-link    { font-size: 11px; }
+
+    /* changelog entries */
+    .entry {
+      border-left: 2px solid var(--border); padding: 0 0 22px 20px;
+      margin-left: 6px; position: relative;
+    }
+    .entry:last-child { padding-bottom: 0; }
+    .entry::before {
+      content: ''; position: absolute; left: -6px; top: 4px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--surface); border: 2px solid var(--border-input);
+    }
+    .entry.has-bump::before { background: var(--accent); border-color: var(--accent); }
+    .entry-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .entry-ver  { font-family: monospace; font-size: 14px; font-weight: bold; color: var(--accent); }
+    .entry-date { font-size: 12px; color: var(--text-muted); }
+    .entry-title { font-size: 14px; font-weight: bold; color: var(--text); margin: 4px 0 2px; }
+    .entry-summary { font-size: 13px; color: var(--text-subtle); line-height: 1.5; margin-bottom: 8px; }
+    .entry-changes { margin: 0 0 10px; padding-left: 20px; font-size: 12.5px; color: var(--text-subtle); line-height: 1.6; }
+    .entry-files { font-size: 11px; color: var(--text-muted); font-family: monospace; line-height: 1.7; }
+    .bump-row {
+      background: var(--accent-soft); border-radius: var(--radius-sm);
+      padding: 8px 12px; margin-bottom: 10px; font-size: 12px; color: var(--text);
+      line-height: 1.7;
+    }
+    .bump-arrow { color: var(--text-muted); margin: 0 4px; }
+
+    .legend { font-size: 11.5px; color: var(--text-muted); line-height: 1.6; margin-top: 12px; }
+    :target .entry-ver, tr:target td:first-child { animation: flash 1.6s ease-out; }
+    @keyframes flash { from { background: #fff4d6; } to { background: transparent; } }
+
+    @media (max-width: 720px) { .sig-table .mobile-hide { display: none; } }
+  </style>
+</head>
+<body>
+  <h2>Changelog</h2>
+  <p class="subtitle">
+    Every change to this project, and which generation of each engine's strategy was live when a trade was opened.
+    <strong>App version</strong> bumps on every change; a <strong>strategy version</strong> bumps only when an engine's
+    tradeable parameters, gates or detectors change — that is the tier trades are grouped by.
+  </p>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live">Live</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/changelog" class="active">Changelog</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="stat-row" id="stat-row"></div>
+
+  <div class="section">
+    <div class="section-title">Strategy versions &amp; what each one did to the P&amp;L</div>
+    <div id="engines"></div>
+    <div class="legend">
+      N counts scored trades; <span class="ver-excl">+n</span> marks STALE exits excluded from win rate and average
+      return (positions the engine was not running to manage — their exit price reflects when it came back, not a
+      strategy rule). P&amp;L counts every exit. Win rate is coloured against the 50% break-even of a
+      +2% / −2% bet. A dashed pill means the version was <em>inferred</em> from the trade's entry date rather than
+      stamped by the engine.
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Change history</div>
+    <div id="entries"></div>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script src="/live_common.js"></script>
+  <script src="/live_widget.js"></script>
+  <script>
+    let data = null;
+
+    function renderStats() {
+      const sv = data.strategy_versions || {};
+      const entries = data.entries || [];
+      const last = entries[0] || {};
+      const cards = [
+        { label: 'App version', value: 'v' + (data.app_version || '—'),
+          sub: entries.length + ' logged change' + (entries.length === 1 ? '' : 's') },
+        { label: 'Last change', value: last.date || '—', sub: last.title || '' },
+      ];
+      Object.entries(data.engines || {}).forEach(([key, meta]) => {
+        const perf  = (data.performance || {})[key] || {};
+        const cur   = sv[key];
+        const b     = perf[cur] || {};
+        const hist  = (data.strategy_history || {})[key] || [];
+        cards.push({
+          label: meta.label, value: cur || '—',
+          sub: `${hist.length} generation${hist.length === 1 ? '' : 's'} · `
+             + `${b.closed || 0} closed on current`,
+        });
+      });
+      document.getElementById('stat-row').innerHTML = cards.map(c => `
+        <div class="stat-card">
+          <div class="stat-label">${esc(c.label)}</div>
+          <div class="stat-value">${esc(c.value)}</div>
+          <div class="stat-sub">${esc(c.sub)}</div>
+        </div>`).join('');
+    }
+
+    // One table per engine: its strategy generations in order, each with the
+    // performance the wallet actually recorded under it.
+    function renderEngines() {
+      const perfAll = data.performance || {};
+      document.getElementById('engines').innerHTML =
+        Object.entries(data.engines || {}).map(([key, meta]) => {
+          const hist = (data.strategy_history || {})[key] || [];
+          const perf = perfAll[key] || {};
+          const cur  = (data.strategy_versions || {})[key];
+
+          // Any bucket the wallet holds that the history does not describe
+          // (e.g. "unversioned") still deserves a row — silently dropping it
+          // would make the P&L column not add up to the wallet.
+          const known = new Set(hist.map(h => h.version));
+          const extra = Object.keys(perf).filter(v => !known.has(v));
+
+          const row = (ver, info) => {
+            const b      = perf[ver] || {};
+            const n      = b.scored || 0;
+            const excl   = (b.closed || 0) - n;
+            const wr     = b.wr, avg = b.avg_ret, pnl = b.pnl || 0;
+            const isCur  = ver === cur;
+            const back   = b.backfilled > 0;
+            const empty  = !(b.closed || 0) && !(b.open || 0);
+            const klass  = `pill ver-pill${back ? ' backfilled' : ''}${isCur ? ' current' : ''}`;
+            return `
+              <tr id="${esc(ver)}">
+                <td><span class="${klass}">${esc(ver)}${back ? '*' : ''}</span></td>
+                <td class="mobile-hide">${info ? esc(info.from) : '—'}</td>
+                <td class="mobile-hide">${info ? esc(info.params) : '—'}</td>
+                <td class="num">${n}${excl ? `<span class="ver-excl">+${excl}</span>` : ''}</td>
+                <td class="num">${b.open || 0}</td>
+                <td class="num ${wr == null ? '' : wrClass(wr)}">${wr == null ? '—' : (wr*100).toFixed(0) + '%'}</td>
+                <td class="num ${avg == null ? '' : cls(avg)}">${avg == null ? '—' : pct(avg, 2)}</td>
+                <td class="num ${empty ? '' : cls(pnl)}">${empty ? '—' : sign(pnl)}</td>
+              </tr>
+              ${info && info.note ? `<tr><td></td><td colspan="7" class="ver-note mobile-hide">${esc(info.note)}</td></tr>` : ''}`;
+          };
+
+          const rows = hist.map(h => row(h.version, h)).join('')
+                     + extra.map(v => row(v, null)).join('');
+
+          return `
+            <div class="eng-block">
+              <div class="eng-head">
+                <span class="eng-name">${esc(meta.label)}</span>
+                <a class="eng-link" href="${esc(meta.page)}">open wallet →</a>
+              </div>
+              <table class="sig-table">
+                <thead>
+                  <tr>
+                    <th>Version</th>
+                    <th class="mobile-hide">Live from</th>
+                    <th class="mobile-hide">Parameters</th>
+                    <th class="num">N</th>
+                    <th class="num">Open</th>
+                    <th class="num">WR</th>
+                    <th class="num">Avg ret</th>
+                    <th class="num">P&amp;L</th>
+                  </tr>
+                </thead>
+                <tbody>${rows || '<tr><td colspan="8" class="empty-row">No versions recorded</td></tr>'}</tbody>
+              </table>
+            </div>`;
+        }).join('');
+    }
+
+    function renderEntries() {
+      const labels = (data.engines || {});
+      document.getElementById('entries').innerHTML = (data.entries || []).map(e => {
+        const bumps = e.strategy_bumps || [];
+        const bumpHtml = bumps.length ? `
+          <div class="bump-row">
+            ${bumps.map(b => {
+              const lbl = (labels[b.engine] || {}).label || b.engine;
+              const from = b.from
+                ? `<a href="#${encodeURIComponent(b.from)}" class="pill ver-pill">${esc(b.from)}</a><span class="bump-arrow">→</span>`
+                : '<span class="bump-arrow">new</span> ';
+              return `<div><strong>${esc(lbl)}</strong> &nbsp;${from}`
+                   + `<a href="#${encodeURIComponent(b.to)}" class="pill ver-pill current">${esc(b.to)}</a>`
+                   + ` &nbsp;${esc(b.reason)}</div>`;
+            }).join('')}
+          </div>` : '';
+        return `
+          <div class="entry ${bumps.length ? 'has-bump' : ''}" id="v${esc(e.version)}">
+            <div class="entry-head">
+              <span class="entry-ver">v${esc(e.version)}</span>
+              <span class="entry-date">${esc(e.date)}</span>
+              ${e.source === 'reconstructed'
+                ? '<span class="pill ver-pill backfilled" title="Rebuilt from session notes on 2026-08-21, before this ledger existed. Dates are best-effort.">reconstructed</span>'
+                : ''}
+            </div>
+            <div class="entry-title">${esc(e.title)}</div>
+            <div class="entry-summary">${esc(e.summary || '')}</div>
+            ${bumpHtml}
+            ${(e.changes || []).length
+              ? `<ul class="entry-changes">${e.changes.map(c => `<li>${esc(c)}</li>`).join('')}</ul>`
+              : ''}
+            ${(e.files || []).length
+              ? `<div class="entry-files">${e.files.map(esc).join(' · ')}</div>`
+              : ''}
+          </div>`;
+      }).join('');
+    }
+
+    function load() {
+      fetch('/changelog-data')
+        .then(r => r.json())
+        .then(d => {
+          if (d.error) {
+            document.getElementById('entries').innerHTML =
+              `<div class="empty-row">${esc(d.error)}</div>`;
+            return;
+          }
+          data = d;
+          verLedger = d;              // let live_common's verPill/verInfo use it
+          renderStats();
+          renderEngines();
+          renderEntries();
+          // Re-apply the hash now that the rows it points at exist.
+          if (location.hash) {
+            const el = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+            if (el) el.scrollIntoView({ block: 'center' });
+          }
+        })
+        .catch(() => {
+          document.getElementById('entries').innerHTML =
+            '<div class="empty-row">Could not load CHANGELOG.json</div>';
+        });
+    }
+
+    load();
+  </script>
+</body>
+</html>

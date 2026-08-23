@@ -65,6 +65,7 @@
     const cash = p.cash || 0;
     const positions = p.positions || {};
     const closed = p.closed_trades || [];
+    const scored = closed.filter(t => t.reason !== 'STALE');
     const quotes = (p.last_quotes && typeof p.last_quotes === 'object') ? p.last_quotes : {};
     let openVal = 0;
     for (const [tk, pos] of Object.entries(positions)) {
@@ -76,9 +77,13 @@
       openVal,
       equity: cash + openVal,
       openCount: Object.keys(positions).length,
+      // STALE = the engine was down past this position's exit date, so its exit
+      // price is an artefact. Cash moved for real (stays in realised), but it
+      // must not score. Duplicated from live_common.js on purpose: this widget
+      // also loads on pages that do not include live_common.js.
       realized: closed.reduce((s, t) => s + (t.pnl_sek || 0), 0),
-      total: closed.length,
-      wins: closed.filter(t => (t.pnl_sek || 0) > 0).length,
+      total: scored.length,
+      wins: scored.filter(t => (t.pnl_sek || 0) > 0).length,
       closed,
       positions,
       quotes,

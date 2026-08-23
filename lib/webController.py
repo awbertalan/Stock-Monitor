@@ -1,5 +1,6 @@
 from urllib.request import urlopen
-import os, re, time, datetime, threading, json, csv
+from concurrent.futures import ThreadPoolExecutor
+import os, re, time, datetime, threading, json
 import webScrapper
 import infoScrapper
 # webScrapper / infoScrapper both call env_loader.load_env() at module load,
@@ -17,7 +18,15 @@ insttype_list = ["Marketplace","List","Company","News Agency","Equity",
 
 stocklist      = []
 stocklist_lock = threading.Lock()
+_counter_lock   = threading.Lock()
 _stop_requested = False
+
+# Both phases below hit the same `intradaychart` endpoint that _do_refresh_all
+# benchmarked, so they inherit its ceiling: throughput plateaus at 16 concurrent
+# and regresses past it. Mirrors app.MAX_REFRESH_WORKERS.
+MAX_SEARCH_WORKERS     = 16
+DEFAULT_SEARCH_WORKERS = 8    # the historical hardcoded value, used when a
+                              # caller passes no worker count of its own
 
 status = {
     "running":       False,
@@ -52,7 +61,13 @@ def _write_history(entry, out_dir):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 
-def run_search(start_index, end_index):
+def run_search(start_index, end_index, workers=None):
+    """Discover instruments across an insref range and scrape their price data.
+
+    `workers` sets the concurrency of both the index probe and the price scrape;
+    app.py passes the `refresh_workers` setting so the scrape scales off the same
+    knob as Update All. None falls back to the historical 8.
+    """
     global _stop_requested
     # This module lives in lib/, so project root is two levels up. Data (the
     # Instrumenttype/ tree, stock_names.csv) lives at the project root; the
@@ -62,6 +77,12 @@ def run_search(start_index, end_index):
     os.makedirs(state_dir, exist_ok=True)
     _stop_requested = False
     stocklist.clear()
+
+    try:
+        workers = int(workers)
+    except (TypeError, ValueError):
+        workers = DEFAULT_SEARCH_WORKERS
+    workers = max(1, min(MAX_SEARCH_WORKERS, workers))
 
     status.update({
         "running":       True,
@@ -78,9 +99,16 @@ def run_search(start_index, end_index):
     })
     starttime = time.time()
 
-    # Phase 1 — parallel index search
-    num_threads = 8
-    chunk = max(1, (end_index - start_index + 1) // num_threads)
+    # Phase 1 — parallel index search. Was hardcoded at 8; this is ~79% of a
+    # full-range run's wall clock (3.5M probes at ~46 ms each), so it is the
+    # phase that actually decides how long a scrape takes.
+    #
+    # Capped at the span as well: with more threads than indices the static
+    # chunking hands the surplus threads ranges that start past end_index, and
+    # the ones in between probe indices outside the range the user asked for.
+    span = end_index - start_index + 1
+    num_threads = max(1, min(workers, span))
+    chunk = max(1, span // num_threads)
     ranges = [
         (start_index + i * chunk,
          start_index + (i + 1) * chunk - 1 if i < num_threads - 1 else end_index)
@@ -114,7 +142,12 @@ def run_search(start_index, end_index):
     status["scrape_done"]  = 0
     status["message"]      = f"Scraping price data for {len(stocklist)} stocks…"
     scraped, scrape_errors = 0, 0
-    for stock in stocklist:
+
+    # Each stock is an independent blocking fetch writing into its own folder,
+    # so the pool only has to serialise the shared progress counters. Was a
+    # sequential loop at ~103 ms per stock.
+    def scrape_one(stock):
+        nonlocal scraped, scrape_errors
         insref, name, tradecurrency, instrumenttype, raw_name = stock
         stock_dir = os.path.join(
             base_dir, "Instrumenttype",
@@ -128,13 +161,23 @@ def run_search(start_index, end_index):
             webScrapper.update_csvs(name, insref, rows, output_dir=stock_dir,
                                     rel_path=rel_path, inst_type=inst_type_name,
                                     currency=tradecurrency, display_name=raw_name)
-            hist = infoScrapper.fetch_history(insref)
-            if isinstance(hist, list):
-                infoScrapper.update_history_csv(name, insref, hist, output_dir=stock_dir)
-            scraped += 1
+            infoScrapper.sync_history(name, insref, output_dir=stock_dir)
+            ok = True
         except Exception:
-            scrape_errors += 1
-        status["scrape_done"] = scraped + scrape_errors
+            ok = False
+        with _counter_lock:
+            if ok:
+                scraped += 1
+            else:
+                scrape_errors += 1
+            status["scrape_done"] = scraped + scrape_errors
+
+    if workers > 1 and len(stocklist) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(scrape_one, stocklist))
+    else:
+        for stock in stocklist:
+            scrape_one(stock)
 
     # Write stock index
     index = [
@@ -150,25 +193,13 @@ def run_search(start_index, end_index):
     with open(os.path.join(state_dir, "stock_index.json"), 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False)
 
-    # Update master names CSV (merge with any existing entries)
-    names_path = os.path.join(base_dir, "stock_names.csv")
-    names_map = {}
-    try:
-        with open(names_path, newline='', encoding='utf-8') as f:
-            for row in csv.reader(f):
-                if len(row) >= 2:
-                    try:
-                        names_map[int(row[0])] = row[1]
-                    except ValueError:
-                        pass
-    except FileNotFoundError:
-        pass
-    for s in stocklist:
-        names_map[s[0]] = s[4]
-    with open(names_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        for iref, nm in sorted(names_map.items()):
-            writer.writerow([iref, nm])
+    # Update master names CSV. Rewriting it here read only the first two columns
+    # and wrote them back, dropping the isin and list columns off all ~59k rows —
+    # the dashboard's cap-tier modes and the live engines' build_universe() both
+    # key off the list column. upsert_names_bulk merges into the 4-column file,
+    # takes webScrapper._names_lock, and swaps the file in atomically so readers
+    # can't catch a truncated universe mid-write.
+    webScrapper.upsert_names_bulk((s[0], s[4]) for s in stocklist)
 
     # Write history record
     duration_s = int(time.time() - starttime)
@@ -256,5 +287,6 @@ def urlcheck(start_index, end_index):
             status["found"] = len(stocklist)
         except Exception:
             pass
-        status["checked"] += 1
+        with _counter_lock:
+            status["checked"] += 1
         i += 1

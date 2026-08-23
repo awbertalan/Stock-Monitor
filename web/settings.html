@@ -121,6 +121,7 @@
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings" class="active">Settings</a>
+    <a href="/changelog">Changelog</a>
     <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
@@ -220,6 +221,23 @@
   </div>
 
   <div class="section">
+    <div class="section-title">Update Performance</div>
+    <div class="section-desc">
+      How many stocks to fetch from Millistream simultaneously. Applies to
+      scheduled updates, manual updates, and both phases of an index-range
+      <strong>Scrape</strong>. A full sweep of every instrument takes about
+      2h 30m with 1 worker and under 8 minutes with 16. The default of 10 matches
+      what the live paper-trade engines already use.
+    </div>
+    <div class="schedule-grid">
+      <div>
+        <label>Parallel Fetch Workers (1-16)</label>
+        <input type="number" id="refresh-workers" min="1" max="16">
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
     <div class="section-title">ISIN Database</div>
     <div class="section-desc">
       Update ISIN numbers for all stocks in the database. This will fetch and populate
@@ -283,7 +301,8 @@
           auto_refresh_market_minutes: parseInt(document.getElementById('market-minutes').value) || 15,
           auto_refresh_off_hours_minutes: parseInt(document.getElementById('off-hours-minutes').value) || 60,
           market_hours_start: parseInt(document.getElementById('market-start').value) || 9,
-          market_hours_end: parseInt(document.getElementById('market-end').value) || 17
+          market_hours_end: parseInt(document.getElementById('market-end').value) || 17,
+          refresh_workers: parseInt(document.getElementById('refresh-workers').value) || 10
         })
       })
       .then(r => r.json())
@@ -412,6 +431,7 @@
       document.getElementById('off-hours-minutes').value = settings.auto_refresh_off_hours_minutes ?? 60;
       document.getElementById('market-start').value = settings.market_hours_start ?? 9;
       document.getElementById('market-end').value = settings.market_hours_end ?? 17;
+      document.getElementById('refresh-workers').value = settings.refresh_workers ?? 10;
 
       const uf         = settings.update_filter || {};
       const typeFilter = uf.types;      // null = all

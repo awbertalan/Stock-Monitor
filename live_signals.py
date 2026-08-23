@@ -53,6 +53,7 @@ import infoScrapper    # noqa: E402
 import tradesScrapper  # noqa: E402
 import ohlc_capture    # noqa: E402
 import calendar_cache  # noqa: E402
+import version as V     # noqa: E402  — app/strategy version stamping
 
 ROOT          = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR     = os.path.join(ROOT, "state")
@@ -108,6 +109,25 @@ LAG_PROBE_NAME     = "SEB A"
 EOD_WINDOW_START = (17, 45)
 EOD_WINDOW_END   = (18, 30)
 MARKET_CLOSE     = (17, 30)
+
+# Stockholm's closing auction prints a few seconds *before* 17:30:00 — the probe
+# ticker's final trade of the day lands at 17:29:54. Demanding trade_dt >= exactly
+# 17:30:00 therefore never once passed: it silently blocked BOTH the EOD sweep and
+# the daily OHLC capture every trading day from 2026-06-13 to 2026-08-18. The old
+# log line rendered the shortfall as "0m before close", which read like a rounding
+# artefact rather than a hard block. Tolerance is generous because anything printing
+# after 17:25 is already an auction/closing print, not continuous-session data.
+CLOSE_SETTLE_TOLERANCE = timedelta(minutes=5)
+
+# A position that is still open well past its target exit date means the engine
+# was not running to manage it — not that the strategy held it. Booking such a
+# position as a clean TP/SL at the synthetic limit price invents a fill that
+# never happened: the 2026-06-16..07-28 outage left 9 positions unmanaged for
+# ~6 weeks and every one of them was recorded as an exact +/-2.00% TP or SL on
+# the day the engines came back. Those are exits at an arbitrary later price, so
+# they are booked as STALE at the real market price and excluded from win-rate
+# stats. Grace is generous enough to absorb a long weekend plus a holiday.
+STALE_EXIT_GRACE_DAYS = 4
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -413,6 +433,23 @@ def is_in_eod_window(now_local=None):
     return start <= mins <= end
 
 
+def feed_settled_past_close(trade_dt):
+    """Has the feed advanced far enough to be showing today's closing prints?
+
+    Returns (settled, shortfall_str). shortfall_str is a human-readable "how much
+    earlier than the threshold" for the retry log line, and is "" when settled.
+    Reported in seconds under a minute so a near-miss can never again look like
+    a rounding artefact — see CLOSE_SETTLE_TOLERANCE.
+    """
+    close_time = trade_dt.replace(hour=MARKET_CLOSE[0], minute=MARKET_CLOSE[1],
+                                  second=0, microsecond=0)
+    threshold = close_time - CLOSE_SETTLE_TOLERANCE
+    if trade_dt >= threshold:
+        return True, ""
+    secs = (threshold - trade_dt).total_seconds()
+    return False, (f"{int(secs)}s" if secs < 60 else f"{secs / 60:.1f}m")
+
+
 # ----------------------------------------------------------------------------- universe
 
 def _find_history_csv(insref):
@@ -518,9 +555,14 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
 
         exit_reason = None
         fill_price = cur_price
+        days_past = (today - target_date).days
         if tk in force_sells:
             exit_reason = "MANUAL"   # user-requested sell-now via UI
             fill_price = cur_price   # market-style fill at current price
+        elif days_past > STALE_EXIT_GRACE_DAYS:
+            # Engine was down through this position's exit — see STALE_EXIT_GRACE_DAYS.
+            exit_reason = "STALE"
+            fill_price = cur_price   # real market price, never a synthetic TP/SL fill
         elif cur_price >= pos["tp"]:
             exit_reason = "TP"
             fill_price = pos["tp"]   # limit-sell @ TP — fills at TP, not above
@@ -546,9 +588,17 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
                 "pnl_sek":     pnl,
                 "ret_pct":     fill_price / pos["entry_price"] - 1.0,
                 "reason":      exit_reason,
+                "unmanaged":   exit_reason == "STALE",
+                "days_past_target": days_past if exit_reason == "STALE" else None,
                 "entry_tag":   (pos.get("signal_info") or {}).get("entry_tag", "standard"),
                 "conviction":  (pos.get("signal_info") or {}).get("conviction", "normal"),
                 "signal_info": pos.get("signal_info"),
+                # Carried from the position, not re-read from the ledger: a trade
+                # must score against the strategy that *opened* it, even if the
+                # parameters were bumped while it was still open.
+                "app_version":      pos.get("app_version"),
+                "strategy_version": pos.get("strategy_version"),
+                "version_source":   pos.get("version_source"),
             }
             state["closed_trades"].append(closed)
             closed_now.append(closed)
@@ -609,12 +659,10 @@ def maybe_capture_eod_ohlc(state, today):
         print(f" OHLC capture: feed still on {trade_dt.date().isoformat()} "
               f"(today {today.isoformat()}); retry next run")
         return
-    close_time = trade_dt.replace(hour=MARKET_CLOSE[0], minute=MARKET_CLOSE[1],
-                                  second=0, microsecond=0)
-    if trade_dt < close_time:
-        gap = int((close_time - trade_dt).total_seconds() // 60)
+    settled, shortfall = feed_settled_past_close(trade_dt)
+    if not settled:
         print(f" OHLC capture: feed only at {trade_dt.strftime('%H:%M:%S')} "
-              f"({gap}m before close); retry next run")
+              f"({shortfall} short of the close threshold); retry next run")
         return
 
     primary, _ = build_universe()
@@ -650,12 +698,10 @@ def run_eod_sweep(state, today, now_local_ts):
         save_state(state)
         return
 
-    close_time = trade_dt.replace(hour=MARKET_CLOSE[0], minute=MARKET_CLOSE[1],
-                                  second=0, microsecond=0)
-    if trade_dt < close_time:
-        gap = int((close_time - trade_dt).total_seconds() // 60)
+    settled, shortfall = feed_settled_past_close(trade_dt)
+    if not settled:
         print(f"   feed only at {trade_dt.strftime('%H:%M:%S')} "
-              f"({gap}m before close); retry next run")
+              f"({shortfall} short of the close threshold); retry next run")
         save_state(state)
         return
     print(f"   feed settled (last {lag['ticker']} trade @ "
@@ -1050,6 +1096,10 @@ def main():
             "cost_sek":         cost,
             "signal_info":      info,
             "fill_type":        "limit",
+            # Which build + which strategy generation opened this trade. The
+            # strategy version is the grouping key the "By version" panels use;
+            # see lib/version.py for why a single global version won't do.
+            **V.stamp("signals"),
         }
         held_stems.add(stem)
         orders_to_remove.add(tk)

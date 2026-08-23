@@ -20,7 +20,13 @@
     .sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .reason-MANUAL  { background: var(--accent-soft);   color: var(--accent); }
     .pattern-pill   { background: var(--accent-soft);   color: var(--accent); font-weight: 600; }
-    .tier-pill      { background: var(--surface-alt);   color: var(--text-muted); border: 1px solid var(--border); }
+    /* .tier-pill moved to shared style.css */
+    .paused-notice {
+      background: var(--warning-soft); border: 1px solid var(--warning);
+      border-radius: var(--radius-md); color: var(--warning);
+      padding: 10px 14px; margin-bottom: 12px; font-size: 12.5px; line-height: 1.5;
+    }
+    .paused-notice strong { font-weight: 600; }
 
     .approve-btn {
       background: var(--surface); color: var(--accent); border: 1px solid var(--border);
@@ -54,6 +60,7 @@
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
+    <a href="/changelog">Changelog</a>
     <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
@@ -95,6 +102,7 @@
 
   <div class="section">
     <div class="section-title">Cross-radar candidates</div>
+    <div id="paused-notice" style="display:none;"></div>
     <div class="section-subtitle">
       Tickers that are in <strong>Signals' tradable universe</strong> AND have a recent <strong>Patterns fire</strong>.
       Approving queues the entry for the next engine run (3-min cadence). Approval is one-shot — consumed on entry.
@@ -123,7 +131,9 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
           <th>Pattern</th>
+          <th class="mobile-hide">Ver</th>
           <th class="num mobile-hide">Shares</th>
           <th class="num mobile-hide">Entry</th>
           <th class="num">Now</th>
@@ -135,8 +145,25 @@
         </tr>
       </thead>
       <tbody id="open-body">
-        <tr><td colspan="10" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="12" class="empty-row">Loading…</td></tr>
       </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">By version <span class="panel-note">— which generation of the strategy each trade ran under</span></div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Version</th>
+          <th class="num">N</th>
+          <th class="num">WR</th>
+          <th class="num">Avg ret</th>
+          <th class="num">P&amp;L</th>
+          <th class="mobile-hide">What changed</th>
+        </tr>
+      </thead>
+      <tbody id="version-body"><tr><td colspan="6" class="empty-row">Loading…</td></tr></tbody>
     </table>
   </div>
 
@@ -146,7 +173,9 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
           <th>Pattern</th>
+          <th class="mobile-hide">Ver</th>
           <th>Entry → Exit</th>
           <th class="num mobile-hide">Entry</th>
           <th class="num mobile-hide">Exit</th>
@@ -156,7 +185,7 @@
         </tr>
       </thead>
       <tbody id="closed-body">
-        <tr><td colspan="8" class="empty-row">No trades yet</td></tr>
+        <tr><td colspan="10" class="empty-row">No trades yet</td></tr>
       </tbody>
     </table>
   </div>
@@ -179,6 +208,8 @@
           fetch('/live-cross-log').then(r => r.json()),
           fetch('/live-cross-force-sell').then(r => r.json()).catch(() => []),
           fetch('/live-cross-approved').then(r => r.json()).catch(() => []),
+          loadTiers(),
+          loadVersions(),
         ]);
         forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
         approvedSet  = new Set(Array.isArray(approved) ? approved : []);
@@ -243,8 +274,10 @@
       }, 0);
       const equity   = cash + openVal;
       const realized = closed.reduce((s, t) => s + (t.pnl_sek || 0), 0);
-      const wins     = closed.filter(t => (t.pnl_sek || 0) > 0).length;
-      const wr       = closed.length ? wins / closed.length : null;
+      const scored   = scoredTrades(closed);
+      const stale    = closed.length - scored.length;
+      const wins     = scored.filter(t => (t.pnl_sek || 0) > 0).length;
+      const wr       = scored.length ? wins / scored.length : null;
 
       document.getElementById('stat-equity').textContent = fmt(equity, 0) + ' SEK';
       document.getElementById('stat-equity-sub').textContent =
@@ -265,8 +298,27 @@
       } else {
         const wrEl = document.getElementById('stat-wr');
         wrEl.textContent = (wr*100).toFixed(0) + '%';
-        wrEl.className = 'stat-value ' + (wr >= 0.5 ? 'up' : (wr < 0.5 ? 'down' : ''));
-        document.getElementById('stat-wr-sub').textContent = `${wins}W / ${closed.length-wins}L  (50% breakeven)`;
+        wrEl.className = 'stat-value ' + wrClass(wr);
+        document.getElementById('stat-wr-sub').textContent =
+          `${wins}W / ${scored.length-wins}L  (${(BREAKEVEN_WR*100).toFixed(0)}% breakeven)`
+          + (stale ? `  · ${stale} unmanaged excluded` : '');
+      }
+
+      // Entries can be switched off engine-side (ENTRIES_PAUSED in live_cross.py).
+      // Say so loudly: without this the table renders every candidate as "open"
+      // with a live Approve button, and queued approvals sit unconsumed forever.
+      const paused = p.entries_paused === true;
+      const notice = document.getElementById('paused-notice');
+      if (paused) {
+        const since = p.paused_since ? ` since <strong>${esc(p.paused_since)}</strong>` : '';
+        notice.className = 'paused-notice';
+        notice.innerHTML =
+          `<strong>⏸ New entries are paused${since}.</strong> ` +
+          `${esc(p.paused_reason || '')} Approving a candidate will not buy anything ` +
+          `until <strong>ENTRIES_PAUSED</strong> is set back to False in live_cross.py.`;
+        notice.style.display = '';
+      } else {
+        notice.style.display = 'none';
       }
 
       // Candidates
@@ -289,14 +341,16 @@
           const btnClass = approved ? 'approve-btn approved' : 'approve-btn';
           const btnLabel = approved ? '✓ Approved — undo' : (blocked ? 'Blocked' : 'Approve');
           const btnTitle = approved
-            ? 'Approval queued — engine will buy on next run. Click to undo.'
+            ? (paused
+                ? 'Approval is queued but entries are paused — it will NOT fill. Click to undo.'
+                : 'Approval queued — engine will buy on next run. Click to undo.')
             : (blocked
                 ? `Cannot approve: ${(c.skip_reasons||[]).join(' · ')}`
                 : 'Approve a market-style buy on the next engine run (~3 min)');
           return `
             <tr>
               <td class="ticker">${tickerLink(c.ticker)}</td>
-              <td><span class="pill tier-pill">${esc(c.tier || '?')}</span></td>
+              ${tierCell(c.ticker, c.tier)}
               <td>${patPills}</td>
               <td class="num mobile-hide">${last != null ? fmt(last, 2) : '—'}</td>
               <td class="small mobile-hide">${esc(fmtTs(c.pattern_fire_ts))}</td>
@@ -317,7 +371,7 @@
       const openBody = document.getElementById('open-body');
       const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
       if (!openList.length) {
-        openBody.innerHTML = '<tr><td colspan="10" class="empty-row">No open positions</td></tr>';
+        openBody.innerHTML = '<tr><td colspan="12" class="empty-row">No open positions</td></tr>';
       } else {
         openBody.innerHTML = openList.map(([tk, pos]) => {
           const last = (lastQuotes[tk] && lastQuotes[tk].last) || pos.entry_price;
@@ -335,7 +389,9 @@
           return `
             <tr>
               <td class="ticker">${tickerLink(tk)}</td>
+              ${tierCell(tk)}
               <td><span class="pill pattern-pill">${esc(pat)}</span></td>
+              ${verCell('cross', pos, 'mobile-hide')}
               <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
               <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
               <td class="num">${fmt(last, 2)}</td>
@@ -355,10 +411,12 @@
         }).join('');
       }
 
+      renderVersionBreakdown('cross', closed, 'version-body');
+
       // Closed trades (newest first)
       const closedBody = document.getElementById('closed-body');
       if (!closed.length) {
-        closedBody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
+        closedBody.innerHTML = '<tr><td colspan="10" class="empty-row">No trades yet</td></tr>';
       } else {
         const sorted = [...closed].sort((a,b) => (b.exit_date || '').localeCompare(a.exit_date || ''));
         closedBody.innerHTML = sorted.slice(0, 30).map(t => {
@@ -368,7 +426,9 @@
           return `
             <tr>
               <td class="ticker">${tickerLink(t.ticker)}</td>
+              ${tierCell(t.ticker)}
               <td><span class="pill pattern-pill">${esc(pat)}</span></td>
+              ${verCell('cross', t, 'mobile-hide')}
               <td class="small">${esc(inLabel)}<br>→ ${esc(outLabel)}</td>
               <td class="num mobile-hide">${fmt(t.entry_price, 2)}</td>
               <td class="num mobile-hide">${fmt(t.exit_price, 2)}</td>

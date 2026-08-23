@@ -1,4 +1,5 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import threading, webbrowser, json, urllib.parse, os, csv, time, re
 
@@ -12,6 +13,7 @@ import tradesScrapper
 import ohlc_capture
 import calendar_cache
 import engine_common as ec
+import version as V
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR    = os.path.join(BASE_DIR, "web")
@@ -78,6 +80,47 @@ def _load_names():
         pass
     return names
 
+# Cap-tier labels as they appear in the last column of stock_names.csv. The live
+# engines only trade the three Stockholm cap tiers (build_universe() filters on
+# exactly those), but a position taken before a name moved list should still
+# render a truthful pill, so the other Nordic lists are mapped too.
+TIER_LABELS = ("large cap", "mid cap", "small cap", "first north", "spotlight")
+
+_tier_cache      = {"mtime": None, "map": {}}
+_tier_cache_lock = threading.Lock()
+
+
+def _live_tier_map():
+    """{ticker_name: cap tier} from stock_names.csv, cached on the file's mtime.
+
+    Keyed by display name (not insref) because that is what the live engines
+    write into their state and what the live pages render. Only ~500 of the
+    ~59k rows carry a tier label, so the payload stays small.
+    """
+    try:
+        mtime = os.path.getmtime(NAMES_CSV_PATH)
+    except OSError:
+        return {}
+    with _tier_cache_lock:
+        if _tier_cache["mtime"] == mtime:
+            return _tier_cache["map"]
+    tiers = {}
+    try:
+        with open(NAMES_CSV_PATH, newline='', encoding='utf-8') as f:
+            for row in csv.reader(f):
+                if len(row) < 4:
+                    continue
+                tier = row[-1].strip().lower()
+                if tier in TIER_LABELS:
+                    tiers[row[1]] = tier
+    except OSError:
+        return {}
+    with _tier_cache_lock:
+        _tier_cache["mtime"] = mtime
+        _tier_cache["map"]   = tiers
+    return tiers
+
+
 _watchlist_lock     = threading.Lock()
 _alerts_lock        = threading.Lock()
 _paper_trades_lock  = threading.Lock()
@@ -92,6 +135,8 @@ _live_cross_force_sell_lock      = threading.Lock()
 _live_limit_orders_lock          = threading.Lock()
 _dashboard_cache    = {}
 _dashboard_cache_lock = threading.Lock()
+_csv_span_cache       = {}
+_csv_span_cache_lock  = threading.Lock()
 
 
 def _read_watchlist():
@@ -151,6 +196,197 @@ def _read_live_cross_portfolio():
     except (FileNotFoundError, json.JSONDecodeError):
         return {"cash": 500000, "positions": {}, "closed_trades": [],
                 "pending_candidates": [], "last_run": None}
+
+
+# ── changelog / version ledger ───────────────────────────────────────────────
+# CHANGELOG.json carries two version tiers (see lib/version.py). The page wants
+# the ledger *plus* what each strategy version actually did to the P&L, which
+# means rolling up the three wallets by strategy_version here rather than making
+# the page fetch and join all three itself.
+
+_CHANGELOG_WALLET_READERS = {
+    "signals":  lambda: _read_live_portfolio(),
+    "patterns": lambda: _read_live_patterns_portfolio(),
+    "cross":    lambda: _read_live_cross_portfolio(),
+}
+
+
+def _version_performance():
+    """{engine: {strategy_version: {closed, scored, wins, wr, avg_ret, pnl, open}}}
+
+    Scoring follows the same rule as the live pages: realised P&L counts every
+    exit, but win rate and average return count only *scored* trades — STALE
+    exits are positions the engine was not running to manage, so their price
+    reflects when it came back rather than any strategy rule.
+    """
+    out = {}
+    for engine, read in _CHANGELOG_WALLET_READERS.items():
+        try:
+            st = read()
+        except Exception:
+            continue
+        buckets = {}
+
+        def bucket(ver):
+            return buckets.setdefault(ver or "unversioned", {
+                "closed": 0, "scored": 0, "wins": 0, "pnl": 0.0,
+                "ret_sum": 0.0, "open": 0, "backfilled": 0,
+            })
+
+        for tr in st.get("closed_trades") or []:
+            b = bucket(tr.get("strategy_version"))
+            b["closed"] += 1
+            b["pnl"] += float(tr.get("pnl_sek") or 0.0)
+            if tr.get("version_source") == "backfilled":
+                b["backfilled"] += 1
+            if tr.get("reason") != "STALE":
+                b["scored"] += 1
+                b["ret_sum"] += float(tr.get("ret_pct") or 0.0)
+                if float(tr.get("pnl_sek") or 0.0) > 0:
+                    b["wins"] += 1
+        for pos in (st.get("positions") or {}).values():
+            b = bucket(pos.get("strategy_version"))
+            b["open"] += 1
+            if pos.get("version_source") == "backfilled":
+                b["backfilled"] += 1
+
+        for b in buckets.values():
+            b["wr"]      = (b["wins"] / b["scored"]) if b["scored"] else None
+            b["avg_ret"] = (b["ret_sum"] / b["scored"]) if b["scored"] else None
+            b.pop("ret_sum")
+        out[engine] = buckets
+    return out
+
+
+def _changelog_data():
+    led = V.ledger()
+    if not led:
+        return {"error": "CHANGELOG.json not readable", "entries": []}
+    return {
+        "app_version":       led.get("app_version"),
+        "strategy_versions": led.get("strategy_versions") or {},
+        "engines":           led.get("engines") or {},
+        "strategy_history":  led.get("strategy_history") or {},
+        "entries":           led.get("entries") or [],
+        "performance":       _version_performance(),
+    }
+
+
+# ── live engine health ───────────────────────────────────────────────────────
+# Two multi-week outages ran completely unnoticed: the engines were dark from
+# 2026-06-16 to 2026-07-28, and the EOD sweep + daily OHLC capture were blocked
+# by a 6-second clock bug from 2026-06-13 to 2026-08-18. Nothing in the UI showed
+# either. These checks exist so silent death is loud.
+
+_HEALTH_ENGINES = (
+    ("Signals",  "live_portfolio.json"),
+    ("Patterns", "live_patterns_portfolio.json"),
+    ("Cross",    "live_cross_portfolio.json"),
+)
+
+_MARKET_OPEN_MIN  = 9 * 60
+_MARKET_CLOSE_MIN = 17 * 60 + 30
+
+
+def _market_is_open(now):
+    return now.weekday() < 5 and _MARKET_OPEN_MIN <= (now.hour * 60 + now.minute) < _MARKET_CLOSE_MIN
+
+
+def _last_completed_session(now):
+    """Date of the most recent weekday whose 17:30 close has already passed.
+
+    Used instead of a plain wall-clock age so an overnight or weekend sleep does
+    not read as a fault — the engines legitimately do not tick while the Mac is
+    asleep, and only a *missed session* is worth alarming on.
+    """
+    import datetime as _dt
+    d = now.date()
+    if now.weekday() < 5 and (now.hour * 60 + now.minute) >= _MARKET_CLOSE_MIN:
+        return d
+    while True:
+        d -= _dt.timedelta(days=1)
+        if d.weekday() < 5:
+            return d
+
+
+def _live_health():
+    import datetime as _dt
+    now      = _dt.datetime.now()
+    now_utc  = _dt.datetime.now(_dt.timezone.utc)
+    open_now = _market_is_open(now)
+    session  = _last_completed_session(now)
+
+    engines = []
+    for label, fname in _HEALTH_ENGINES:
+        try:
+            with open(os.path.join(STATE_DIR, fname), encoding='utf-8') as f:
+                st = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            engines.append({"name": label, "status": "critical", "age_min": None,
+                            "detail": "state file unreadable"})
+            continue
+
+        last_run = st.get("last_run")
+        dt = None
+        if last_run:
+            try:
+                dt = _dt.datetime.fromisoformat(last_run)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_dt.timezone.utc)
+            except ValueError:
+                dt = None
+        if dt is None:
+            engines.append({"name": label, "status": "critical", "age_min": None,
+                            "detail": "never run"})
+            continue
+
+        age_min = (now_utc - dt).total_seconds() / 60.0
+        if open_now:
+            # Ticks every 3 min (launchd StartInterval 180) while the market runs.
+            status = "ok" if age_min <= 30 else ("warn" if age_min <= 90 else "critical")
+            detail = f"last run {age_min:.0f} min ago"
+        else:
+            # Off-hours: only care that it was alive for the last session.
+            ran_since = dt.astimezone().date() >= session
+            status = "ok" if ran_since else "critical"
+            detail = (f"last run {age_min / 60:.0f}h ago"
+                      if ran_since else
+                      f"has not run since the {session.isoformat()} session")
+        engines.append({"name": label, "status": status,
+                        "age_min": round(age_min, 1), "detail": detail})
+
+    # OHLC capture and the EOD sweep are date-keyed and driven by live_signals.
+    jobs = []
+    try:
+        with open(LIVE_PORTFOLIO_PATH, encoding='utf-8') as f:
+            sig = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        sig = {}
+    for label, key in (("OHLC capture", "last_ohlc_capture_date"),
+                       ("EOD sweep",    "last_eod_sweep_date")):
+        val = sig.get(key)
+        if not val:
+            jobs.append({"name": label, "status": "critical", "last": None,
+                         "detail": "never completed"})
+            continue
+        try:
+            d = _dt.date.fromisoformat(val)
+        except ValueError:
+            jobs.append({"name": label, "status": "critical", "last": val,
+                         "detail": "unparseable date"})
+            continue
+        behind = sum(1 for n in range(1, (session - d).days + 1)
+                     if (d + _dt.timedelta(days=n)).weekday() < 5)
+        status = "ok" if behind == 0 else ("warn" if behind == 1 else "critical")
+        jobs.append({"name": label, "status": status, "last": val,
+                     "detail": ("current" if behind == 0
+                                else f"{behind} trading day{'s' if behind > 1 else ''} behind")})
+
+    rank  = {"ok": 0, "warn": 1, "critical": 2}
+    items = engines + jobs
+    worst = max((i["status"] for i in items), key=lambda s: rank[s]) if items else "ok"
+    return {"worst": worst, "market_open": open_now,
+            "session": session.isoformat(), "engines": engines, "jobs": jobs}
 
 
 # A handful of state files are flat "list of tickers" queues shared with the
@@ -355,6 +591,8 @@ def _evaluate_paper_trades(trades):
     return changed
 
 
+MAX_REFRESH_WORKERS = 16   # measured plateau on the intradaychart endpoint
+
 _DEFAULT_SETTINGS = {
     "refresh_interval_s": 30,
     "trades_limit": 25,
@@ -365,6 +603,7 @@ _DEFAULT_SETTINGS = {
     "auto_refresh_off_hours_minutes": 60,
     "market_hours_start": 9,
     "market_hours_end": 17,
+    "refresh_workers": 10,
 }
 
 
@@ -449,6 +688,31 @@ def _upsert_index(entry):
             json.dump(index, f, ensure_ascii=False)
 
 
+def _filter_label(update_filter):
+    """Human-readable description of an update_filter, for log lines."""
+    if not isinstance(update_filter, dict):
+        return "all instruments"
+    parts = [", ".join(update_filter[k]) for k in ("types", "currencies")
+             if update_filter.get(k)]
+    return " / ".join(parts) if parts else "all instruments"
+
+
+def _refresh_worker_count():
+    """How many stocks to fetch concurrently, clamped to a measured-safe range.
+
+    Millistream tolerates this comfortably — no rate-limit headers, and no 429s
+    or latency decay observed up to 24 concurrent. Throughput on the heavier
+    intradaychart endpoint plateaus around 16 and regresses past it, hence the
+    cap. The default matches live_signals.LIVE_FETCH_WORKERS, which has run at
+    10 in production since May.
+    """
+    try:
+        n = int(_load_settings().get("refresh_workers", 10))
+    except (TypeError, ValueError):
+        n = 10
+    return max(1, min(MAX_REFRESH_WORKERS, n))
+
+
 def _do_refresh_all(update_filter=None):
     # Always scan the directory so every stock with CSV data is included,
     # regardless of what the index file currently knows about.
@@ -465,29 +729,50 @@ def _do_refresh_all(update_filter=None):
             stocks = [s for s in stocks if s["currency"] in curr_filter]
     _refresh_all_status["total"] = len(stocks)
     _refresh_all_status["done"]  = 0
-    for stock in stocks:
+
+    # Names are accumulated and written once at the end. upsert_name_csv rewrites
+    # the whole ~2 MB stock_names.csv per call while holding a global lock, which
+    # was ~47% of a full sweep's wall clock and would serialise every worker.
+    pending_names = {}
+    names_lock    = threading.Lock()
+    done_lock     = threading.Lock()
+
+    def refresh_one(stock):
         try:
             stock_dir = os.path.normpath(os.path.join(INST_DIR, stock["path"]))
             if stock_dir.startswith(INST_DIR):
                 _, _, rows, raw_name = webScrapper.fetch_stock(stock["insref"])
-                webScrapper.upsert_name_csv(stock["insref"], raw_name)
+                with names_lock:
+                    pending_names[stock["insref"]] = raw_name
                 webScrapper.update_csvs(
                     stock["name"], stock["insref"], rows,
                     output_dir=stock_dir, rel_path=stock["path"],
                     inst_type=stock["type"], currency=stock["currency"],
                     display_name=raw_name,
                 )
-                hist = infoScrapper.fetch_history(stock["insref"])
-                if isinstance(hist, list):
-                    infoScrapper.update_history_csv(
-                        stock["name"], stock["insref"], hist, output_dir=stock_dir
-                    )
+                infoScrapper.sync_history(
+                    stock["name"], stock["insref"], output_dir=stock_dir
+                )
         except Exception:
             pass
-        _refresh_all_status["done"] += 1
-    _refresh_all_status["running"] = False
-    with _dashboard_cache_lock:
-        _dashboard_cache.clear()
+        with done_lock:
+            _refresh_all_status["done"] += 1
+
+    workers = _refresh_worker_count()
+    try:
+        if workers > 1 and len(stocks) > 1:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                list(ex.map(refresh_one, stocks))
+        else:
+            for stock in stocks:
+                refresh_one(stock)
+    finally:
+        # Flush names even if the sweep was cut short, so the work isn't lost.
+        if pending_names:
+            webScrapper.upsert_names_bulk(pending_names.items())
+        _refresh_all_status["running"] = False
+        with _dashboard_cache_lock:
+            _dashboard_cache.clear()
 
 def _do_backfill():
     stocks = _scan_all_stocks()
@@ -674,6 +959,7 @@ STATIC = {
     "/live-patterns":  ("text/html; charset=utf-8",          "web/live_patterns.html"),
     "/live-cross":     ("text/html; charset=utf-8",          "web/live_cross.html"),
     "/ohlc-capture":   ("text/html; charset=utf-8",          "web/ohlc_capture.html"),
+    "/changelog":      ("text/html; charset=utf-8",          "web/changelog.html"),
 }
 
 
@@ -714,6 +1000,9 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/csv":
             params = urllib.parse.parse_qs(parsed.query)
             self._csv(params.get("path", [""])[0])
+        elif parsed.path == "/csv-span":
+            params = urllib.parse.parse_qs(parsed.query)
+            self._csv_span(params.get("path", [""])[0])
         elif parsed.path == "/ls":
             params = urllib.parse.parse_qs(parsed.query)
             self._ls(params.get("path", [""])[0])
@@ -777,6 +1066,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json(trades)
         elif parsed.path == "/live-portfolio":
             self._json(_read_live_portfolio())
+        elif parsed.path == "/live-tiers":
+            self._json(_live_tier_map())
+        elif parsed.path == "/live-health":
+            self._json(_live_health())
+        elif parsed.path == "/changelog-data":
+            self._json(_changelog_data())
+        elif parsed.path == "/version":
+            self._json({"app_version": V.app_version(),
+                        "strategy_versions": (V.ledger() or {}).get("strategy_versions") or {}})
         elif parsed.path == "/live-approved":
             with _live_approved_lock:
                 self._json(_read_live_approved())
@@ -1020,7 +1318,9 @@ class Handler(BaseHTTPRequestHandler):
                 end_index   = int(body.get("end",   [1000])[0])
             except (TypeError, ValueError, IndexError):
                 start_index, end_index = 0, 1000
-            threading.Thread(target=webController.run_search, args=(start_index, end_index), daemon=True).start()
+            threading.Thread(target=webController.run_search,
+                             args=(start_index, end_index, _refresh_worker_count()),
+                             daemon=True).start()
             self.send_response(200)
             self.end_headers()
         elif self.path == "/refresh":
@@ -1113,6 +1413,9 @@ class Handler(BaseHTTPRequestHandler):
             validated["market_hours_start"] = max(0, min(23, int(new_settings["market_hours_start"])))
         if "market_hours_end" in new_settings:
             validated["market_hours_end"] = max(0, min(23, int(new_settings["market_hours_end"])))
+        if "refresh_workers" in new_settings:
+            validated["refresh_workers"] = max(1, min(MAX_REFRESH_WORKERS,
+                                                     int(new_settings["refresh_workers"])))
         existing = _load_settings()
         existing.update(validated)
         with open(SETTINGS_PATH, 'w', encoding='utf-8') as fp:
@@ -1198,13 +1501,19 @@ class Handler(BaseHTTPRequestHandler):
             inst_type   = stock.get('type', '')
             currency    = stock.get('currency', '')
 
-            # Inject csvHist if the _History.csv has been generated
+            # Inject the sibling chart sources that actually exist on disk:
+            #   csvMain — accumulating intraday archive ({name}_{insref}.csv)
+            #   csvHist — daily bars ({name}_{insref}_History.csv)
+            # stock_page.js picks between these and csv7d per requested range.
             csv7d = stock.get('csv7d', '')
             if csv7d:
-                csv_hist_rel = csv7d.replace('_7d.csv', '_History.csv')
-                csv_hist_abs = os.path.normpath(os.path.join(INST_DIR, csv_hist_rel))
-                if csv_hist_abs.startswith(INST_DIR) and os.path.isfile(csv_hist_abs):
-                    stock['csvHist'] = csv_hist_rel
+                for key, suffix in (('csvMain', '.csv'), ('csvHist', '_History.csv')):
+                    rel = csv7d.replace('_7d.csv', suffix)
+                    abs_path = os.path.normpath(os.path.join(INST_DIR, rel))
+                    if abs_path.startswith(INST_DIR) and os.path.isfile(abs_path):
+                        stock[key] = rel
+                    else:
+                        stock.pop(key, None)
 
             stock_json  = json.dumps(stock)
             type_badge  = f'<span class="badge badge-type">{_html.escape(inst_type)}</span>' if inst_type else ''
@@ -1227,16 +1536,21 @@ class Handler(BaseHTTPRequestHandler):
             # Fallback to the static file if template rendering fails
             self._file("text/html; charset=utf-8", target)
 
-    def _csv(self, rel_path):
+    def _resolve_csv(self, rel_path):
+        """Validate a client-supplied CSV path. Returns (abs_path, error_dict)."""
         if not rel_path.endswith(".csv"):
-            self._json({"error": "Invalid file type"})
-            return
+            return None, {"error": "Invalid file type"}
         target = os.path.normpath(os.path.join(INST_DIR, rel_path))
         if not target.startswith(INST_DIR):
-            self._json({"error": "Access denied"})
-            return
+            return None, {"error": "Access denied"}
         if not os.path.isfile(target):
-            self._json({"error": "File not found"})
+            return None, {"error": "File not found"}
+        return target, None
+
+    def _csv(self, rel_path):
+        target, err = self._resolve_csv(rel_path)
+        if err:
+            self._json(err)
             return
         rows = []
         with open(target, newline="", encoding="utf-8") as f:
@@ -1247,6 +1561,71 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError:
                         pass
         self._json(rows)
+
+    def _csv_span(self, rel_path):
+        """Cheap coverage probe for a chart CSV.
+
+        The stock page uses this to pick the most detailed source that actually
+        covers a requested range: the accumulating intraday archive
+        ({name}_{insref}.csv) when it reaches back far enough, otherwise the
+        daily _History.csv. Results are cached per (path, mtime, size) so
+        repeated range switches cost nothing.
+        """
+        target, err = self._resolve_csv(rel_path)
+        if err:
+            self._json(err)
+            return
+
+        try:
+            st = os.stat(target)
+        except OSError as e:
+            self._json({"error": str(e)})
+            return
+        key = (target, st.st_mtime_ns, st.st_size)
+
+        with _csv_span_cache_lock:
+            hit = _csv_span_cache.get(key)
+        if hit is not None:
+            self._json(hit)
+            return
+
+        # Hand-parsed rather than csv.reader: these files are plain
+        # "ts,price,volume" with no quoting, and this runs over ~40k-row
+        # archives on a low-power NAS. Days are bucketed in UTC, which is exact
+        # here because Nordic session hours never straddle a UTC midnight.
+        first = last = None
+        rows = 0
+        dates = set()
+        with open(target, encoding="utf-8") as f:
+            for line in f:
+                comma = line.find(",")
+                if comma <= 0:
+                    continue
+                try:
+                    ts = float(line[:comma])
+                except ValueError:
+                    continue
+                rows += 1
+                if first is None or ts < first:
+                    first = ts
+                if last is None or ts > last:
+                    last = ts
+                dates.add(int(ts // 86400000))
+
+        span = {
+            "ok":        rows > 0,
+            "rows":      rows,
+            "first":     first,
+            "last":      last,
+            "dates":     len(dates),
+            "span_days": ((last - first) / 86400000.0) if rows > 1 else 0.0,
+        }
+
+        with _csv_span_cache_lock:
+            if len(_csv_span_cache) > 4000:
+                _csv_span_cache.clear()
+            _csv_span_cache[key] = span
+        self._json(span)
 
     def _dashboard_data(self, mode=''):
         cache_key = mode or ''
@@ -1485,7 +1864,8 @@ def _auto_refresh_loop():
 
 
 def _startup_refresh():
-    if not _load_settings().get("auto_refresh_enabled", True):
+    settings = _load_settings()
+    if not settings.get("auto_refresh_enabled", True):
         print("[startup] Auto-refresh disabled — skipping startup update.")
         return
     with _refresh_status_lock:
@@ -1495,9 +1875,14 @@ def _startup_refresh():
         _refresh_all_status["running"] = True
         _refresh_all_status["done"]    = 0
         _refresh_all_status["total"]   = 0
-    print("[startup] Starting full update of all stocks…")
-    _do_refresh_all(None)
-    print("[startup] Full startup update complete.")
+    # Honour the same update_filter the scheduled loop uses. Sweeping every
+    # instrument on disk instead of the configured slice is a ~60x bigger job
+    # and used to make every launch a multi-hour crawl.
+    uf = settings.get("update_filter")
+    update_filter = uf if isinstance(uf, dict) else None
+    print(f"[startup] Starting update of {_filter_label(update_filter)}…")
+    _do_refresh_all(update_filter)
+    print("[startup] Startup update complete.")
 
 
 class QuietHTTPServer(HTTPServer):

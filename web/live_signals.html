@@ -132,6 +132,7 @@
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
+    <a href="/changelog">Changelog</a>
     <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
@@ -186,6 +187,7 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
           <th>Status</th>
           <th class="num mobile-hide">Last</th>
           <th class="num mobile-hide">Bid</th>
@@ -198,7 +200,7 @@
         </tr>
       </thead>
       <tbody id="newsig-body">
-        <tr><td colspan="10" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="11" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
     <div class="pagination" id="newsig-pagination" style="display:none;">
@@ -215,6 +217,7 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
           <th>Tag</th>
           <th class="num">Last</th>
           <th class="num">DoD</th>
@@ -225,7 +228,7 @@
         </tr>
       </thead>
       <tbody id="watchlist-body">
-        <tr><td colspan="8" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="9" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
     <div class="pagination" id="watchlist-pagination" style="display:none;">
@@ -242,6 +245,7 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
           <th class="num">DoD</th>
           <th class="num mobile-hide">At 5d high</th>
           <th class="num mobile-hide">Friday</th>
@@ -252,7 +256,7 @@
         </tr>
       </thead>
       <tbody id="nearmiss-body">
-        <tr><td colspan="8" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="9" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -264,6 +268,7 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
           <th>Source</th>
           <th class="num">Buy limit</th>
           <th class="num">Market</th>
@@ -273,7 +278,7 @@
         </tr>
       </thead>
       <tbody id="pending-orders-body">
-        <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="8" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -284,6 +289,8 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
+          <th class="mobile-hide">Ver</th>
           <th class="num mobile-hide">Shares</th>
           <th class="num mobile-hide">Entry</th>
           <th class="num">Now</th>
@@ -295,7 +302,7 @@
         </tr>
       </thead>
       <tbody id="open-body">
-        <tr><td colspan="9" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="11" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -351,6 +358,8 @@
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Tier</th>
+          <th class="mobile-hide">Ver</th>
           <th class="mobile-hide">Source</th>
           <th>Entry → Exit</th>
           <th class="num">Hold</th>
@@ -362,7 +371,7 @@
         </tr>
       </thead>
       <tbody id="closed-body">
-        <tr><td colspan="9" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="11" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
     <div class="pagination" id="closed-pagination" style="display:none;">
@@ -387,6 +396,15 @@
           <tr><th>Source</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th></tr>
         </thead>
         <tbody id="source-body"></tbody>
+      </table>
+    </div>
+    <div class="analytics-panel span-2">
+      <div class="panel-title">By version <span class="panel-note">— which generation of the strategy each trade ran under</span></div>
+      <table>
+        <thead>
+          <tr><th>Version</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th><th class="mobile-hide">What changed</th></tr>
+        </thead>
+        <tbody id="version-body"></tbody>
       </table>
     </div>
     <div class="analytics-panel">
@@ -465,10 +483,10 @@
 
     const newsigPager = makePager(
       { body: 'newsig-body', pager: 'newsig-pagination', info: 'newsig-page-info', prev: 'newsig-prev', next: 'newsig-next' },
-      10, 'No signals in the latest run');
+      11, 'No signals in the latest run');
     const watchlistPager = makePager(
       { body: 'watchlist-body', pager: 'watchlist-pagination', info: 'watchlist-page-info', prev: 'watchlist-prev', next: 'watchlist-next' },
-      8, 'No watchlist signals in the latest run');
+      9, 'No watchlist signals in the latest run');
     const quotesPager = makePager(
       { body: 'quotes-body', pager: 'quotes-pagination', info: 'quotes-page-info', prev: 'quotes-prev', next: 'quotes-next' },
       7, 'No tracked tickers');
@@ -484,6 +502,8 @@
           fetch('/live-log').then(r => r.json()),
           fetch('/live-force-sell').then(r => r.json()).catch(() => []),
           fetch('/live-limit-orders').then(r => r.json()).catch(() => ({})),
+          loadTiers(),
+          loadVersions(),
         ]);
         forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
         lastLimitOrders = (limitOrders && typeof limitOrders === 'object' && !Array.isArray(limitOrders)) ? limitOrders : {};
@@ -599,6 +619,7 @@
         return `
           <tr>
             <td class="ticker">${tickerLink(w.ticker)}${stale}</td>
+            ${tierCell(w.ticker)}
             <td><span class="pill ${tag.cls}">${tag.label}</span></td>
             <td class="num">${w.last != null ? fmt(w.last, 2) : '—'}</td>
             <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
@@ -718,6 +739,7 @@
           const detail = r.shares != null ? `${r.shares} sh · ${fmt(r.cost, 0)} SEK` : 'bought';
           return `<tr>
             <td class="ticker">${tickerLink(r.ticker)}</td>
+            ${tierCell(r.ticker)}
             <td><span class="pill pill-on">Filled</span></td>
             ${cellLast}${cellBid}${cellAsk}${cellDod}${cell20}
             <td class="num"><strong>${r.entry != null ? fmt(r.entry, 2) : '—'}</strong></td>
@@ -728,6 +750,7 @@
         if (r._kind === 'skipped') {
           return `<tr>
             <td class="ticker">${tickerLink(r.ticker)}</td>
+            ${tierCell(r.ticker)}
             <td><span class="pill pill-warn">Skipped</span></td>
             ${cellLast}${cellBid}${cellAsk}${cellDod}${cell20}
             <td class="num">—</td>
@@ -741,6 +764,7 @@
         const statusPill = order ? '<span class="pill pill-on">Queued</span>' : '<span class="pill">Pending</span>';
         return `<tr>
           <td class="ticker">${tickerLink(r.ticker)}</td>
+          ${tierCell(r.ticker)}
           <td>${statusPill}</td>
           ${cellLast}${cellBid}${cellAsk}${cellDod}${cell20}
           ${buyLimitCell(r.ticker, r.suggested_price)}
@@ -758,7 +782,7 @@
       const quotes = (lastPortfolio && lastPortfolio.last_quotes) || {};
       const entries = Object.entries(lastLimitOrders).sort((a, b) => a[0].localeCompare(b[0]));
       if (!entries.length) {
-        body.innerHTML = '<tr><td colspan="7" class="empty-row">No pending orders — approve a signal with a buy limit price to queue one</td></tr>';
+        body.innerHTML = '<tr><td colspan="8" class="empty-row">No pending orders — approve a signal with a buy limit price to queue one</td></tr>';
         return;
       }
       body.innerHTML = entries.map(([tk, o]) => {
@@ -777,6 +801,7 @@
         }
         return `<tr>
           <td class="ticker">${tickerLink(tk)}</td>
+          ${tierCell(tk)}
           <td>${srcPill}</td>
           <td class="num"><strong>${fmt(limit, 2)}</strong></td>
           <td class="num">${mkt != null ? fmt(mkt, 2) : '—'}</td>
@@ -813,7 +838,7 @@
     function nearmissRender(rows) {
       const body = document.getElementById('nearmiss-body');
       if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="8" class="empty-row">No near-misses in the latest run</td></tr>';
+        body.innerHTML = '<tr><td colspan="9" class="empty-row">No near-misses in the latest run</td></tr>';
         return;
       }
       body.innerHTML = rows.map(nm => {
@@ -823,6 +848,7 @@
         return `
           <tr>
             <td class="ticker">${tickerLink(nm.ticker)}${stale}</td>
+            ${tierCell(nm.ticker)}
             <td class="num ${i.dod != null ? cls(i.dod) : ''}">${i.dod != null ? pct(i.dod, 2) : '—'}</td>
             <td class="num mobile-hide">${i.at_5d_high ? 'yes' : 'no'}</td>
             <td class="num mobile-hide">${i.is_friday  ? 'yes' : 'no'}</td>
@@ -868,6 +894,7 @@
       equityCard.style.display    = '';
       analyticsGrid.style.display = '';
       renderSourceBreakdown(closed);
+      renderVersionBreakdown('signals', closed, 'version-body');
       renderConvictionBreakdown(closed);
       renderTickerStats(closed);
       renderEquityCurve(closed);
@@ -905,7 +932,7 @@
           <tr>
             <td>${labels[k]}</td>
             <td class="num">${n}</td>
-            <td class="num ${wr >= 0.5 ? 'up' : (wr < 0.4 ? 'down' : '')}">${(wr*100).toFixed(0)}%</td>
+            <td class="num ${wrClass(wr)}">${(wr*100).toFixed(0)}%</td>
             <td class="num ${cls(avgRet)}">${pct(avgRet, 2)}</td>
             <td class="num ${cls(total)}">${sign(total)}</td>
           </tr>`;
@@ -940,7 +967,7 @@
             <tr>
               <td>${labels[k]}</td>
               <td class="num">${n}</td>
-              <td class="num ${wr >= 0.8 ? 'up' : (wr < 0.5 ? 'down' : '')}">${(wr*100).toFixed(0)}%</td>
+              <td class="num ${wrClass(wr)}">${(wr*100).toFixed(0)}%</td>
               <td class="num ${cls(avgRet)}">${pct(avgRet, 2)}</td>
               <td class="num ${cls(total)}">${sign(total)}</td>
             </tr>`;
@@ -971,7 +998,7 @@
           <tr>
             <td class="ticker">${tickerLink(r.ticker)}</td>
             <td class="num">${r.n}</td>
-            <td class="num ${r.wr >= 0.8 ? 'up' : (r.wr < 0.5 ? 'down' : '')}">${(r.wr*100).toFixed(0)}%</td>
+            <td class="num ${wrClass(r.wr)}">${(r.wr*100).toFixed(0)}%</td>
             <td class="num ${cls(r.avgRet)}">${pct(r.avgRet, 2)}</td>
             <td class="num ${cls(r.total)}">${sign(r.total)}</td>
           </tr>`).join('');
@@ -1039,7 +1066,7 @@
       const sorted     = closedSortedCache;
 
       if (!sorted.length) {
-        closedBody.innerHTML = '<tr><td colspan="9" class="empty-row">No closed trades yet</td></tr>';
+        closedBody.innerHTML = '<tr><td colspan="11" class="empty-row">No closed trades yet</td></tr>';
         pager.style.display = 'none';
         return;
       }
@@ -1058,6 +1085,8 @@
         return `
         <tr>
           <td class="ticker">${tickerLink(t.ticker)}</td>
+          ${tierCell(t.ticker)}
+          ${verCell('signals', t, 'mobile-hide')}
           <td class="mobile-hide ${srcCls}" title="${sourceLabel(src)}">${src === 'auto' ? 'Auto' : 'User'}</td>
           <td class="small">${esc(inLabel)}<br>→ ${esc(outLabel)}</td>
           <td class="num">${esc(closedHold(t))}</td>
@@ -1106,9 +1135,13 @@
       const equity = cash + openVal;
       const totalRet = equity / WALLET_START - 1;
 
+      // realised P&L counts every exit (the cash really moved); the win rate
+      // counts only trades the engine actually managed — see scoredTrades().
       const realized = closed.reduce((s, t) => s + (t.pnl_sek || 0), 0);
-      const wins = closed.filter(t => (t.pnl_sek || 0) > 0).length;
-      const wr = closed.length ? wins / closed.length : null;
+      const scored = scoredTrades(closed);
+      const stale = closed.length - scored.length;
+      const wins = scored.filter(t => (t.pnl_sek || 0) > 0).length;
+      const wr = scored.length ? wins / scored.length : null;
 
       document.getElementById('stat-equity').textContent = fmt(equity, 0) + ' SEK';
       const eqSub = document.getElementById('stat-equity-sub');
@@ -1133,15 +1166,17 @@
         document.getElementById('stat-wr-sub').textContent = 'no closed trades yet';
       } else {
         wrEl.textContent = (wr*100).toFixed(0) + '%';
-        wrEl.className = 'stat-value ' + (wr >= 0.8 ? 'up' : (wr < 0.5 ? 'down' : 'neutral'));
-        document.getElementById('stat-wr-sub').textContent = `${wins}W / ${closed.length-wins}L  (80% breakeven)`;
+        wrEl.className = 'stat-value ' + wrClass(wr);
+        document.getElementById('stat-wr-sub').textContent =
+          `${wins}W / ${scored.length-wins}L  (${(BREAKEVEN_WR*100).toFixed(0)}% breakeven)`
+          + (stale ? `  · ${stale} unmanaged excluded` : '');
       }
 
       // Open positions
       const openBody  = document.getElementById('open-body');
       const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
       if (!openList.length) {
-        openBody.innerHTML = '<tr><td colspan="9" class="empty-row">No open positions</td></tr>';
+        openBody.innerHTML = '<tr><td colspan="11" class="empty-row">No open positions</td></tr>';
       } else {
         openBody.innerHTML = openList.map(([tk, pos]) => {
           const lq    = lastQuotes[tk] || {};
@@ -1159,6 +1194,8 @@
           return `
           <tr>
             <td class="ticker">${tickerLink(tk)}</td>
+            ${tierCell(tk)}
+            ${verCell('signals', pos, 'mobile-hide')}
             <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
             <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
             <td class="num">${fmt(now, 2)}</td>

@@ -43,6 +43,7 @@ import env_loader                                    # noqa: E402
 env_loader.load_env()
 import engine_common as ec                           # noqa: E402
 import live_signals as L                             # reuse helpers          # noqa: E402
+import version as V                                  # noqa: E402
 import calendar_cache                                # noqa: E402
 
 ROOT       = os.path.dirname(os.path.abspath(__file__))
@@ -74,6 +75,20 @@ LATE_ENTRY_CUTOFF_MIN = 16 * 60 + 30   # 16:30 local — no new entries after
 # is active on this name". Patterns engine writes pattern fires each run
 # with the run's `ts`; we keep candidates fresh for one full trading day.
 PATTERN_FIRE_FRESH_HOURS = 30
+
+# Entries paused 2026-08-18. The premise of this wallet is that Signals ∩ Patterns
+# yields *higher*-quality entries; the first 20 scored trades say it inverts them.
+# Tweezer Bottom runs 69.2% WR (n=13) in the Patterns wallet but 25.0% (n=8) here,
+# and Three White Soldiers 100% (n=1) there against 25.0% (n=4) here. Cross also
+# went from "zero strict confluences in 3 weeks" at the 2026-06-13 audit to 24
+# closed trades, so the gate it is now testing is not the one it was launched with.
+# Exits, reporting and candidate computation all keep running — this only stops
+# new capital going in. Flip to False to resume.
+ENTRIES_PAUSED = True
+ENTRIES_PAUSED_SINCE  = "2026-08-18"
+ENTRIES_PAUSED_REASON = ("Cross inverts the edge of the Patterns wallet it draws from — "
+                         "Tweezer Bottom runs 69% WR (n=13) in Patterns against 25% (n=8) "
+                         "here. Exits, candidates and reporting still run.")
 
 LOG_RETAIN_HOURS     = 24
 LOG_ROTATE_MIN_BYTES = 200_000
@@ -216,6 +231,8 @@ def compute_candidates(signals_state, patterns_state, state, today, now_local):
             continue   # already long it on Cross
         insref = insref_map.get(tk)
         skip = []
+        if ENTRIES_PAUSED:
+            skip.append(f"entries paused since {ENTRIES_PAUSED_SINCE}")
         # Calendar window block
         if insref:
             blocked, why = calendar_cache.has_nearby_event(insref, today, cache=events_cache)
@@ -311,6 +328,9 @@ def main():
     # ── 2. Compute candidate set + persist for UI ───────────────────────────
     candidates = compute_candidates(signals_state, patterns_state, state, today, now_local)
     state["pending_candidates"] = candidates
+    state["entries_paused"]     = ENTRIES_PAUSED
+    state["paused_since"]       = ENTRIES_PAUSED_SINCE  if ENTRIES_PAUSED else None
+    state["paused_reason"]      = ENTRIES_PAUSED_REASON if ENTRIES_PAUSED else None
     out(f" Cross-radar candidates: {len(candidates)}  "
         f"(signals_radar={len(signals_radar(signals_state))}, "
         f"fresh_fires={len(fresh_pattern_fires(patterns_state, now_local))})")
@@ -352,6 +372,8 @@ def main():
                 f"opened {t['entry_date']}")
 
     # ── 5. New entries — ONLY for approved candidates ───────────────────────
+    if ENTRIES_PAUSED:
+        out(" ENTRIES PAUSED (ENTRIES_PAUSED=True) — exits and reporting still run.")
     if is_friday_today():
         out(" No entries on Friday (weekend-risk rule).")
     if past_late_entry_cutoff():
@@ -365,7 +387,7 @@ def main():
     new_skipped = []
     consumed_approvals = set()
 
-    if approved and not is_friday_today() and not past_late_entry_cutoff():
+    if approved and not ENTRIES_PAUSED and not is_friday_today() and not past_late_entry_cutoff():
         cand_by_ticker = {c["ticker"]: c for c in candidates}
         for tk in sorted(approved):
             cand = cand_by_ticker.get(tk)
@@ -412,6 +434,7 @@ def main():
                     "signals_tier":   cand["tier"],
                     "approved_at":    now_local_ts,
                 },
+                **V.stamp("cross"),
             }
             new_entries.append({
                 "ticker": tk, "pattern": primary_pattern, "all_patterns": cand["patterns"],
@@ -442,7 +465,8 @@ def main():
             out(f"      target {e['tp']:.2f} (+{TP_PCT*100:.2f}%)  "
                 f"stop {e['sl']:.2f} ({SL_PCT*100:+.2f}%)  exit by {e['exit_by']}")
     elif approved:
-        out("\n--- NO NEW CROSS ENTRIES (approvals queued or blocked) ---")
+        out("\n--- NO NEW CROSS ENTRIES ("
+            + ("entries paused" if ENTRIES_PAUSED else "approvals queued or blocked") + ") ---")
 
     if new_skipped:
         out(f"\n--- APPROVALS SKIPPED ({len(new_skipped)}) ---")

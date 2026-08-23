@@ -54,6 +54,7 @@
     <a href="/ohlc-capture">OHLC Capture</a>
     <a href="/scrape">Scrape</a>
     <a href="/settings">Settings</a>
+    <a href="/changelog">Changelog</a>
     <a href="/help">Help</a>
     <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
   </nav>
@@ -140,10 +141,12 @@
       }
       const equity = cash + openVal;
       const realized = closed.reduce((s, t) => s + (t.pnl_sek || 0), 0);
-      const wins = closed.filter(t => (t.pnl_sek || 0) > 0).length;
-      const wr = closed.length ? wins / closed.length : null;
+      const scored = scoredTrades(closed);
+      const wins = scored.filter(t => (t.pnl_sek || 0) > 0).length;
+      const wr = scored.length ? wins / scored.length : null;
       return { label, link, color, cash, openVal, equity, realized, wins,
-               losses: closed.length - wins, total: closed.length, wr,
+               losses: scored.length - wins, total: scored.length, wr,
+               stale: closed.length - scored.length,
                openCount: Object.keys(positions).length, closed };
     }
 
@@ -180,7 +183,7 @@
       } else {
         const wrEl = document.getElementById('combined-wr');
         wrEl.textContent = (combinedWR*100).toFixed(0) + '%';
-        wrEl.className = 'stat-value ' + (combinedWR >= 0.5 ? 'up' : 'down');
+        wrEl.className = 'stat-value ' + wrClass(combinedWR);
         document.getElementById('combined-wr-sub').textContent =
           `${combinedWins}W / ${combinedTrades - combinedWins}L`;
       }

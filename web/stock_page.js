@@ -18,17 +18,131 @@ const showMA         = { 20: false, 50: false, 200: false };
 const MA_COLORS      = { 20: '#f0a500', 50: '#0066cc', 200: '#cc3300' };
 let showRSI          = false;
 let currentCsvPath   = null;
-let usingFullHistory = false;
 let _lastCandles     = [];
 
-const RANGE_BTNS = { 1:'btn-1d', 3:'btn-3d', 7:'btn-7d', 30:'btn-1m', 91:'btn-3m', 182:'btn-6m', 365:'btn-1y' };
+// ── Chart data sources ────────────────────────────────────────────────────────
+// Every stock folder holds the same three CSVs, in descending resolution:
+//   SRC_7D    {name}_{insref}_7d.csv       minute closes, rewritten each refresh
+//   SRC_MAIN  {name}_{insref}.csv          minute closes, appended forever
+//   SRC_HIST  {name}_{insref}_History.csv  one row per trading day, back years
+// Range buttons pick the most detailed source that actually spans the request,
+// so 1M/3M render at intraday resolution for as long as the archive reaches
+// back that far and only fall through to daily bars when it doesn't.
+const SRC_7D   = '7d';
+const SRC_MAIN = 'main';
+const SRC_HIST = 'hist';
+const SRC_LABEL = { [SRC_7D]: 'intraday · 7d', [SRC_MAIN]: 'intraday archive', [SRC_HIST]: 'daily bars' };
+
+let currentSource = SRC_7D;
+let activeRange   = 7;      // days of the lit range button; null = full file
+let _rangeSeq     = 0;      // guards against out-of-order range clicks
+const _spanCache  = {};     // csv path -> { span, at } from /csv-span
+const SPAN_TTL_MS = 10 * 60 * 1000;
+
+// `days` is the calendar window used both to pick a source and to slice the
+// view. `sessions` (short ranges only) slices by counting back that many
+// trading dates instead, so 1D still means "the latest session" after a
+// weekend or holiday.
+const RANGES = {
+  1:   { btn: 'btn-1d', days: 1,   sessions: 1 },
+  3:   { btn: 'btn-3d', days: 3,   sessions: 3 },
+  7:   { btn: 'btn-7d', days: 7,   sessions: 7 },
+  30:  { btn: 'btn-1m', days: 30  },
+  91:  { btn: 'btn-3m', days: 91  },
+  182: { btn: 'btn-6m', days: 182 },
+  365: { btn: 'btn-1y', days: 365 },
+};
+const RANGE_BTNS = Object.fromEntries(Object.entries(RANGES).map(([d, r]) => [d, r.btn]));
+
+const _dayKey = ts => { const d = new Date(ts); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); };
+
+// Math.min(...arr) throws on very large arrays; a full intraday archive slice
+// runs to tens of thousands of points.
+function _minMax(arr, get) {
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < arr.length; i++) {
+    const v = get ? get(arr[i]) : arr[i];
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return [lo, hi];
+}
+
+// ── Downsampling ──────────────────────────────────────────────────────────────
+// A 3-month intraday slice is ~30k samples inside an ~830px plot. Drawing all of
+// them costs far more than it shows, and redraw() runs on every mousemove, so
+// the price line and the volume band are both reduced to per-pixel-column
+// buckets first. Bucket entries carry their own index into the slice, so
+// hover/measure math keeps working against the untouched data.
+
+/** Price line → [[sliceIdx, price], …]: each column's low and high, in order. */
+function reducePriceLine(data, plotW) {
+  const n    = data.length;
+  const cols = Math.max(1, Math.floor(plotW));
+  if (n <= cols * 2) return data.map((r, i) => [i, r[1]]);
+
+  const out = [];
+  for (let c = 0; c < cols; c++) {
+    const from = Math.floor(c * n / cols);
+    const to   = Math.min(n, Math.floor((c + 1) * n / cols));
+    if (to <= from) continue;
+    let lo = from, hi = from;
+    for (let i = from + 1; i < to; i++) {
+      if (data[i][1] < data[lo][1]) lo = i;
+      if (data[i][1] > data[hi][1]) hi = i;
+    }
+    if (lo === hi)      out.push([lo, data[lo][1]]);
+    else if (lo < hi) { out.push([lo, data[lo][1]]); out.push([hi, data[hi][1]]); }
+    else              { out.push([hi, data[hi][1]]); out.push([lo, data[lo][1]]); }
+  }
+  // Pin the endpoints: the last sample is the current price and must be on-chart
+  if (out.length && out[0][0] !== 0)         out.unshift([0, data[0][1]]);
+  if (out.length && out[out.length - 1][0] !== n - 1) out.push([n - 1, data[n - 1][1]]);
+  return out;
+}
+
+/** Volume band → [{ i, vol, from, to }, …]: one bar per column, volume summed. */
+function reduceVolumeBars(data, getVol, plotW) {
+  const n    = data.length;
+  const cols = Math.max(1, Math.floor(plotW / 2));   // a bar needs ~2px to read
+  if (n <= cols) return data.map((r, i) => ({ i, vol: getVol(r) || 0, from: i, to: i + 1 }));
+
+  const out = [];
+  for (let c = 0; c < cols; c++) {
+    const from = Math.floor(c * n / cols);
+    const to   = Math.min(n, Math.floor((c + 1) * n / cols));
+    if (to <= from) continue;
+    let sum = 0;
+    for (let i = from; i < to; i++) sum += getVol(data[i]) || 0;
+    out.push({ i: Math.floor((from + to - 1) / 2), vol: sum, from, to });
+  }
+  return out;
+}
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 async function loadData() {
-  currentCsvPath = STOCK.csv7d;
-  try {
-    await loadCsv(currentCsvPath, true);
+  // Prefer the 7-day file, but a freshly-tracked or halted instrument can have
+  // an empty one — fall through to the archive and then to the daily history
+  // rather than leaving the page blank.
+  let loaded = false;
+  for (const src of [SRC_7D, SRC_MAIN, SRC_HIST]) {
+    const path = _srcPath(src);
+    if (!path) continue;
+    try {
+      await loadCsv(path, false, false);
+      currentSource  = src;
+      currentCsvPath = path;
+      loaded = true;
+      break;
+    } catch { /* try the next-best source */ }
+  }
+
+  if (loaded) {
+    _applyRange(activeRange);
+    updateTicker();
+    initChart();
+    _updateSourceLabel();
     let intervalMs = 30000;
     try {
       const s = await fetch('/get-settings').then(r => r.json());
@@ -36,7 +150,7 @@ async function loadData() {
       intervalMs = isNaN(sec) ? 30000 : sec * 1000;
     } catch { /* keep default */ }
     if (intervalMs > 0) setInterval(refreshData, intervalMs);
-  } catch {
+  } else {
     document.getElementById('change').textContent = 'Failed to load data.';
   }
   initWatchlist();
@@ -49,7 +163,7 @@ async function loadData() {
   loadTrades();
 }
 
-async function loadCsv(path, init = false) {
+async function loadCsv(path, init = false, draw = true) {
   const res  = await fetch('/csv?path=' + encodeURIComponent(path));
   const data = await res.json();
   if (!Array.isArray(data) || !data.length) throw new Error('empty');
@@ -57,9 +171,69 @@ async function loadCsv(path, init = false) {
   viewStart    = 0;
   viewEnd      = allData.length - 1;
   measureRange = null;
+  hoverIdx     = null;
+  if (!draw) return;          // caller is about to apply a range and redraw
   updateTicker();
   if (init) initChart(); else redraw();
   if (_patternMode) runPatternDetection();
+}
+
+// ── Source selection ──────────────────────────────────────────────────────────
+
+function _srcPath(src) {
+  const base = STOCK.csv7d || '';
+  if (src === SRC_7D)   return base || null;
+  if (src === SRC_HIST) return STOCK.csvHist || null;
+  if (src === SRC_MAIN) return STOCK.csvMain || (base ? base.replace('_7d.csv', '.csv') : null);
+  return null;
+}
+
+/** Coverage probe for a source, or null when the file is missing/empty. */
+async function _spanOf(src) {
+  const path = _srcPath(src);
+  if (!path) return null;
+  const hit = _spanCache[path];
+  if (hit && Date.now() - hit.at < SPAN_TTL_MS) return hit.span;
+  let span = null;
+  try {
+    const d = await fetch('/csv-span?path=' + encodeURIComponent(path)).then(r => r.json());
+    if (d && d.ok) span = d;
+  } catch { /* unreachable → treat as unavailable */ }
+  _spanCache[path] = { span, at: Date.now() };
+  return span;
+}
+
+/** Most detailed source that covers a `days` calendar window. */
+async function _pickSource(days) {
+  if (days <= 7 && await _spanOf(SRC_7D)) return SRC_7D;   // that file is exactly this window
+
+  const main = await _spanOf(SRC_MAIN);
+  // Reject a pockmarked archive as well as a short one: a stretch of missed
+  // refreshes would otherwise draw as a continuous line across the hole.
+  if (main && main.span_days >= days && main.dates >= main.span_days * 0.4) return SRC_MAIN;
+  if (main && days <= 7) return SRC_MAIN;       // any intraday beats daily bars here
+
+  if (await _spanOf(SRC_HIST)) return SRC_HIST;
+  return main ? SRC_MAIN : SRC_7D;              // best of what exists
+}
+
+/** Load `src` unless it is already the live dataset. Returns false if missing. */
+async function _ensureSource(src) {
+  if (src === currentSource && allData.length) return true;
+  const path = _srcPath(src);
+  if (!path) return false;
+  await loadCsv(path, false, false);            // throws before mutating on failure
+  currentSource  = src;
+  currentCsvPath = path;
+  return true;
+}
+
+function _updateSourceLabel(override) {
+  const el = document.getElementById('data-source');
+  if (!el) return;
+  el.textContent = override
+    ? override
+    : `${SRC_LABEL[currentSource] || ''} · ${allData.length.toLocaleString('en')} pts`;
 }
 
 // ── Ticker ────────────────────────────────────────────────────────────────────
@@ -81,9 +255,10 @@ function updateTicker() {
   chEl.textContent = `${isUp ? '▲' : '▼'} ${change >= 0 ? '+' : ''}${change.toFixed(2)}  (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
   chEl.style.color = color;
 
+  const [loP, hiP] = _minMax(prices);
   document.getElementById('s-open').textContent = first.toFixed(2);
-  document.getElementById('s-high').textContent = Math.max(...prices).toFixed(2);
-  document.getElementById('s-low').textContent  = Math.min(...prices).toFixed(2);
+  document.getElementById('s-high').textContent = hiP.toFixed(2);
+  document.getElementById('s-low').textContent  = loP.toFixed(2);
   document.getElementById('s-vol').textContent  = fmtVol(vols.reduce((a, b) => a + b, 0));
 }
 
@@ -120,18 +295,18 @@ function drawPrice() {
   const data = visData();
   if (!data.length) return;
 
-  const prices = data.map(r => r[1]);
-  const minP   = Math.min(...prices);
-  const maxP   = Math.max(...prices);
+  const [minP, maxP] = _minMax(data, r => r[1]);
   const pRange = maxP - minP || 1;
   const n      = data.length;
-  const isUp   = prices[prices.length - 1] >= prices[0];
+  const isUp   = data[n - 1][1] >= data[0][1];
   const color  = isUp ? '#00b36b' : '#e03131';
 
-  const pBot = priceBot(H);
-  const xOf = i => PAD.left + (i / Math.max(n - 1, 1)) * (W - PAD.left - PAD.right);
+  const pBot  = priceBot(H);
+  const plotW = W - PAD.left - PAD.right;
+  const xOf = i => PAD.left + (i / Math.max(n - 1, 1)) * plotW;
   const yOf = p => PAD.top  + (1 - (p - minP) / pRange) * (pBot - PAD.top);
-  const barW = Math.max(1, (W - PAD.left - PAD.right) / n * 0.7);
+  const volBars = showVolume ? reduceVolumeBars(data, r => r[2] || 0, plotW) : [];
+  const barW    = Math.max(1, plotW / Math.max(volBars.length, 1) * 0.7);
 
   ctx.clearRect(0, 0, W, H);
   ctx.font = '11px Arial';
@@ -147,10 +322,11 @@ function drawPrice() {
   }
 
   // Price line
+  const linePts = reducePriceLine(data, plotW);
   ctx.beginPath();
-  data.forEach((r, i) => {
-    const px = xOf(i), py = yOf(r[1]);
-    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  linePts.forEach(([i, p], k) => {
+    const px = xOf(i), py = yOf(p);
+    k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   });
   ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
   ctx.stroke();
@@ -168,7 +344,7 @@ function drawPrice() {
   drawMAOverlay(ctx, W, H);
 
   // Volume bars in the bottom band (only when showVolume is on)
-  drawVolume(ctx, W, H, data, r => r[2] || 0, xOf, barW, isUp);
+  drawVolume(ctx, W, H, volBars, xOf, barW, isUp);
 
   // X-axis labels
   drawXLabels(ctx, data, W, H, xOf);
@@ -193,33 +369,48 @@ function drawPrice() {
 }
 
 function drawXLabels(ctx, data, W, H, xOf) {
-  const days = new Set(data.map(r => {
-    const d = new Date(r[0]);
-    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  }));
-
   ctx.fillStyle = '#bbb'; ctx.textAlign = 'center'; ctx.font = '11px Arial';
 
-  if (days.size > 1) {
-    const seen = new Set();
-    data.forEach((r, i) => {
-      const d   = new Date(r[0]);
-      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      const xp  = xOf(i);
-      ctx.fillText(d.toLocaleDateString('en', { month: 'short', day: 'numeric' }), xp, H - PAD.bottom + 18);
-      ctx.strokeStyle = '#e8e8e8'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(xp, H - PAD.bottom); ctx.lineTo(xp, H - PAD.bottom + 5); ctx.stroke();
-    });
+  const tick = xp => {
+    ctx.strokeStyle = '#e8e8e8'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(xp, H - PAD.bottom); ctx.lineTo(xp, H - PAD.bottom + 5); ctx.stroke();
+  };
+
+  // First sample index of each distinct calendar day in view
+  const dayStarts = [];
+  let lastKey = null;
+  data.forEach((r, i) => {
+    const key = _dayKey(r[0]);
+    if (key !== lastKey) { dayStarts.push(i); lastKey = key; }
+  });
+
+  if (dayStarts.length > 1) {
+    // Thin to whatever fits: a year of daily bars would otherwise stack ~250
+    // date labels on top of each other.
+    const plotW     = W - PAD.left - PAD.right;
+    const spanDays  = (data[data.length - 1][0] - data[0][0]) / 86400000;
+    const wide      = spanDays > 300;
+    const fmt       = wide ? { year: '2-digit', month: 'short' }
+                           : { month: 'short', day: 'numeric' };
+    const maxLabels = Math.max(2, Math.floor(plotW / (wide ? 62 : 56)));
+    const step      = Math.ceil(dayStarts.length / maxLabels);
+    let prevText    = null;
+    for (let j = 0; j < dayStarts.length; j += step) {
+      const i    = dayStarts[j];
+      const text = new Date(data[i][0]).toLocaleDateString('en', fmt);
+      if (text === prevText) continue;   // month-only labels repeat within a month
+      prevText   = text;
+      const xp   = xOf(i);
+      ctx.fillText(text, xp, H - PAD.bottom + 18);
+      tick(xp);
+    }
   } else {
     const step = Math.max(1, Math.floor(data.length / 5));
     for (let i = 0; i < data.length; i += step) {
-      const d  = new Date(data[i][0]);
       const xp = xOf(i);
-      ctx.fillText(d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' }), xp, H - PAD.bottom + 18);
-      ctx.strokeStyle = '#e8e8e8'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(xp, H - PAD.bottom); ctx.lineTo(xp, H - PAD.bottom + 5); ctx.stroke();
+      ctx.fillText(new Date(data[i][0]).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' }),
+                   xp, H - PAD.bottom + 18);
+      tick(xp);
     }
   }
 }
@@ -319,8 +510,7 @@ function drawMAOverlay(ctx, W, H) {
   if (!data.length) return;
   const n      = data.length;
   const prices = data.map(r => r[1]);
-  const minP   = Math.min(...prices);
-  const maxP   = Math.max(...prices);
+  const [minP, maxP] = _minMax(prices);
   const pRange = maxP - minP || 1;
   const pBot   = priceBot(H);
   const xOf    = i => PAD.left + (i / Math.max(n - 1, 1)) * (W - PAD.left - PAD.right);
@@ -464,12 +654,13 @@ function toggleRSI() {
 //            place the price points / candles, so bars line up vertically)
 //   barW   – width of each bar
 //   isUp   – boolean used to pick the base bar colour
-function drawVolume(ctx, W, H, items, getVol, xOf, barW, isUp) {
-  if (!showVolume || !items.length) return;
-  const vols = items.map(getVol);
+/** `bars` is pre-bucketed: [{ i, vol, from, to }] indexed into the visible slice. */
+function drawVolume(ctx, W, H, bars, xOf, barW, isUp) {
+  if (!showVolume || !bars.length) return;
+  const vols = bars.map(b => b.vol);
   // Cap at 95th-percentile so closing-auction spikes don't crush the scale
   const sorted = [...vols].sort((a, b) => a - b);
-  const maxV   = sorted[Math.floor(sorted.length * 0.95)] || Math.max(...vols) || 1;
+  const maxV   = sorted[Math.floor(sorted.length * 0.95)] || _minMax(vols)[1] || 1;
   const color  = isUp ? '#00b36b' : '#e03131';
 
   const top   = priceBot(H);          // top of the volume band
@@ -482,11 +673,11 @@ function drawVolume(ctx, W, H, items, getVol, xOf, barW, isUp) {
   ctx.fillStyle = '#8a94a6'; ctx.font = '10px Arial'; ctx.textAlign = 'right';
   ctx.fillText(fmtVol(maxV), PAD.left - 6, top + 11);
 
-  items.forEach((item, i) => {
-    const v  = getVol(item) || 0;
-    const bH = Math.min(v / maxV, 1) * bandH;
-    const x  = xOf(i) - barW / 2;
-    const hi = hoverIdx !== null && (hoverIdx - viewStart) === i;
+  const hl = hoverIdx === null ? null : hoverIdx - viewStart;
+  bars.forEach(b => {
+    const bH = Math.min(b.vol / maxV, 1) * bandH;
+    const x  = xOf(b.i) - barW / 2;
+    const hi = hl !== null && hl >= b.from && hl < b.to;
     ctx.fillStyle = hi ? color : color + '70';
     ctx.fillRect(x, bot - bH, barW, bH);
   });
@@ -511,10 +702,12 @@ function chooseBucketMs(slice) {
   if (candleBucketMs !== null) return candleBucketMs;
   if (slice.length < 2) return 5 * 60 * 1000;
   const hours = (slice[slice.length - 1][0] - slice[0][0]) / 3_600_000;
-  if (hours <= 24)  return   5 * 60 * 1000;   // 5-min candles
-  if (hours <= 72)  return  30 * 60 * 1000;   // 30-min candles
-  if (hours <= 168) return  60 * 60 * 1000;   // 1-hour candles
-  return                  4 * 60 * 60 * 1000; // 4-hour candles
+  if (hours <= 24)   return           5 * 60 * 1000;  // 5-min candles
+  if (hours <= 72)   return          30 * 60 * 1000;  // 30-min candles
+  if (hours <= 168)  return          60 * 60 * 1000;  // 1-hour candles
+  if (hours <= 840)  return      4 * 60 * 60 * 1000;  // 4-hour  (up to ~5 weeks)
+  if (hours <= 3600) return     24 * 60 * 60 * 1000;  // daily   (up to ~5 months)
+  return                    7 * 24 * 60 * 60 * 1000;  // weekly
 }
 
 function aggregateOHLC(slice, bucketMs) {
@@ -607,7 +800,9 @@ function drawCandles() {
 
   // Volume bars aligned under each candle (only when showVolume is on)
   const trendUp = candles[candles.length - 1].close >= candles[0].open;
-  drawVolume(ctx, W, H, candles, c => c.vol, xOf, bodyW, trendUp);
+  drawVolume(ctx, W, H,
+             candles.map((c, i) => ({ i, vol: c.vol || 0, from: i, to: i + 1 })),
+             xOf, bodyW, trendUp);
 
   // X-axis labels (reuse existing, map candle timestamps as fake rows)
   drawXLabels(ctx, candles.map(c => [c.ts, c.close, c.vol]), W, H, xOf);
@@ -708,36 +903,75 @@ function _clearRangeBtns() {
   Object.values(RANGE_BTNS).forEach(id => document.getElementById(id)?.classList.remove('active'));
 }
 
-function setRange(days) {
-  // Count back `days` unique trading dates (ignores weekends/holidays with no data)
-  const dayKey = ts => { const d = new Date(ts); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); };
-  const seen = new Set();
+/** Move the view window to the last `days` of whatever is currently loaded. */
+function _applyRange(days) {
+  if (!allData.length) return;
+  const spec = RANGES[days] || { days };
   let start = 0;
-  for (let i = allData.length - 1; i >= 0; i--) {
-    seen.add(dayKey(allData[i][0]));
-    if (seen.size === days) {
-      // Walk back to the first tick of this trading day
-      const k = dayKey(allData[i][0]);
-      start = i;
-      while (start > 0 && dayKey(allData[start - 1][0]) === k) start--;
-      break;
+
+  if (spec.sessions) {
+    // Count back N unique trading dates (ignores weekends/holidays with no data)
+    const seen = new Set();
+    for (let i = allData.length - 1; i >= 0; i--) {
+      seen.add(_dayKey(allData[i][0]));
+      if (seen.size === spec.sessions) {
+        // Walk back to the first tick of this trading day
+        const k = _dayKey(allData[i][0]);
+        start = i;
+        while (start > 0 && _dayKey(allData[start - 1][0]) === k) start--;
+        break;
+      }
     }
+  } else {
+    // Calendar window measured back from the newest bar in the file
+    const cutoff = allData[allData.length - 1][0] - spec.days * 86400000;
+    let i = allData.length - 1;
+    while (i > 0 && allData[i - 1][0] >= cutoff) i--;
+    start = i;
   }
+
   viewStart    = start;
   viewEnd      = allData.length - 1;
   measureRange = null;
+  hoverIdx     = null;
+}
+
+async function setRange(days) {
+  const seq  = ++_rangeSeq;
+  const spec = RANGES[days];
+
+  let src = currentSource;
+  try {
+    src = await _pickSource(spec ? spec.days : days);
+  } catch { /* fall back to the loaded source */ }
+  if (seq !== _rangeSeq) return;                // a later click superseded this one
+
+  if (src !== currentSource) {
+    _updateSourceLabel('loading…');
+    try {
+      await _ensureSource(src);
+    } catch { /* keep the dataset we already have */ }
+    if (seq !== _rangeSeq) return;
+  }
+
+  activeRange = days;
+  _applyRange(days);
   _clearRangeBtns();
-  document.getElementById(RANGE_BTNS[days])?.classList.add('active');
+  if (spec) document.getElementById(spec.btn)?.classList.add('active');
+  document.getElementById('btn-full-hist')?.classList.remove('active');
+  _updateSourceLabel();
   updateTicker();
   if (_patternMode) runPatternDetection(); else redraw();
 }
 
 function resetZoom() {
+  activeRange  = null;
   viewStart    = 0;
   viewEnd      = allData.length - 1;
   measureRange = null;
+  hoverIdx     = null;
   _clearRangeBtns();
-  document.getElementById('btn-7d')?.classList.add('active');
+  _updateSourceLabel();
   updateTicker();
   if (_patternMode) runPatternDetection(); else redraw();
 }
@@ -767,8 +1001,13 @@ async function refreshData() {
     if (Array.isArray(data) && data.length) {
       const atEnd = viewEnd >= allData.length - 1;
       allData   = data;
-      viewEnd   = atEnd ? allData.length - 1 : Math.min(viewEnd, allData.length - 1);
-      viewStart = Math.min(viewStart, viewEnd);
+      if (activeRange !== null) {
+        _applyRange(activeRange);               // keep the lit button honest
+      } else {
+        viewEnd   = atEnd ? allData.length - 1 : Math.min(viewEnd, allData.length - 1);
+        viewStart = Math.min(viewStart, viewEnd);
+      }
+      _updateSourceLabel();
       updateTicker();
       redraw();
       checkAlert(data[data.length - 1][1]);
@@ -784,16 +1023,29 @@ async function refreshData() {
 
 // ── Full History ──────────────────────────────────────────────────────────────
 
-function toggleFullHistory() {
+// Explicit "everything on record" escape hatch: the whole daily history file,
+// no range slice. Any range button click hands control back to auto-selection.
+async function toggleFullHistory() {
   const btn = document.getElementById('btn-full-hist');
-  usingFullHistory = !usingFullHistory;
-  currentCsvPath = usingFullHistory
-    ? (STOCK.csvHist || STOCK.csv7d.replace('_7d.csv', '.csv'))
-    : STOCK.csv7d;
-  btn.classList.toggle('active', usingFullHistory);
-  btn.textContent = usingFullHistory ? '7D Only' : 'Full History';
+  if (btn.classList.contains('active')) { await setRange(7); return; }
+
+  _rangeSeq++;                                  // cancel any in-flight range switch
   btn.disabled = true;
-  loadCsv(currentCsvPath).catch(() => {}).finally(() => { btn.disabled = false; });
+  _updateSourceLabel('loading…');
+  try {
+    const src = (await _spanOf(SRC_HIST)) ? SRC_HIST : SRC_MAIN;
+    await _ensureSource(src);
+    activeRange = null;
+    viewStart   = 0;
+    viewEnd     = allData.length - 1;
+    _clearRangeBtns();
+    btn.classList.add('active');
+    updateTicker();
+    if (_patternMode) runPatternDetection(); else redraw();
+  } catch { /* keep the dataset we already have */ } finally {
+    btn.disabled = false;
+    _updateSourceLabel();
+  }
 }
 
 // ── Watchlist ─────────────────────────────────────────────────────────────────

@@ -31,51 +31,101 @@ def _fetch_isin(insref):
     return ""
 
 
-def upsert_name_csv(insref, raw_name, isin=None, mlist=None):
-    """Update or insert insref -> raw_name, isin, list in stock_names.csv (4 columns)."""
+def _read_names_csv():
+    """Return {insref: (name, isin, mlist)} from stock_names.csv, or {} if absent."""
+    names = {}
+    try:
+        with open(_NAMES_CSV, newline='', encoding='utf-8') as f:
+            for row in csv.reader(f):
+                if len(row) >= 2:
+                    try:
+                        iref = int(row[0])
+                        nm = row[1].strip()
+                        isin_val  = row[2].strip() if len(row) >= 3 else ""
+                        mlist_val = row[3].strip() if len(row) >= 4 else ""
+                        if nm:
+                            names[iref] = (nm, isin_val, mlist_val)
+                    except (ValueError, IndexError):
+                        pass
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return names
+
+
+def _write_names_csv(names):
+    """Replace stock_names.csv atomically.
+
+    Written to a temp file and renamed rather than opened 'w' in place: a full
+    rewrite takes ~80 ms, and readers (app._load_names, the live engines) would
+    otherwise be able to open the file mid-write and see a truncated universe.
+    """
+    tmp = f"{_NAMES_CSV}.tmp"
+    try:
+        with open(tmp, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            for iref, (nm, is_val, lst) in sorted(names.items()):
+                writer.writerow([iref, nm, is_val or "", lst or ""])
+        os.replace(tmp, _NAMES_CSV)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _merge_name(names, insref, raw_name, isin=None, mlist=None):
+    """Merge one entry into a names map, keeping any isin/list already known.
+    Returns True if the entry was usable and applied."""
     try:
         insref = int(insref)
         raw_name = str(raw_name).strip()
         if not raw_name:
-            return
+            return False
     except (ValueError, TypeError):
-        return
+        return False
 
+    existing = names.get(insref, ("", "", ""))
+    isin  = str(isin).strip()  if isin  else ""
+    mlist = str(mlist).strip() if mlist else ""
+    names[insref] = (raw_name, isin or existing[1], mlist or existing[2])
+    return True
+
+
+def upsert_name_csv(insref, raw_name, isin=None, mlist=None):
+    """Update or insert insref -> raw_name, isin, list in stock_names.csv (4 columns)."""
     with _names_lock:
-        names = {}
-        try:
-            with open(_NAMES_CSV, newline='', encoding='utf-8') as f:
-                for row in csv.reader(f):
-                    if len(row) >= 2:
-                        try:
-                            iref = int(row[0])
-                            nm = row[1].strip()
-                            isin_val  = row[2].strip() if len(row) >= 3 else ""
-                            mlist_val = row[3].strip() if len(row) >= 4 else ""
-                            if nm:
-                                names[iref] = (nm, isin_val, mlist_val)
-                        except (ValueError, IndexError):
-                            pass
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
+        names = _read_names_csv()
+        if _merge_name(names, insref, raw_name, isin, mlist):
+            _write_names_csv(names)
 
-        existing = names.get(insref, ("", "", ""))
-        isin  = str(isin).strip()  if isin  else ""
-        mlist = str(mlist).strip() if mlist else ""
-        isin  = isin  or existing[1]
-        mlist = mlist or existing[2]
 
-        names[insref] = (raw_name, isin, mlist)
+def upsert_names_bulk(updates):
+    """Apply many insref -> name updates in a single read + write of the file.
 
-        try:
-            with open(_NAMES_CSV, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                for iref, (nm, is_val, lst) in sorted(names.items()):
-                    writer.writerow([iref, nm, is_val or "", lst or ""])
-        except Exception:
-            pass
+    upsert_name_csv rewrites all ~59k rows on every call and holds _names_lock
+    throughout, so calling it once per stock both dominated a full refresh sweep
+    (~47% of its wall clock) and serialised any concurrent workers. Batching
+    turns tens of thousands of rewrites into one.
+
+    updates: iterable of (insref, raw_name) or (insref, raw_name, isin, mlist).
+    Returns the number of entries applied.
+    """
+    with _names_lock:
+        names   = _read_names_csv()
+        applied = 0
+        for upd in updates:
+            upd = tuple(upd)
+            if len(upd) < 2:
+                continue
+            if _merge_name(names, upd[0], upd[1],
+                           upd[2] if len(upd) > 2 else None,
+                           upd[3] if len(upd) > 3 else None):
+                applied += 1
+        if applied:
+            _write_names_csv(names)
+        return applied
 
 
 def _esc(s):

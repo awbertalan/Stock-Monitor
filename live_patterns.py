@@ -6,10 +6,12 @@ as the entry trigger. Separate paper wallet, separate log, separate state file
 to enable apples-to-apples A/B comparison with the mean-reversion engine.
 
 Strategy
-  Entry triggers: any of 6 bullish candlestick patterns firing on yesterday's
-                  completed daily OHLC bar
-                    Hammer | Bullish Engulfing | Morning Star | Piercing Line
+  Entry triggers: bullish candlestick patterns firing on yesterday's completed
+                  daily OHLC bar
+                    Bullish Engulfing | Morning Star | Piercing Line
                     Three White Soldiers | Tweezer Bottom
+                    Hammer — DETECTED BUT ENTRY-DISABLED since 2026-08-18
+                    (see ENTRY_DISABLED_PATTERNS)
   Filters:        not Friday entry · not after 16:30 local · ret_20d > -15%
                   · stem-dedup vs existing positions · SL cooldown 1d (same-day block) ·
                   TP/TIMEOUT same-day block
@@ -48,6 +50,7 @@ env_loader.load_env()
 import engine_common as ec                           # noqa: E402
 import live_signals as L                             # reuse helpers          # noqa: E402
 import calendar_cache                                # noqa: E402
+import version as V                                  # noqa: E402
 
 ROOT       = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR  = os.path.join(ROOT, "state")
@@ -76,6 +79,13 @@ LATE_ENTRY_CUTOFF_MIN = 16 * 60 + 30   # 16:30 — no new entries after this
 # the higher-conviction setups. Flip to False to restore solo-pattern entries.
 CONFLUENCE_REQUIRED   = True
 CONFLUENCE_MIN_COUNT  = 2
+
+# Patterns that still get DETECTED (so we keep collecting evidence on them) but
+# may no longer open a position, and no longer count toward the confluence
+# threshold above. Hammer was retired 2026-08-18 at n=9 / 22.2% WR / -6,637 SEK
+# — a bigger loss than the whole wallet's drawdown — after the 2026-06-13 parity
+# fixes failed to move it. Removing a name here re-enables it immediately.
+ENTRY_DISABLED_PATTERNS = frozenset({"Hammer"})
 
 # Log retention (same in-place truncation trick as live_signals)
 LOG_RETAIN_HOURS     = 24
@@ -346,12 +356,14 @@ def main():
     if is_friday_today():
         out(" No entries on Friday (weekend-risk rule).")
         _report_open(state, live, out)
+        _persist_ui_snapshot(state, live)
         save_state(state)
         log.close()
         return
     if past_late_entry_cutoff():
         out(f" Past 16:30 cutoff ({datetime.now().strftime('%H:%M')}) — no new entries.")
         _report_open(state, live, out)
+        _persist_ui_snapshot(state, live)
         save_state(state)
         log.close()
         return
@@ -391,7 +403,13 @@ def main():
 
         hits = detect_patterns_on_yesterday(bars, daily_closes)
         if hits:
-            pattern_fires.append({"t": t, "patterns": hits})
+            # "patterns" drives entries and the confluence count; "all_detected"
+            # keeps the full picture for the log and for /live-patterns.
+            pattern_fires.append({
+                "t": t,
+                "patterns":     [h for h in hits if h not in ENTRY_DISABLED_PATTERNS],
+                "all_detected": hits,
+            })
 
     # ── 6. Enter positions for unique fires (respecting cooldown / stem dedup) ──
     new_entries = []
@@ -404,6 +422,11 @@ def main():
         # Confluence gate (2026-06-13) — solo-pattern fires were net-negative
         # in the first 30 trades. CONFLUENCE_REQUIRED at module head can
         # disable this without other changes.
+        if not fire["patterns"]:
+            disabled = ", ".join(fire["all_detected"])
+            new_skipped.append({"ticker": name,
+                                "reason": f"only entry-disabled pattern(s): {disabled}"})
+            continue
         if CONFLUENCE_REQUIRED and len(fire["patterns"]) < CONFLUENCE_MIN_COUNT:
             new_skipped.append({"ticker": name,
                                 "reason": f"solo {fire['patterns'][0]} (confluence requires {CONFLUENCE_MIN_COUNT}+ patterns)"})
@@ -456,6 +479,7 @@ def main():
                 "pattern":       primary_pattern,
                 "all_patterns":  fire["patterns"],
             },
+            **V.stamp("patterns"),
         }
         held_stems.add(stem)
         new_entries.append({
@@ -494,8 +518,44 @@ def main():
 
     _report_open(state, live, out)
 
-    # Build/refresh ticker -> stock-page rel_path map for UI click-through
-    # (mirrors live_signals.py). rel_path matches what /view?path=... expects.
+    _persist_ui_snapshot(state, live, primary)
+    # live_cross consumes this. "patterns" is the entry-eligible set, so a
+    # disabled pattern can never reach Cross as a tradable fire either.
+    state["recent_pattern_fires"] = [
+        {"ticker": f["t"]["name"], "patterns": f["patterns"],
+         "all_detected": f["all_detected"], "ts": now_local_ts}
+        for f in pattern_fires[-50:]
+    ]
+
+    save_state(state)
+    log.close()
+
+
+def _report_open(state, live, out):
+    ec.report_open(state, live, out, "  [PAT]     ")
+
+
+def _persist_ui_snapshot(state, live, primary=()):
+    """Refresh the UI-facing fields (`ticker_paths`, `last_quotes`) from this
+    run's live quotes.
+
+    Must run on *every* exit path. The Friday and post-16:30 branches return
+    before the entry stage, and they used to call save_state() without touching
+    this — so last_run kept advancing while /live-patterns redrew whatever
+    prices the last full run had left behind. The Open positions table looked
+    live and was frozen, and tickers closed since that run lingered as orphan
+    keys in last_quotes.
+
+    Quotes are keyed on the open positions only. Prior known-good quotes are
+    preserved when this run's fetch failed or fell back to a synthetic price
+    (build_quote_snapshot re-tags those 'stale') — same rationale as
+    live_signals: never display an entry-price placeholder as 'Current'.
+
+    `primary` is the scanned universe, empty on the early-return paths — those
+    still refresh every open position's path from its insref below.
+    """
+    # ticker -> stock-page rel_path for UI click-through (mirrors
+    # live_signals.py). rel_path matches what /view?path=... expects.
     ticker_paths = state.get("ticker_paths", {}) or {}
     for t in primary:
         if t.get("folder"):
@@ -510,24 +570,9 @@ def main():
                 ticker_paths[tk] = f"Equity/SEK/{folder}"
     state["ticker_paths"] = ticker_paths
 
-    # Persist UI snapshot. Preserve prior known-good quotes when this run's
-    # fetch failed or fell back to a synthetic price — same rationale as
-    # live_signals: never display a 'stale' / entry-price placeholder as
-    # 'Current price' in the Open positions table.
     prior_quotes = state.get("last_quotes", {}) or {}
     state["last_quotes"] = ec.build_quote_snapshot(
         state["positions"].keys(), live, prior_quotes, "live-patterns")
-    state["recent_pattern_fires"] = [
-        {"ticker": f["t"]["name"], "patterns": f["patterns"], "ts": now_local_ts}
-        for f in pattern_fires[-50:]
-    ]
-
-    save_state(state)
-    log.close()
-
-
-def _report_open(state, live, out):
-    ec.report_open(state, live, out, "  [PAT]     ")
 
 
 if __name__ == "__main__":

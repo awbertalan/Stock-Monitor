@@ -1,0 +1,446 @@
+{
+  "schema": 1,
+  "_readme": "Project changelog + version ledger. `app_version` bumps on every Claude-assisted change; `strategy_versions` bump ONLY when an engine's tradeable parameters, gates or detectors change. lib/version.py is the read API; the engines stamp these onto every position, so a trade can always be traced back to the code that opened it. Entries are newest-first. Entries with source='reconstructed' were rebuilt from session notes on 2026-08-21 (before the ledger existed) and their exact dates are best-effort; source='live' entries were written at the time of the change.",
+  "app_version": "0.12.0",
+  "strategy_versions": {
+    "signals": "sig-5",
+    "patterns": "pat-3",
+    "cross": "x-2"
+  },
+  "engines": {
+    "signals": {
+      "label": "Live Signals",
+      "wallet": "live_portfolio.json",
+      "page": "/live-signals"
+    },
+    "patterns": {
+      "label": "Live Patterns",
+      "wallet": "live_patterns_portfolio.json",
+      "page": "/live-patterns"
+    },
+    "cross": {
+      "label": "Live Cross",
+      "wallet": "live_cross_portfolio.json",
+      "page": "/live-cross"
+    }
+  },
+  "strategy_history": {
+    "signals": [
+      {
+        "version": "sig-1",
+        "from": "2026-05-16",
+        "app_version": "0.1.0",
+        "params": "TP +0.5% / SL -2.0% / 5d hold",
+        "note": "Original strict-pullback entry: down 2 days + bottom 20% of 5d range + RSI<35 + ret_20d>-15%. Retired as -EV (needs 80% WR, delivers ~60%)."
+      },
+      {
+        "version": "sig-2",
+        "from": "2026-05-23",
+        "app_version": "0.2.0",
+        "params": "TP +2.0% / SL -1.0% / 7d hold",
+        "note": "Switched to the backtest-validated mean-reversion setup: DoD <= -1%, no-Friday, not-at-5d-high. Break-even WR 33.3%."
+      },
+      {
+        "version": "sig-3",
+        "from": "2026-05-25",
+        "app_version": "0.3.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold",
+        "note": "SL widened -1.0% -> -2.0% to survive opening volatility. Never re-backtested; moved break-even WR 33.3% -> 50.0%."
+      },
+      {
+        "version": "sig-4",
+        "from": "2026-06-13",
+        "app_version": "0.6.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, cooldown 1d, confluence required",
+        "note": "SL cooldown cut 7d -> 1d (same-day block only) and pattern-confluence entry gate turned on."
+      },
+      {
+        "version": "sig-5",
+        "from": "2026-08-18",
+        "app_version": "0.8.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, cooldown 1d, confluence required, STALE guard",
+        "note": "Close-settle gate fixed (5-min tolerance) restoring the EOD sweep, and positions >4d past target now book STALE at market instead of a synthetic TP/SL fill."
+      }
+    ],
+    "patterns": [
+      {
+        "version": "pat-1",
+        "from": "2026-05-25",
+        "app_version": "0.3.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, 6 bullish patterns",
+        "note": "Engine launched. Bullish Engulfing, Morning Star, Piercing Line, Three White Soldiers, Tweezer Bottom, Hammer on intraday-aggregated daily bars."
+      },
+      {
+        "version": "pat-2",
+        "from": "2026-06-13",
+        "app_version": "0.6.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, 6 bullish patterns, Hammer parity fixes",
+        "note": "Hammer detector tightened: bull-body gate, doji floor, 1.5% downtrend floor. Dry-run vetoed 5/6 historical losers while preserving the Telia winner."
+      },
+      {
+        "version": "pat-3",
+        "from": "2026-08-18",
+        "app_version": "0.8.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, 5 entry-eligible patterns, STALE guard",
+        "note": "Hammer moved to detect-only (ENTRY_DISABLED_PATTERNS) after -6,637 SEK, and the shared STALE exit guard applied."
+      }
+    ],
+    "cross": [
+      {
+        "version": "x-1",
+        "from": "2026-06-13",
+        "app_version": "0.6.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, Signals radar AND fresh Patterns fire",
+        "note": "Engine launched. Confluence-only wallet, user approves every entry; consumes recent_pattern_fires rather than detecting."
+      },
+      {
+        "version": "x-2",
+        "from": "2026-08-18",
+        "app_version": "0.8.0",
+        "params": "entries paused, exits still managed, STALE guard",
+        "note": "Entries paused after the wallet inverted Patterns' edge (-9,570 SEK, 37.5% WR). Exits, candidate computation and reporting continue."
+      }
+    ]
+  },
+  "entries": [
+    {
+      "version": "0.12.0",
+      "date": "2026-08-22",
+      "source": "live",
+      "title": "Index-range scrape runs at the configured worker count",
+      "summary": "Both scrape phases now scale off the refresh_workers setting instead of a hardcoded 8 and a sequential loop — roughly 7h04m to 3h10m on a full-range run.",
+      "changes": [
+        "run_search() takes a `workers` argument (clamped 1..16, mirroring app.MAX_REFRESH_WORKERS since both phases hit the same intradaychart endpoint that plateau was measured on); app.py passes _refresh_worker_count() so the scrape scales off the same Settings knob as Update All.",
+        "Phase 1 (index probe) thread count is no longer hardcoded at 8. Measured on the real endpoint: 123 idx/s at 8 threads vs 229 idx/s at 16, a 1.86x speedup. This phase is ~79% of a full-range run's wall clock, so it is what actually decides scrape duration.",
+        "Phase 3 (price scrape) was a fully sequential loop at ~103 ms per stock; now a ThreadPoolExecutor over the same worker count. Stubbed 60-stock benchmark: 6.22s at 1 worker, 0.83s at 8, 0.43s at 16.",
+        "Fixed out-of-range probing in the static chunking: with more threads than indices, surplus threads got ranges starting past end_index and the ones in between probed indices outside the requested range (a request for 5-7 actually probed 5 through 11 at the old 8 threads). num_threads is now capped at the span; verified across seven edge cases.",
+        "status['checked'] += 1 was an unlocked read-modify-write across every probe thread, so the progress bar undercounted; now under _counter_lock along with the phase 3 counters.",
+        "Settings copy updated — the worker count now covers scrapes too, not just Update All."
+      ],
+      "files": [
+        "lib/webController.py",
+        "app.py",
+        "web/settings.html"
+      ],
+      "strategy_bumps": [],
+      "notes": "Not done, deliberately: urlcheck and fetch_stock build a byte-identical URL, so phase 1 downloads a ~198 KB payload, keeps only the header, and phase 3 re-downloads the same bytes — about 10 GB fetched twice on a full run. Reusing them needs phases 1-3 collapsed into one write-as-you-discover pass (buffering rows for ~52k stocks would want ~10 GB of RAM), which changes the progress UI's phase model, the early-stop semantics, and writes prices that are hours stale by the end of a long run. Also measured and rejected: a lighter cmd=quote probe for phase 1 — 73 ms vs 136 ms on a hit but 86 ms vs 74 ms on a miss, and ~98.5% of a 3.5M sweep is misses, so it is latency-bound, not payload-bound. Still outstanding from the same review: run_search ignores update_filter, replaces stock_index.json instead of merging, never clears _dashboard_cache, and Stop does not interrupt phase 3."
+    },
+    {
+      "version": "0.11.1",
+      "date": "2026-08-21",
+      "source": "live",
+      "title": "Patterns page showed frozen prices on Fridays and after 16:30",
+      "summary": "live_patterns.py's two early-return branches stamped a new last_run without refreshing last_quotes, so /live-patterns polled fresh-looking JSON and redrew stale prices.",
+      "changes": [
+        "The Friday weekend-risk and post-16:30 cutoff branches called save_state() but returned before the build_quote_snapshot() block at the bottom of main(), so last_run advanced while last_quotes stayed frozen at the last full run's values. Open positions showed stale Current prices all day every Friday and every evening after 16:30 — roughly a third of market hours.",
+        "Snapshot hoisted into _persist_ui_snapshot(state, live, primary=()) and called on all three exit paths; primary defaults empty because the early-return paths have not scanned a universe, and open positions still resolve their ticker_paths from insref.",
+        "Diagnosed from an orphan last_quotes key: a ticker closed on TP at 10:29 was still in the snapshot hours later, which is only possible if the map had not been rebuilt since before it exited. The engine log carried the correct live prices the whole time.",
+        "live_signals.py and live_cross.py checked and unaffected — signals has no early return before its snapshot, and cross's market-closed branch skips save_state() entirely, so its last_run stays honest.",
+        "recent_pattern_fires deliberately left untouched on those paths: no scan ran, and live_cross ages fires out itself via PATTERN_FIRE_FRESH_HOURS."
+      ],
+      "files": [
+        "live_patterns.py"
+      ],
+      "strategy_bumps": [],
+      "notes": "No strategy bump — last_quotes and ticker_paths are UI-only. apply_exit_checks reads the in-memory `live` map, so TP/SL evaluation was always using correct prices; only the page was wrong. Fourth incident of the same shape: a gate fired, the log said so, the page kept rendering. Corollary worth generalising — a fresh last_run is not proof of fresh data."
+    },
+    {
+      "version": "0.11.0",
+      "date": "2026-08-21",
+      "source": "live",
+      "title": "Changelog page + two-tier version tracking",
+      "summary": "Adds this ledger, a /changelog page, and stamps an app + strategy version onto every trade the three engines open.",
+      "changes": [
+        "CHANGELOG.json — the ledger: app version, per-engine strategy versions, full strategy history, and one entry per change.",
+        "lib/version.py — read API over the ledger (mtime-cached), used by the engines to stamp and by app.py to serve.",
+        "All 3 engines stamp app_version + strategy_version onto each new position; apply_exit_checks carries them into closed_trades.",
+        "Backfilled strategy versions onto existing closed trades from strategy_history dates, flagged version_source='backfilled'.",
+        "/changelog page + /changelog-data endpoint; version pill on open + closed trade rows and a 'By version' panel on all 3 live pages.",
+        "Stop hook warns when code files change without a CHANGELOG.json entry.",
+        "First read of the backfilled record: pat-3 (Hammer entry-disabled) is running 83% WR / +0.88% avg / +3,697 SEK over 6 closed trades against pat-2's 39% / -0.34% / -3,762 — small n, but the first evidence the 2026-08-18 Hammer disable worked. Also isolates the outage damage: 4 of sig-4's 6 closed trades are STALE."
+      ],
+      "files": [
+        "CHANGELOG.json",
+        "lib/version.py",
+        "live_signals.py",
+        "live_patterns.py",
+        "live_cross.py",
+        "app.py",
+        "web/changelog.html",
+        "web/live_common.js",
+        "web/style.css",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html",
+        "scripts/backfill_versions.py",
+        ".claude/settings.json",
+        ".claude/hooks/changelog_guard.py",
+        "(nav link only) web/browse.html, dashboard.html, index.html, help.html, live_overview.html, ohlc_capture.html, settings.html, stock_template.html, stocksearch.html"
+      ],
+      "strategy_bumps": [],
+      "notes": "Version stamping fails soft by design — a missing or half-written CHANGELOG.json yields an empty stamp and the engines trade on unaffected. Never let a docs file gate a trade."
+    },
+    {
+      "version": "0.10.0",
+      "date": "2026-08-21",
+      "source": "reconstructed",
+      "title": "Cross pause surfaced in the UI",
+      "summary": "ENTRIES_PAUSED was invisible to the page, so 15 approvals silently queued against a paused engine.",
+      "changes": [
+        "Pause now appends to each candidate's skip_reasons so Approve renders disabled.",
+        "entries_paused / paused_since / paused_reason persisted into state; amber notice on live_cross.html.",
+        "Queued-approval tooltip corrected — it had promised the engine would buy on the next run."
+      ],
+      "files": [
+        "live_cross.py",
+        "web/live_cross.html",
+        "app.py"
+      ],
+      "strategy_bumps": []
+    },
+    {
+      "version": "0.9.0",
+      "date": "2026-08-18",
+      "source": "reconstructed",
+      "title": "Refresh performance overhaul",
+      "summary": "Parallel sweep, bulk name upserts and incremental history pulls.",
+      "changes": [
+        "Parallel ThreadPoolExecutor sweep behind a refresh_workers setting (max 16).",
+        "upsert_names_bulk replaces the per-stock 2 MB stock_names.csv rewrite.",
+        "sync_history does incremental pulls with re-adjustment detection.",
+        "Startup sweep honours update_filter; run_search no longer truncates stock_names.csv to 2 columns."
+      ],
+      "files": [
+        "app.py",
+        "lib/webScrapper.py",
+        "lib/infoScrapper.py",
+        "lib/webController.py",
+        "web/settings.html"
+      ],
+      "strategy_bumps": []
+    },
+    {
+      "version": "0.8.0",
+      "date": "2026-08-18",
+      "source": "reconstructed",
+      "title": "P0-P4 fixes — close-gate bug, health banner, STALE guard, Hammer off, Cross paused",
+      "summary": "A 6-second close-gate bug had silently killed the OHLC capture and EOD sweep for two months.",
+      "changes": [
+        "P0: feed_settled_past_close demanded a trade at >= 17:30:00, but the closing auction prints at 17:29:54 — blocked both subsystems from 2026-06-13 to 2026-08-18. Fixed with CLOSE_SETTLE_TOLERANCE = 5 min.",
+        "P1: _live_health + /live-health endpoint and a health banner on every live page, measured against the last completed session.",
+        "P2: STALE_EXIT_GRACE_DAYS = 4 in the shared apply_exit_checks; 9 outage trades relabelled, P&L left untouched so cash reconciles.",
+        "P2: one BREAKEVEN_WR = 0.50 replaces three different hard-coded thresholds, two of them stale.",
+        "P3: Hammer entry-disabled but still detected.",
+        "P4: Cross entries paused."
+      ],
+      "files": [
+        "live_signals.py",
+        "live_patterns.py",
+        "live_cross.py",
+        "app.py",
+        "web/live_common.js",
+        "web/style.css"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": "sig-4",
+          "to": "sig-5",
+          "reason": "Close-settle gate fix + STALE exit guard"
+        },
+        {
+          "engine": "patterns",
+          "from": "pat-2",
+          "to": "pat-3",
+          "reason": "Hammer entry-disabled + STALE exit guard"
+        },
+        {
+          "engine": "cross",
+          "from": "x-1",
+          "to": "x-2",
+          "reason": "Entries paused + STALE exit guard"
+        }
+      ]
+    },
+    {
+      "version": "0.7.0",
+      "date": "2026-07-31",
+      "source": "reconstructed",
+      "title": "Shared engine layer + widgets refactor (commit 51acb24)",
+      "summary": "Consolidated the three engines' duplicated helpers and grew the universe to the full Nordic name list.",
+      "changes": [
+        "lib/engine_common.py — shared state I/O (atomic writes), local-clock date, entry gates, sizing, log rotation.",
+        "web/live_widget.js floating summary widget; lib/tradesScrapper.py.",
+        "stock_names.csv grown to the full ~59k Nordic universe.",
+        "New /calendar, /trades and live-cross endpoints."
+      ],
+      "files": [
+        "lib/engine_common.py",
+        "lib/tradesScrapper.py",
+        "web/live_widget.js",
+        "stock_names.csv",
+        "app.py"
+      ],
+      "strategy_bumps": []
+    },
+    {
+      "version": "0.6.0",
+      "date": "2026-06-13",
+      "source": "reconstructed",
+      "title": "Live Cross launch, Hammer parity, OHLC trigger rewrite, 5-feature batch",
+      "summary": "Biggest single day of change — a third wallet, a detector fix, and the OHLC capture trigger finally firing.",
+      "changes": [
+        "Live Cross engine launched: third paper wallet at /live-cross, user-approves confluence entries.",
+        "Hammer detector parity fixes: bull-body gate, doji floor, 1.5% downtrend floor.",
+        "OHLC capture trigger rewritten — maybe_capture_eod_ohlc + LaunchAgent StartCalendarInterval Mon-Fri 17:50 + pmset wakepoweron. Backfill seeded 4,724 bars.",
+        "TP-fire diagnostic: not a bug — the user clips manually at +0.75% before TP fires.",
+        "SL-cooldown visibility, pattern confluence gate (CONFLUENCE_REQUIRED = True), and the /live Overview tab with an SVG equity curve summing all 3 wallets.",
+        "SL cooldown reduced 7d -> same-day block only."
+      ],
+      "files": [
+        "live_cross.py",
+        "live_patterns.py",
+        "live_signals.py",
+        "lib/ohlc_capture.py",
+        "app.py",
+        "web/live_overview.html",
+        "web/live_cross.html"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": "sig-3",
+          "to": "sig-4",
+          "reason": "SL cooldown 7d -> 1d + confluence entry gate"
+        },
+        {
+          "engine": "patterns",
+          "from": "pat-1",
+          "to": "pat-2",
+          "reason": "Hammer detector parity fixes"
+        },
+        {
+          "engine": "cross",
+          "from": null,
+          "to": "x-1",
+          "reason": "Engine launched"
+        }
+      ]
+    },
+    {
+      "version": "0.5.0",
+      "date": "2026-05-27",
+      "source": "reconstructed",
+      "title": "Calendar event cache + filter smoke test",
+      "summary": "6-month large-cap backtest: a +/-7d calendar filter lifts WR 2.7pp and avg return 11bp.",
+      "changes": [
+        "lib/calendar_cache.py + state/events_calendar.json.",
+        "Smoke test validated the strategy at +0.49%/trade baseline; filter strongest in earnings season.",
+        "Volvo / Lundin / Autoliv flagged as over-blocked — asymmetric window candidate."
+      ],
+      "files": [
+        "lib/calendar_cache.py",
+        "scripts/smoke_test_calendar.py",
+        "app.py"
+      ],
+      "strategy_bumps": []
+    },
+    {
+      "version": "0.4.0",
+      "date": "2026-05-25",
+      "source": "reconstructed",
+      "title": "Project folder reorganisation",
+      "summary": "Entry points at root, support modules in lib/, web assets in web/, runtime state in state/, logs in logs/.",
+      "changes": [
+        "Support modules moved under lib/; new entry points must inject lib/ into sys.path.",
+        "Runtime state files moved to state/ and untracked."
+      ],
+      "files": [
+        "app.py",
+        "live_signals.py",
+        "live_patterns.py",
+        ".gitignore"
+      ],
+      "strategy_bumps": []
+    },
+    {
+      "version": "0.3.0",
+      "date": "2026-05-25",
+      "source": "reconstructed",
+      "title": "Live Patterns engine + stop widened to -2%",
+      "summary": "Second wallet launched, and the stop was widened to survive opening volatility — the single most consequential change in the project's history.",
+      "changes": [
+        "live_patterns.py launched: candlestick-pattern entries on intraday-aggregated daily bars, separate 500k SEK wallet at /live-patterns.",
+        "SL widened -1.0% -> -2.0% across all engines. Never re-backtested. Break-even WR moved 33.3% -> 50.0%, which the 2026-08-18 review identified as the root cause of all three wallets being -EV.",
+        "OHLC capture under ohlc/ started (trigger was broken until 2026-06-13 — captured 0 bars)."
+      ],
+      "files": [
+        "live_patterns.py",
+        "live_signals.py",
+        "lib/ohlc_capture.py",
+        "web/live_patterns.html"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": "sig-2",
+          "to": "sig-3",
+          "reason": "SL widened -1.0% -> -2.0%"
+        },
+        {
+          "engine": "patterns",
+          "from": null,
+          "to": "pat-1",
+          "reason": "Engine launched"
+        }
+      ]
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-05-23",
+      "source": "reconstructed",
+      "title": "Switch to the validated +2/-1/7d strategy",
+      "summary": "The deployed 0.5%/-2%/5d pullback strategy was confirmed -EV in backtest and retired.",
+      "changes": [
+        "12- and 18-month backtests: 0.5% TP needs 80% WR, entry filter delivers ~60%. -0.36% to -0.44% per trade.",
+        "OMXS30 smoketest same day: 4,678 LIVE trades = -0.29% EV/trade vs 12,262 VALIDATED trades = +0.28%.",
+        "Engine switched to TP +2.0% / SL -1.0% / 7d hold, DoD <= -1%, no-Friday, not-at-5d-high."
+      ],
+      "files": [
+        "live_signals.py"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": "sig-1",
+          "to": "sig-2",
+          "reason": "Retired -EV 0.5%/-2%/5d for the validated +2/-1/7d setup"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-05-16",
+      "source": "reconstructed",
+      "title": "Live Signals paper-trade engine",
+      "summary": "First paper-trade wallet: 500k SEK, mean-reversion entries, 15-min LaunchAgent cadence.",
+      "changes": [
+        "live_signals.py with a 500k SEK paper wallet at /live-signals.",
+        "Strict-pullback entry: down 2 days + bottom 20% of 5d range + RSI<35 + ret_20d>-15%. TP +0.5% / SL -2.0% / 5d hold."
+      ],
+      "files": [
+        "live_signals.py",
+        "app.py",
+        "web/live_signals.html"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": null,
+          "to": "sig-1",
+          "reason": "Engine launched"
+        }
+      ]
+    }
+  ]
+}

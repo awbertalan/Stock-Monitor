@@ -212,6 +212,7 @@ nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
 .down { color: #ea3943; }
 .neutral { color: #0052cc; }
 .pill { display: inline-block; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; }
+.tier-pill { background: var(--surface-alt); color: var(--text-muted); border: 1px solid var(--border); }
 .section-title { font-size: 11px; font-weight: bold; color: #8a94a6; text-transform: uppercase; letter-spacing: 0.5px; margin: 22px 0 8px; }
 table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .sig-table th { text-align: left; padding: 9px 12px; font-size: 10px; font-weight: bold; color: #8a94a6; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid #e8ecf5; background: #fafbfd; white-space: nowrap; }
@@ -284,3 +285,41 @@ table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .stat-row { flex-direction: column; }
   .stat-card { min-width: 0 !important; }
 }
+
+/* ── live engine health banner ──────────────────────────────────────────────
+   Injected by live_common.js on every live page. Two multi-week outages (the
+   engines dark 2026-06-16..07-28, and the EOD sweep + OHLC capture blocked by
+   a 6-second clock bug 2026-06-13..08-18) both ran unnoticed because nothing
+   in the UI ever said so. */
+.health-banner {
+  border: 1px solid; border-radius: var(--radius-lg);
+  padding: 12px 16px; margin-bottom: 20px;
+  font-size: 13px; line-height: 1.5;
+}
+.health-banner.critical { background: var(--negative-soft); border-color: var(--negative); color: var(--negative); }
+.health-banner.warn     { background: var(--warning-soft);  border-color: var(--warning);  color: var(--warning); }
+.health-banner .hb-title { font-weight: 600; margin-bottom: 6px; }
+.health-banner ul { margin: 0; padding-left: 18px; }
+.health-banner li { margin: 2px 0; }
+.health-banner .hb-name { font-weight: 600; }
+
+/* ── version pills ────────────────────────────────────────────────────────────
+   Two tiers of version live in CHANGELOG.json (see lib/version.py): the app
+   version bumps on every change, the strategy version only when an engine's
+   tradeable parameters change. Trades carry both; the pill shows the strategy
+   one, because that is the only tier it makes sense to group performance by.
+   A dashed border marks a version *inferred* from entry date by
+   scripts/backfill_versions.py rather than stamped live by the engine — those
+   boundaries came from session notes written after the fact, so a trade entered
+   on a boundary date could belong to either side. */
+.ver-pill {
+  background: var(--surface-alt); color: var(--text-subtle);
+  border: 1px solid var(--border-input);
+  text-transform: none; letter-spacing: 0.2px; font-family: monospace;
+}
+.ver-pill.backfilled { border-style: dashed; color: var(--text-muted); }
+.ver-pill.current    { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.ver-pill.none       { color: var(--text-muted); border-style: dotted; }
+.ver-excl { color: var(--text-muted); font-size: 10px; margin-left: 3px; }
+.ver-note { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.panel-note { font-weight: normal; text-transform: none; letter-spacing: 0; color: var(--text-muted); }
