@@ -45,7 +45,7 @@
 </head>
 <body>
   <h2>Live — Overview</h2>
-  <p class="subtitle">Combined view across all three paper-trade engines. Each engine has its own 500k SEK wallet; this page sums them.</p>
+  <p class="subtitle">Combined view across all three paper-trade engines. Each engine has its own wallet; this page sums them.</p>
   <nav>
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
@@ -70,7 +70,7 @@
     <div class="stat-card">
       <div class="stat-label">Combined equity</div>
       <div class="stat-value" id="combined-equity">—</div>
-      <div class="stat-sub" id="combined-equity-sub">of 1,500k start</div>
+      <div class="stat-sub" id="combined-equity-sub">—</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Combined cash</div>
@@ -144,7 +144,8 @@
       const scored = scoredTrades(closed);
       const wins = scored.filter(t => (t.pnl_sek || 0) > 0).length;
       const wr = scored.length ? wins / scored.length : null;
-      return { label, link, color, cash, openVal, equity, realized, wins,
+      const start = p.wallet_start || 500000;
+      return { label, link, color, cash, openVal, equity, realized, wins, start,
                losses: scored.length - wins, total: scored.length, wr,
                stale: closed.length - scored.length,
                openCount: Object.keys(positions).length, closed };
@@ -164,11 +165,13 @@
       const combinedTrades   = all.reduce((s, e) => s + e.total, 0);
       const combinedWins     = all.reduce((s, e) => s + e.wins, 0);
       const combinedWR       = combinedTrades ? combinedWins / combinedTrades : null;
-      const start = 1_500_000;
+      // Sum of what each wallet was actually funded with, so a top-up on one
+      // engine moves the combined baseline instead of faking a gain.
+      const start = all.reduce((s, e) => s + e.start, 0);
 
       document.getElementById('combined-equity').textContent = fmt(combinedEquity, 0) + ' SEK';
       document.getElementById('combined-equity-sub').textContent =
-        `${((combinedEquity / start - 1) * 100).toFixed(2)}% vs ${(start/1000).toFixed(0)}k start`;
+        `${((combinedEquity / start - 1) * 100).toFixed(2)}% vs ${(start/1000).toFixed(0)}k contributed`;
       document.getElementById('combined-cash').textContent = fmt(combinedCash, 0) + ' SEK';
       document.getElementById('combined-cash-sub').textContent = `${fmt(combinedDeployed, 0)} SEK deployed`;
       document.getElementById('combined-open').textContent = combinedOpen;
@@ -198,7 +201,7 @@
             <a href="${e.link}" style="margin-left:auto;">open →</a>
           </div>
           <div class="engine-line"><span class="lbl">Equity</span>
-            <span class="val">${fmt(e.equity, 0)} SEK <span class="stat-sub">(${((e.equity/500000-1)*100).toFixed(2)}%)</span></span></div>
+            <span class="val">${fmt(e.equity, 0)} SEK <span class="stat-sub">(${((e.equity/e.start-1)*100).toFixed(2)}%)</span></span></div>
           <div class="engine-line"><span class="lbl">Cash</span>
             <span class="val">${fmt(e.cash, 0)} SEK</span></div>
           <div class="engine-line"><span class="lbl">Open</span>

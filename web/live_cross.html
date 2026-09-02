@@ -51,7 +51,7 @@
 </head>
 <body>
   <h2>Live Cross</h2>
-  <p class="subtitle">Confluence engine — surfaces tickers that BOTH the validated Signals universe AND a Live Patterns fire are seeing right now. <strong>User approves every entry.</strong> Same +2% / −2% / 7d configuration · separate 500k SEK wallet.</p>
+  <p class="subtitle">Confluence engine — surfaces tickers that BOTH the validated Signals universe AND a Live Patterns fire are seeing right now. <strong>User approves every entry.</strong> Same +2% / −2% / 7d configuration · separate wallet.</p>
   <nav>
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
@@ -76,7 +76,7 @@
     <div class="stat-card">
       <div class="stat-label">Equity</div>
       <div class="stat-value" id="stat-equity">—</div>
-      <div class="stat-sub" id="stat-equity-sub">total of 500k</div>
+      <div class="stat-sub" id="stat-equity-sub">—</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Cash</div>
@@ -197,6 +197,7 @@
 
   <script src="/live_common.js"></script>
   <script>
+    setBreakeven(0.020, -0.020);   // this engine's TP / SL pair
     let forceSellSet = new Set();
     let approvedSet  = new Set();
     let tickerPaths  = {};
@@ -279,9 +280,12 @@
       const wins     = scored.filter(t => (t.pnl_sek || 0) > 0).length;
       const wr       = scored.length ? wins / scored.length : null;
 
+      // Contributed capital, not the opening balance — a top-up must not read
+      // as profit. Falls back for wallets written before deposits existed.
+      const walletStart = p.wallet_start || 500000;
       document.getElementById('stat-equity').textContent = fmt(equity, 0) + ' SEK';
       document.getElementById('stat-equity-sub').textContent =
-        `${((equity / 500000 - 1) * 100).toFixed(2)}% vs 500k start`;
+        `${((equity / walletStart - 1) * 100).toFixed(2)}% vs ${(walletStart/1000).toFixed(0)}k contributed`;
       document.getElementById('stat-cash').textContent = fmt(cash, 0) + ' SEK';
       document.getElementById('stat-cash-sub').textContent =
         `${Object.keys(positions).length} live, ${closed.length} closed`;

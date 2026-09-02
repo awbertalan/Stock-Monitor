@@ -173,7 +173,10 @@
     const combinedWins = all.reduce((a, e) => a + e.wins, 0);
     const wr = combinedTrades ? combinedWins / combinedTrades : null;
     const td = todayPnL([s.closed, p.closed, x.closed]);
-    const startCapital = 1_500_000;
+    // Contributed capital across the three wallets — read from each state file
+    // so a deposit moves the baseline rather than showing up as a gain.
+    const startCapital = [d.signals, d.patterns, d.cross]
+      .reduce((a, w) => a + ((w && w.wallet_start) || 500000), 0);
     const equityPct = (combinedEquity / startCapital - 1) * 100;
 
     const body = document.getElementById('live-widget-body');
@@ -182,7 +185,7 @@
       <div class="lw-block">
         <div class="lw-lbl">Equity</div>
         <div class="lw-val">${fmt(combinedEquity, 0)} <span class="lw-unit">SEK</span></div>
-        <div class="lw-sub ${cls(equityPct)}">${equityPct >= 0 ? '+' : ''}${equityPct.toFixed(2)}% vs 1500k</div>
+        <div class="lw-sub ${cls(equityPct)}">${equityPct >= 0 ? '+' : ''}${equityPct.toFixed(2)}% vs ${(startCapital/1000).toFixed(0)}k</div>
       </div>
       <div class="lw-block">
         <div class="lw-lbl">Today's P&amp;L</div>

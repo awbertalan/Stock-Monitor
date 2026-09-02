@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "_readme": "Project changelog + version ledger. `app_version` bumps on every Claude-assisted change; `strategy_versions` bump ONLY when an engine's tradeable parameters, gates or detectors change. lib/version.py is the read API; the engines stamp these onto every position, so a trade can always be traced back to the code that opened it. Entries are newest-first. Entries with source='reconstructed' were rebuilt from session notes on 2026-08-21 (before the ledger existed) and their exact dates are best-effort; source='live' entries were written at the time of the change.",
-  "app_version": "0.12.0",
+  "app_version": "0.16.0",
   "strategy_versions": {
-    "signals": "sig-5",
-    "patterns": "pat-3",
-    "cross": "x-2"
+    "signals": "sig-9",
+    "patterns": "pat-4",
+    "cross": "x-3"
   },
   "engines": {
     "signals": {
@@ -51,15 +51,43 @@
         "version": "sig-4",
         "from": "2026-06-13",
         "app_version": "0.6.0",
-        "params": "TP +2.0% / SL -2.0% / 7d hold, cooldown 1d, confluence required",
-        "note": "SL cooldown cut 7d -> 1d (same-day block only) and pattern-confluence entry gate turned on."
+        "params": "TP +2.0% / SL -2.0% / 7d hold, cooldown 1d",
+        "note": "SL cooldown cut 7d -> 1d (same-day block only). CORRECTED 2026-08-24: this row previously also claimed a pattern-confluence entry gate. live_signals.py has never contained one — `git log --all -S confluence -- live_signals.py` is empty across every commit. CONFLUENCE_REQUIRED exists only in live_patterns.py (added in 51acb24); requiring a Patterns fire alongside a Signals candidate is live_cross's entire job, not something Signals ever did. The claim came from the 2026-08-21 ledger reconstruction conflating the engines."
       },
       {
         "version": "sig-5",
         "from": "2026-08-18",
         "app_version": "0.8.0",
-        "params": "TP +2.0% / SL -2.0% / 7d hold, cooldown 1d, confluence required, STALE guard",
-        "note": "Close-settle gate fixed (5-min tolerance) restoring the EOD sweep, and positions >4d past target now book STALE at market instead of a synthetic TP/SL fill."
+        "params": "TP +2.0% / SL -2.0% / 7d hold, cooldown 1d, STALE guard",
+        "note": "Close-settle gate fixed (5-min tolerance) restoring the EOD sweep, and positions >4d past target now book STALE at market instead of a synthetic TP/SL fill. CORRECTED 2026-08-24: 'confluence required' removed from params — see sig-4."
+      },
+      {
+        "version": "sig-6",
+        "from": "2026-08-24",
+        "app_version": "0.13.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, cooldown 1d, STALE guard, AUTO-ENTRY at ask, no entry after 16:30",
+        "note": "Primary signals auto-enter at ask again, reverting the 2026-05-27 manual-only flow under which the wallet held zero open positions. Added a 16:30 late-entry cutoff to match patterns/cross — the manual flow never needed one because good-for-the-day limit orders expired at the close. Entry filter itself (DoD <= -1%, not-at-5d-high, no-Friday, ret_20d > -15%) and TP/SL/hold are unchanged; what changed is that clearing the filter now buys instead of surfacing."
+      },
+      {
+        "version": "sig-7",
+        "from": "2026-08-24",
+        "app_version": "0.14.0",
+        "params": "TP +2.0% / SL -1.0% / 7d hold, cooldown 1d, STALE guard, AUTO-ENTRY at ask, no entry after 16:30",
+        "note": "Stop restored -2.0% -> -1.0%, back to the backtested pair (40.9% WR, +72 SEK/trade, profitable 10 of 11 years). The -2.0% stop ran from 2026-05-25, was widened to survive opening volatility, was never re-backtested, and moved break-even WR from 33.3% to 50.0%; the engine delivered 43.8% (7W/9L over 16 scored) and -388 SEK/trade against it. Signals only — Patterns (pat-3) and Cross (x-2) still run -2.0%, which keeps Patterns as a control group on the same TP/hold with different entry logic."
+      },
+      {
+        "version": "sig-8",
+        "from": "2026-08-24",
+        "app_version": "0.15.0",
+        "params": "TP +2.0% / SL -1.0% / 7d hold, cooldown 1d, STALE guard, AUTO-ENTRY at ask, no entry after 16:30, liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
+        "note": "Two new entry gates. Liquidity: a position may not exceed 5% of the name's median daily volume (from ohlc/), falling back to today's cumulative volume when no history exists; 13 of the 158-name universe now fail it, all A/D-class or genuinely thin listings. Cross-wallet dedupe: a company stem held in the Patterns or Cross wallet is no longer buyable here."
+      },
+      {
+        "version": "sig-9",
+        "from": "2026-08-31",
+        "app_version": "0.16.0",
+        "params": "TP +2.0% / SL -1.0% / 7d hold, cooldown 1d, STALE guard, CLOSE-CONFIRMED ENTRY (one post-close pass, filled at the official close), liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
+        "note": "Entries move off the intraday tick and onto the confirmed close. Measured by replaying this exact filter over 64 entry days of minute data (2026-04-30..2026-08-20), varying only the execution regime: close entry + close exit n=2346 46.6% WR +0.372%/trade; close entry + intraday exit n=2346 43.5% WR +0.301%; intraday entry + intraday exit (sig-8) n=4352 40.2% WR +0.202%. Entering intraday nearly doubles the trade count by taking names that dip 1% and recover before the close - trades the backtest never saw - and costs ~45% of the per-trade edge. Chosen because the wallet is slot-constrained rather than signal-constrained (6 open against a 35k floor), so per-trade quality outranks signal count. NOT a fix for the sig-8 result: at 7W/16L against a true 40.2%, P(<=7 wins in 23) = 23%, i.e. ordinary variance - roughly 200 trades are needed before the win rate separates from the 33.3% break-even at all. Carries a mild lookahead (the close both triggers the entry and sets the fill), the same assumption the arm-B figure was measured under; the real-world equivalent is a closing-auction order."
       }
     ],
     "patterns": [
@@ -83,6 +111,13 @@
         "app_version": "0.8.0",
         "params": "TP +2.0% / SL -2.0% / 7d hold, 5 entry-eligible patterns, STALE guard",
         "note": "Hammer moved to detect-only (ENTRY_DISABLED_PATTERNS) after -6,637 SEK, and the shared STALE exit guard applied."
+      },
+      {
+        "version": "pat-4",
+        "from": "2026-08-24",
+        "app_version": "0.15.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, 5 entry-eligible patterns, STALE guard, liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
+        "note": "Same two gates as sig-8. Motivated by this engine's 2026-08-24 Electrolux A fill: 2,380 shares against a 4,460-share day, 53% of all volume, on a quote that never moved off the fill price."
       }
     ],
     "cross": [
@@ -99,10 +134,204 @@
         "app_version": "0.8.0",
         "params": "entries paused, exits still managed, STALE guard",
         "note": "Entries paused after the wallet inverted Patterns' edge (-9,570 SEK, 37.5% WR). Exits, candidate computation and reporting continue."
+      },
+      {
+        "version": "x-3",
+        "from": "2026-08-24",
+        "app_version": "0.15.0",
+        "params": "entries paused, exits still managed, STALE guard, liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
+        "note": "Same two gates as sig-8, surfaced in each candidate's skip_reasons so the Approve control renders disabled. Bites hardest here: every Cross candidate is by construction a name both upstream engines like, so it is above-average likely to already be held by one of them."
       }
     ]
   },
   "entries": [
+    {
+      "version": "0.16.0",
+      "date": "2026-08-31",
+      "source": "live",
+      "title": "Close-confirmed entry for Signals, and a sector tag on every stock",
+      "summary": "Signals stops buying on the first intraday tick that dips 1% and instead fills once per day at the confirmed close (sig-9). Separately, stock_names.csv gains a sector column so a correlated book is visible in the log and on the page - informational only, nothing gates on it.",
+      "files": [
+        "live_signals.py",
+        "lib/engine_common.py",
+        "lib/webScrapper.py",
+        "app.py",
+        "web/live_signals.html",
+        "web/live_common.js",
+        "web/style.css",
+        "scripts/tag_sectors.py"
+      ],
+      "strategy_bumps": [
+        "signals: sig-8 -> sig-9 (close-confirmed entry)"
+      ],
+      "changes": [
+        "live_signals.py: ENTRY_AT_CLOSE + close_confirmed_entry_ready(). The post-close launchd tick now falls THROUGH into the ordinary scan instead of returning, so entries run once per day against closing prices. Gated on last_ohlc_capture_date rather than a wall-clock window - capture only stamps that date after probe_data_lag() shows the feed past 17:30, and it fires on any post-close tick. A fixed 17:20-17:30 window was rejected: on 2026-08-31 zero runs landed in it (Mac asleep 16:12-18:04), so that design would have skipped the day's entries silently.",
+        "live_signals.py: the pass fills at the confirmed close, not the ask. Caught in the first dry run - BONESUPPORT filled at its 220.20 ask against a 218.60 close, booking an instant -0.73% that the arm-B measurement never assumed. Intraday keeps the ask, which is a real executable offer. fill_type now records 'close' vs 'auto'.",
+        "live_signals.py: an intraday run no longer buys at all; candidates surface as pending ('awaiting close confirmation') so the page still shows what is building during the session. last_entry_scan_date makes the pass once-per-day and is stamped at the very end, so a crash midway retries the whole pass rather than losing the day. entry_gate persists {open, reason} every run - a day with no entries always says why instead of looking like 'no signals'.",
+        "stock_names.csv: appended columns 4 (sector_id) and 5 (sector_name), backfilled for all 58,976 rows by scripts/tag_sectors.py. 1,980 rows carry a sector; the 158-name tradable universe is at 100% coverage. Uses the feed's numeric sector/sectorname pair, NOT sectorl3name - L3 splits Fabege ('Kommersiella Fastigheter'), Wihlborgs ('Kontor') and Pandox ('Hotell & Resort') into three unrelated-looking sectors, while sectorname puts all three in 'Fastigheter'.",
+        "live_signals.py + app.py: the cap tier is now read from row[3], never row[-1]. Both read the LAST column, so appending sector columns would have matched a sector name against the tier whitelist and silently emptied the universe for all three engines (build_universe is shared via live_patterns/live_cross).",
+        "lib/webScrapper.py: _read_names_csv/_write_names_csv/_merge_name carry the sector columns through, so an ordinary refresh sweep cannot wipe them; new upsert_sectors_bulk() writes only columns 4-5 and ignores insrefs not already in the file.",
+        "lib/webScrapper.py: _write_names_csv no longer swallows write failures. It printed nothing and returned normally on error, so callers reported success ('1,980 written') against an unchanged file - indistinguishable from a working write until something much later read the columns back and found them gone.",
+        "lib/engine_common.py: sector_map() (mtime-cached, keyed by display name, mirrors app._live_tier_map) and sector_concentration() grouping positions by sector with SEK exposure.",
+        "app.py: /live-sectors serves the map, mirroring /live-tiers.",
+        "web: Sector column and concentration bars under Open positions on /live-signals; sectorPill/sectorConcentration in live_common.js mirror the Python helper so page and log agree; .sector-pill and .conc-* tokens in style.css. The sector pill is not uppercased - the names are full Swedish phrases that turn into an unreadable block at 10px."
+      ],
+      "notes": "Trigger: on 2026-08-31, 16 of the 17 real-estate names in the universe fell together (mean -1.71% against -0.63% for everything else) and four of the day's six exits were property, 4,199 of the 5,586 SEK lost. Nothing in the project stored a sector - sectorl3name was fetched per-quote for the web UI and discarded, and the scraper's 'Instrumenttype/Classification Sector/' tree is empty. The tag is deliberately informational: across all 151 closed trades real estate is the BEST segment (17 trades, 52.9% WR, +137/trade) against everything else (134 trades, 46.3% WR, -110/trade), so a concentration cap would be cutting into the strongest sample on the book. Decide that on evidence the tag now makes it possible to collect. Also note the changeover guard: last_entry_scan_date was stamped to 2026-08-31 by hand so the new pass could not retroactively re-trade a day already traded intraday under sig-8. REQUIRES AN app.py RESTART - the long-running server holds the pre-change 4-column CSV writer and its 60s refresh thread wipes the sector columns until it is restarted."
+    },
+    {
+      "version": "0.15.1",
+      "date": "2026-08-31",
+      "source": "live",
+      "title": "Live Signals page adopts the section-card layout used by Patterns",
+      "summary": "The Signals page was the last live page still drawing bare .section-title headings above flat .table-wrap boxes with its own hard-coded palette. Every block is now a .section card — title, subtitle and table inside one bordered surface — styled from the style.css tokens, so Signals, Patterns and Cross read as one app.",
+      "files": [
+        "web/live_signals.html"
+      ],
+      "strategy_bumps": [],
+      "changes": [
+        "web/live_signals.html: replaced .table-wrap (10px radius, no header inside) with the shared .section card (--radius-lg, 18px 22px padding, 18px gap) that live_patterns.html and live_cross.html already use. Each section-title and its explanatory paragraph moved inside the card; .approved-summary was dropped in favour of the shared .section-subtitle, and the long '— approve to trade' style suffixes are now .panel-note spans, matching Patterns' 'Blocked this run' heading.",
+        "Palette: every hard-coded hex in the page's <style> block (#f0f3fa, #1a1f36, #8a94a6, #e8ecf5, #0052cc, #1a8042, #b32a36 …) now reads from the :root tokens. The approve button and the limit-price input adopt live_cross.html's token-based definitions. Only the deep-pullback purple (#f3effe/#7a4dcc), which has no token, stays literal.",
+        "Analytics: .equity-card and the four .analytics-panel boxes became .section cards, their .panel-title became .section-title, and their bare <table>s became .sig-table so the breakdowns match the 'By version' table on the Patterns page. .analytics-grid now only controls the 2-up layout and uses align-items:start so the short 'By conviction' card no longer stretches to the height of 'By ticker'. The floating 'Equity curve' and 'Performance breakdown' headings are gone — the titles live inside the cards they label, which also fixes the orphaned headings that stayed on screen while renderAnalytics() hid their content on a wallet with no closed trades.",
+        "The Run now / market / lag / SPX toolbar and the Latest run log are card-wrapped too, and the pagination footers moved inside their table's card (with flex-wrap so a narrow card wraps them instead of widening the page).",
+        "Tables are now inside .section, so style.css's mobile rule that makes '.section table' horizontally scrollable finally applies to this page — .table-wrap was never in that selector list."
+      ],
+      "notes": "Presentation only: no strategy bump, no engine or endpoint change, and no JavaScript was touched. Every element id the page's render functions look up (equity-card, analytics-grid, approved-summary, forced-summary, cooldown-summary, the pager ids) is unchanged; only #cooldown-wrap was removed, and nothing referenced it. Note that feedback-page-design-standard names live_signals.html as the canonical visual reference — after this change the canonical example of a content section is the .section card as built on live_patterns.html."
+    },
+    {
+      "version": "0.15.0",
+      "date": "2026-08-24",
+      "source": "live",
+      "title": "Liquidity gate, cross-wallet dedupe, and a stop-retighten tool",
+      "summary": "Three fixes from the 2026-08-24 trade audit: positions can no longer exceed 5% of a name's median daily volume, a company held in one wallet is no longer buyable in another, and a script brings already-open positions onto their engine's current SL_PCT without booking synthetic fills.",
+      "changes": [
+        "lib/engine_common.py: new liquidity layer. median_daily_volume() reads ohlc/{insref}_OHLC.csv, counting only bars with volume > 0 (the 2026-06-13 backfill wrote volume=0 for all ~4,700 of its bars) and taking the median, not the mean, so one block trade cannot certify a dead ticker as liquid — Electrolux A printed 463,867 shares on 2026-08-19 against a ~4,000-share norm. liquidity_verdict() converts that into a SEK cap at MAX_PARTICIPATION = 5%; apply_liquidity_cap() folds it into each engine's own size cap so a mid-liquidity name takes a smaller position rather than being rejected outright.",
+        "Threshold evidence: 5% clears every entry the three engines have ever taken with 3.7x headroom (worst genuine trade is Atrium Ljungberg B at 1.34% of its median day on 2026-08-24) while rejecting the Electrolux A fill at 60.3%. Across the 158-name universe it blocks 13 and caps zero: Corem A, Tele2 A, Electrolux A, Sweco A, Stora Enso A, NCC A, Kinnevik A, Arion Bank SDB, Sagax A, Husqvarna A, Fenix Outdoor B, Tieto, Fastpartner D.",
+        "Fallback for the 240-name watchlist, which has no captured OHLC history: the quote's `quantity` field is the day's cumulative share volume (verified against the EOD capture — Electrolux B quantity=2,738,744 equals its 2026-08-24 OHLC volume), and the cap becomes 100% of it rather than 5%, because intraday volume is a partial day and 5% of it at 09:30 would reject the entire universe. 'You may not buy more shares than have traded all session' is weaker but true at any hour, and still stops the Electrolux A case. live_signals.get_live() now carries `quantity`; it was already in infoScrapper's _QUOTE_FIELDS, so this costs no extra API call.",
+        "No volume data at all leaves cap_sek = None and the engines must not block — treating absence as illiquidity would silently halt half of Signals, which is the failure shape this project keeps hitting.",
+        "lib/engine_common.py: foreign_held_stems() + sibling_wallets() give each engine a view of the other two books, collapsed to the company stem. 2026-08-24 closed with Electrolux B in Signals and Electrolux A in Patterns (140k of one company) and Securitas B in both Patterns and Cross. Signals had already rejected Electrolux A itself as a \"duplicate of held 'Electrolux'\" — it simply could not see the other wallets. Fails soft: an unreadable sibling contributes nothing rather than raising.",
+        "Wired into all three engines behind a per-engine CROSS_WALLET_DEDUPE flag, including live_signals' limit-order fill path (a resting order on a stem another wallet has since bought is cancelled). live_cross puts both gates into each candidate's skip_reasons so the Approve button renders disabled rather than enabled-and-lying.",
+        "web/live_patterns.html: new 'Blocked this run' panel, fed by new state[\"last_skipped\"] and state[\"last_entry_gate\"]. This engine's gate decisions previously existed only in logs/live_patterns.log — the page rendered a healthy wallet while the engine rejected every fire. Both fields are written inside _persist_ui_snapshot(), not at the entry stage, because the Friday and post-16:30 branches never reach that stage: leaving the list alone there would republish the previous run's rejections under a fresh last_run, the same stale-behind-a-fresh-timestamp trap that hid frozen prices on this page for weeks. last_entry_gate names the engine-level reason, so an empty list can never be misread as 'every fire was actionable'.",
+        "scripts/retighten_stops.py: brings already-open positions onto their engine's current SL_PCT. Dry-run by default, backs up to state/backups/ before writing, and refuses to write while an engine run is in flight (write_json_atomic prevents torn writes, not lost updates). Holds no parameters of its own — each target comes from the engine module's own SL_PCT, so it only acts where a wallet has drifted from the code it runs under.",
+        "live_signals.apply_exit_checks: a stop retightened below where the market already sits would fill at the stop price on the next run — a better-than-market exit that never existed, the same synthetic-fill problem STALE_EXIT_GRACE_DAYS was added to avoid. Positions marked sl_fill_at_market fill at the real market price instead, and the marker clears itself as soon as the position trades back above the new stop. So the tool never forces an exit: it sets the correct stop and lets the next session decide."
+      ],
+      "files": [
+        "lib/engine_common.py",
+        "live_signals.py",
+        "live_patterns.py",
+        "live_cross.py",
+        "web/live_patterns.html",
+        "scripts/retighten_stops.py"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": "sig-7",
+          "to": "sig-8",
+          "why": "Two new entry gates: 5%-of-median-volume liquidity cap and cross-wallet stem dedupe. TP, SL and hold period unchanged."
+        },
+        {
+          "engine": "patterns",
+          "from": "pat-3",
+          "to": "pat-4",
+          "why": "Same two entry gates. TP, SL, hold period and the pattern set are unchanged."
+        },
+        {
+          "engine": "cross",
+          "from": "x-2",
+          "to": "x-3",
+          "why": "Same two entry gates, surfaced in candidate skip_reasons. Entries remain paused."
+        }
+      ],
+      "notes": "The cross-wallet dedupe deliberately couples the three wallets: a Patterns entry now depends on what Signals happens to hold, so they are no longer independent strategy samples and the A/B comparison they were built for is weakened. Accepted because the aggregate book is one pot of money; CROSS_WALLET_DEDUPE = False in any engine restores independence. Separately, OHLC capture still covers only the large-cap universe, so the 240-name watchlist relies on the weaker intraday fallback until capture is extended."
+    },
+    {
+      "version": "0.14.0",
+      "date": "2026-08-24",
+      "source": "live",
+      "title": "Signals stop restored to the backtested -1.0%",
+      "summary": "Reverts the un-backtested 2026-05-25 stop widening, taking break-even WR from 50.0% back to 33.3% on Live Signals only.",
+      "changes": [
+        "live_signals.py SL_PCT -0.020 -> -0.010. TP, hold period and every entry gate are unchanged.",
+        "Evidence: 20 closed trades, 4 excluded as outage STALEs. Of the 16 scored, 7W/9L = 43.8% WR and -388 SEK/trade against a 50.0% break-even. Six of the seven wins were MANUAL clips at +0.80%..+1.69% (avg +1.18%); the +2% TP fired once in twenty. Naive replay of the 9 stops at -1% instead of -2% turns -6,215 into +77 — an upper bound, since a tighter stop also stops out trades that later recovered into a clip.",
+        "web/live_common.js: BREAKEVEN_WR is no longer one shared constant. New setBreakeven(tp, sl) computes |SL|/(TP+|SL|) and each live page declares its own engine's pair, so Signals' win-rate tile scores against 33% while Patterns and Cross keep scoring against 50%. The 0.50 default is the -2.0% case, so a page that forgets to call it gets the stricter bar rather than a flattering one.",
+        "Subtitle, help.html strategy rules and the engine docstring all updated; help.html states explicitly that the change is Signals-only."
+      ],
+      "files": [
+        "live_signals.py",
+        "web/live_common.js",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html",
+        "web/help.html"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": "sig-6",
+          "to": "sig-7",
+          "why": "Stop-loss moved -2.0% -> -1.0%, halving risk per trade and moving break-even WR from 50.0% to 33.3%."
+        }
+      ],
+      "notes": "Scope was a deliberate choice: Patterns and Cross stay at -2.0% so Patterns remains a control group running the same TP and hold on different entry logic. The 7 positions Signals opened earlier today under sig-6 were LEFT at their original -2.0% stops rather than retightened — they are the wallet of record and were opened under a different contract. All 7 are currently between -0.14% and 0.00%, so none is past a -1% stop; retightening them is still available as a clean one-shot if that is preferred. Expect a higher stop-out rate than the last three months: that is the trade the backtest says is worth making, and it is the thing to watch rather than be surprised by."
+    },
+    {
+      "version": "0.13.1",
+      "date": "2026-08-24",
+      "source": "live",
+      "title": "Ledger correction — Signals never had a confluence entry gate",
+      "summary": "sig-4 and sig-5 documented an entry gate that has never existed in live_signals.py; the params and notes now match the code.",
+      "changes": [
+        "sig-4 params: dropped 'confluence required'; note rewritten to record the correction and the evidence.",
+        "sig-5 params: dropped 'confluence required'.",
+        "Verified exhaustively rather than by inspection: `git log --all -S confluence -- live_signals.py` returns no commits, and grepping live_signals.py at 5138cfa / 51acb24 / d7c9511 / 0dc8ad0 finds zero hits. The only occurrences of the string anywhere in history are live_patterns.py, live_cross.py, and CHANGELOG.json itself.",
+        "Root cause: both rows were written by the 2026-08-21 ledger reconstruction (source='reconstructed'), which attributed the 2026-06-13 Patterns confluence gate to Signals because the two changes share a date."
+      ],
+      "files": [
+        "CHANGELOG.json"
+      ],
+      "strategy_bumps": [],
+      "notes": "No code change and no strategy bump — the code was always right, the documentation was wrong. Worth noting the blast radius while it stood: sig-4 and sig-5 cover 6 closed trades whose exit stats would have been read as 'confluence-gated' when they were nothing of the kind. Reconstructed rows predating 2026-08-21 should be treated as claims to verify, not as record."
+    },
+    {
+      "version": "0.13.0",
+      "date": "2026-08-24",
+      "source": "live",
+      "title": "Signals auto-enters again; Patterns wallet topped up to 1M",
+      "summary": "Reverts Signals to automatic entry at ask like Patterns, and adds 500k to the Patterns wallet with deposit-aware return accounting.",
+      "changes": [
+        "live_signals.py: a candidate clearing every gate is now bought at ask on the run that finds it (fill_type='auto'), instead of being surfaced as pending for the user to approve with a limit price. Same gates as before — stem-dedup, calendar event window, SL cooldown, cash floor — and sizing still comes from CONVICTION_SIZING.",
+        "Added LATE_ENTRY_CUTOFF_MIN (16:30 local) to live_signals, matching patterns/cross. The manual flow never needed one: orders were good-for-the-day and expired at the close. Auto-entry without it would buy into the closing auction.",
+        "pending_signals now means 'cleared every gate but was not bought' — below the 35k floor after rounding, or past the 16:30 cutoff — with a not_taken reason. The approve + buy-limit machinery is untouched and still fills those by hand.",
+        "Watchlist and near-miss approvals are unchanged as gates: an unapproved mid/small cap still never reaches the candidate list (order size can exceed available volume). Once approved it now buys at market rather than waiting for a user-set limit, and the approval is consumed as before.",
+        "engine_common.wallet_start(state, default) + a wallet_start field on all three wallets: return% is measured against contributed capital, so a deposit does not read as profit. deposits[] in the same state file is the audit trail.",
+        "Patterns wallet: +500,000 SEK deposit (cash 12,876 -> 512,876, contributed 500k -> 1M). It was fully deployed — 12,876 SEK against a 35,000 SEK position floor — so no pattern fire could be taken. Equity 1,006,608 reads +0.66% rather than the +101% a naive top-up would have shown.",
+        "UI: all six hardcoded baselines (three engine pages, the overview's 1,500k, the per-engine cards' 500k, and live_widget.js) now read wallet_start and sum the real per-engine figures."
+      ],
+      "files": [
+        "live_signals.py",
+        "live_patterns.py",
+        "live_cross.py",
+        "lib/engine_common.py",
+        "app.py",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html",
+        "web/live_overview.html",
+        "web/live_widget.js",
+        "state/live_patterns_portfolio.json",
+        "state/live_portfolio.json",
+        "state/live_cross_portfolio.json"
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "signals",
+          "from": "sig-5",
+          "to": "sig-6",
+          "why": "Entry gate changed: clearing the filter now opens a position at ask instead of surfacing a candidate, plus a new 16:30 late-entry cutoff."
+        }
+      ],
+      "notes": "The LaunchAgent fired at 13:04 local while this change was being finished and Signals immediately opened 7 positions (~70k each), taking cash from 488,189 to 2 SEK — the whole wallet deployed in one run, which is what auto-entry with a 70k target against 7 qualifying large caps does. Those 7 were stamped sig-5 / 0.12.0 because the ledger had not been updated yet; they have been corrected to sig-6 / 0.13.0 so the version grouping matches the code that opened them. Worth knowing before reading the next win-rate roll-up: Signals was -EV over its 20 closed trades (-11,811 SEK realized) under the manual flow, and every historical win came from a manual clip at +0.8-1.7% rather than the +2% TP ever firing. Separately, sig-4/sig-5's params string claims a 'confluence required' entry gate that does not exist anywhere in live_signals.py — CONFLUENCE_REQUIRED lives only in live_patterns.py. Not introduced here, but the ledger overstates what Signals enforces."
+    },
     {
       "version": "0.12.0",
       "date": "2026-08-22",

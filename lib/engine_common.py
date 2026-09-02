@@ -18,8 +18,10 @@ lets two latent bugs be fixed once:
     local clock here.
 """
 
+import csv
 import json
 import os
+import statistics
 import tempfile
 from datetime import datetime, timezone, timedelta
 
@@ -77,6 +79,82 @@ def load_state(path, default_skeleton):
 def save_state(path, state):
     state["last_run"] = datetime.now(timezone.utc).isoformat()
     write_json_atomic(path, state, default=str)
+
+
+def wallet_start(state, default):
+    """Capital contributed to this wallet — the opening balance plus any later
+    top-ups, NOT the current cash.
+
+    Return% is measured against this rather than a hardcoded constant, so a
+    deposit doesn't read as profit: paying 500k into a wallet would otherwise
+    show up as +100% on the equity tile. `deposits` in the same state file is
+    the audit trail of where the number came from. Absent (every wallet opened
+    before 2026-08-24) means it was never topped up, so the engine's own
+    WALLET_START is still correct."""
+    v = state.get("wallet_start")
+    return float(v) if isinstance(v, (int, float)) and v > 0 else float(default)
+
+
+# ── Sector tags ──────────────────────────────────────────────────────────────
+
+_ROOT_DIR       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_NAMES_CSV_PATH = os.path.join(_ROOT_DIR, "stock_names.csv")
+_sector_cache   = {"mtime": None, "map": {}}
+
+
+def sector_map(path=None):
+    """{ticker_name: sector_name} from stock_names.csv column 5, mtime-cached.
+
+    Populated by scripts/tag_sectors.py from the feed's numeric `sector` /
+    `sectorname` pair. Keyed by display name because that is what the engines
+    write into their state and what the live pages render — same convention as
+    app._live_tier_map.
+
+    Empty dict when the file is missing or has never been tagged; every caller
+    must treat a missing sector as "unknown" and carry on. The tag is
+    informational only — no entry or exit decision depends on it.
+    """
+    path = path or _NAMES_CSV_PATH
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {}
+    if _sector_cache["mtime"] == mtime:
+        return _sector_cache["map"]
+    out = {}
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if len(row) >= 6:
+                    nm, sec = row[1].strip(), row[5].strip()
+                    if nm and sec:
+                        out[nm] = sec
+    except OSError:
+        return _sector_cache["map"]
+    _sector_cache["mtime"] = mtime
+    _sector_cache["map"]   = out
+    return out
+
+
+def sector_concentration(tickers, costs=None, path=None):
+    """Group `tickers` by sector for logging and the UI.
+
+    Returns [{sector, tickers, n, cost}] sorted by exposure, heaviest first.
+    `costs` maps ticker -> SEK at risk; when omitted the rows carry cost 0.0 and
+    only the counts are meaningful. Untagged names collapse into "(unknown)"
+    rather than being dropped, so a gap in the tags can never make a
+    concentration look smaller than it is.
+    """
+    smap  = sector_map(path)
+    costs = costs or {}
+    groups = {}
+    for tk in tickers:
+        sec = smap.get(tk) or "(unknown)"
+        g = groups.setdefault(sec, {"sector": sec, "tickers": [], "n": 0, "cost": 0.0})
+        g["tickers"].append(tk)
+        g["n"]    += 1
+        g["cost"] += float(costs.get(tk) or 0.0)
+    return sorted(groups.values(), key=lambda g: (-g["cost"], -g["n"], g["sector"]))
 
 
 # ── Date / entry gates ───────────────────────────────────────────────────────
@@ -196,6 +274,190 @@ def position_size(cash, price, target, cap, floor):
     if shares <= 0 or cost < floor:
         return 0, 0.0
     return shares, cost
+
+
+# ── Liquidity gate (added 2026-08-24) ────────────────────────────────────────
+#
+# None of the engines used to ask whether a fill was physically possible. On
+# 2026-08-24 live_patterns bought 2,380 shares of Electrolux A — 53% of that
+# name's entire day volume (4,460 shares; the four prior sessions printed 332,
+# 3,035, 3,949 and one 463,867-share block). The quote sat at bid=ask=last for
+# the rest of the session, so the position could be neither marked nor exited,
+# and would have booked a fictional P&L. A-class Nordic listings do this
+# routinely: Electrolux A, Bilia A, Husqvarna A, SEB A/C all trade a few
+# hundred shares on a normal day while their B-class twins trade millions.
+
+OHLC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ohlc")
+
+# 5% of median daily volume clears every real entry the three engines have ever
+# taken by a wide margin — the worst legitimate one is 1.34% (Atrium Ljungberg B
+# on 2026-08-24) — while rejecting the Electrolux A fill at 60.3% of its median
+# day. That is a 3.7x headroom over the worst genuine trade.
+MAX_PARTICIPATION = 0.05
+LIQ_LOOKBACK_DAYS = 20
+LIQ_MIN_BARS      = 3
+
+
+def median_daily_volume(insref, lookback_days=LIQ_LOOKBACK_DAYS,
+                        min_bars=LIQ_MIN_BARS, ohlc_dir=None):
+    """Median full-day share volume for `insref` from ``ohlc/{insref}_OHLC.csv``.
+
+    Only bars with volume > 0 count. The 2026-06-13 backfill derived its ~4,700
+    bars from minute closes and wrote volume=0 for every one of them, so an
+    unfiltered average would read as "nearly untraded" for all 980 stocks.
+
+    Median, not mean: one block trade (Electrolux A printed 463,867 shares on
+    2026-08-19 against a ~4,000-share norm) would otherwise certify a dead
+    ticker as liquid for the rest of the lookback window.
+
+    Returns None when fewer than `min_bars` real bars exist. The caller must
+    read that as "no opinion", never as "illiquid" — real volume capture only
+    began 2026-08-18 and still covers only the large-cap universe.
+    """
+    if not insref:
+        return None
+    try:
+        path = os.path.join(ohlc_dir or OHLC_DIR, f"{int(insref)}_OHLC.csv")
+    except (TypeError, ValueError):
+        return None
+    vols = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if len(row) >= 6 and row[0]:
+                    try:
+                        v = float(row[5])
+                    except ValueError:
+                        continue
+                    if v > 0:
+                        vols.append(v)
+    except OSError:
+        return None
+    vols = vols[-lookback_days:]
+    if len(vols) < min_bars:
+        return None
+    return statistics.median(vols)
+
+
+def liquidity_verdict(insref, price, live_quote=None,
+                      max_participation=MAX_PARTICIPATION,
+                      lookback_days=LIQ_LOOKBACK_DAYS,
+                      min_bars=LIQ_MIN_BARS, ohlc_dir=None):
+    """How large a position this name can absorb, in SEK.
+
+    Returns ``{"cap_sek", "basis", "volume", "note"}``:
+
+      * ``basis='history'``  — median daily volume from ``ohlc/``. The real gate.
+      * ``basis='intraday'`` — no usable history, so fall back to what has
+        actually printed today. The quote's ``quantity`` field is the day's
+        cumulative share count (verified against the EOD capture: Electrolux B
+        quantity=2,738,744 == its 2026-08-24 OHLC volume). Capped at 100% of
+        that rather than `max_participation`, because intraday volume is a
+        partial day — at 09:30 five percent of it would reject the whole
+        universe. "You may not buy more shares than have traded all session" is
+        a weaker claim but a true one at any hour, and it still stops the
+        Electrolux A case (2,380 shares against 4,460 for the full day).
+      * ``basis='none'``     — no volume data at all. ``cap_sek`` is None and the
+        caller must **not** block: the 240-name watchlist has no captured
+        history yet, so treating absence as illiquidity would silently halt half
+        the engine — exactly the silent-failure shape this project keeps hitting.
+    """
+    if not price or price <= 0:
+        return {"cap_sek": None, "basis": "none", "volume": None, "note": "no price"}
+
+    med = median_daily_volume(insref, lookback_days, min_bars, ohlc_dir)
+    if med is not None:
+        cap = med * max_participation * price
+        return {"cap_sek": cap, "basis": "history", "volume": med,
+                "note": (f"{med:,.0f} sh/day median, "
+                         f"{max_participation * 100:.0f}% cap = {cap / 1000:,.0f}k")}
+
+    today_vol = None
+    if isinstance(live_quote, dict):
+        try:
+            today_vol = float(live_quote.get("quantity") or 0) or None
+        except (TypeError, ValueError):
+            today_vol = None
+    if today_vol:
+        cap = today_vol * price
+        return {"cap_sek": cap, "basis": "intraday", "volume": today_vol,
+                "note": f"{today_vol:,.0f} sh traded today = {cap / 1000:,.0f}k"}
+
+    return {"cap_sek": None, "basis": "none", "volume": None,
+            "note": "no volume history"}
+
+
+def apply_liquidity_cap(verdict, cap_sek, floor_sek):
+    """Fold a liquidity verdict into the engine's own size cap.
+
+    Returns ``(effective_cap, skip_reason)``. `skip_reason` is None when the
+    name can carry at least `floor_sek`; otherwise the position is not worth
+    taking at any size the engine is willing to hold, and the caller skips.
+    A verdict with no data leaves the engine's own cap untouched.
+    """
+    liq = verdict.get("cap_sek")
+    if liq is None:
+        return cap_sek, None
+    if liq < floor_sek:
+        return cap_sek, f"illiquid: {verdict['note']} < {floor_sek / 1000:.0f}k floor"
+    return min(cap_sek, liq), None
+
+
+# ── Cross-wallet dedupe (added 2026-08-24) ───────────────────────────────────
+#
+# Each engine deduped share classes only against its *own* book, so 2026-08-24
+# closed with Electrolux B in Signals and Electrolux A in Patterns (140k of one
+# company), and Securitas B held in both Patterns and Cross. Signals had already
+# rejected Electrolux A itself as a "duplicate of held 'Electrolux'" — it simply
+# had no way to see what the other two wallets were holding.
+#
+# NOTE this deliberately couples the three wallets: a Patterns entry now depends
+# on what Signals happens to hold, so the wallets are no longer independent
+# strategy samples. That is a real cost to the A/B comparison they were built
+# for, accepted because the aggregate book is one pot of money. Set
+# CROSS_WALLET_DEDUPE=False in any engine to restore independence.
+
+WALLET_FILES = {
+    "signals":  ("Signals",  "live_portfolio.json"),
+    "patterns": ("Patterns", "live_patterns_portfolio.json"),
+    "cross":    ("Cross",    "live_cross_portfolio.json"),
+}
+
+
+def sibling_wallets(engine_key, state_dir=None):
+    """[(label, path), ...] for the *other* two wallets.
+
+    Hardcoded rather than read from CHANGELOG.json's `engines` map: the ledger
+    is documentation and must never be able to gate a trade (see lib/version.py).
+    """
+    if state_dir is None:
+        state_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
+    return [(label, os.path.join(state_dir, fname))
+            for key, (label, fname) in WALLET_FILES.items() if key != engine_key]
+
+
+def foreign_held_stems(wallet_paths, stem_fn, states=None):
+    """``stem -> "Label: ticker"`` for every position held in another wallet.
+
+    `states` optionally supplies an already-loaded state per label, so an engine
+    that has read a sibling wallet for other reasons (live_cross reads both
+    upstream wallets) does not read it twice.
+
+    Fails soft: an unreadable or half-written sibling contributes nothing rather
+    than raising. A dedupe gate must never be able to stop the engine that owns
+    the trade.
+    """
+    out = {}
+    for label, path in wallet_paths:
+        st = (states or {}).get(label)
+        if st is None:
+            st = read_json(path, None)
+        if not isinstance(st, dict):
+            continue
+        for tk in (st.get("positions") or {}):
+            out.setdefault(stem_fn(tk), f"{label}: {tk}")
+    return out
 
 
 def build_quote_snapshot(tickers, live, prior_quotes, source_label=None):

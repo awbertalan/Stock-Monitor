@@ -6,124 +6,108 @@
   <title>Live Signals</title>
   <link rel="stylesheet" href="/style.css">
   <style>
-    body { background: #f0f3fa; max-width: 1200px; }
+    body { background: var(--bg); max-width: 1200px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
 
-    h2 { color: #1a1f36; letter-spacing: -0.5px; margin-bottom: 4px; }
-    .subtitle { font-size: 13px; color: #8a94a6; margin-bottom: 20px; }
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 22px; margin-bottom: 18px;
+    }
 
+    .sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .log-empty { color: var(--text-muted); font-style: italic; }
+
+    /* Toolbar — Run now + market/lag/tape pills. Its own card so the controls
+       sit in the same visual language as the content sections. */
     .toolbar {
-      display: flex; gap: 8px; align-items: center; margin-bottom: 16px;
+      display: flex; gap: 8px; align-items: center;
+      padding: 12px 22px;
     }
     .toolbar button {
-      background: #0052cc; color: #fff; border: none; border-radius: 6px;
+      background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm);
       padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
       font-family: Arial, sans-serif;
     }
-    .toolbar button:hover:not(:disabled) { background: #003d99; }
-    .toolbar button:disabled { background: #aab2c2; cursor: not-allowed; }
-    .toolbar .meta {
-      font-size: 12px; color: #8a94a6; margin-left: auto;
-    }
-    .pill-on  { background: #e6f6ee; color: #1a8042; }
-    .pill-off { background: #fce8ea; color: #b32a36; }
-    .pill-warn { background: #fff4d6; color: #8a5a00; }
-    .pill-info { background: #e8f0fe; color: #0052cc; }
+    .toolbar button:hover:not(:disabled) { background: var(--accent-hover); }
+    .toolbar button:disabled { background: var(--text-muted); cursor: not-allowed; }
+    .toolbar .meta { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+    .pill-on   { background: var(--positive-soft); color: var(--positive); }
+    .pill-off  { background: var(--negative-soft); color: var(--negative); }
+    .pill-warn { background: var(--warning-soft);  color: var(--warning); }
+    .pill-info { background: var(--accent-soft);   color: var(--accent); }
 
-    /* Tables */
-    .table-wrap {
-      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
-      overflow: hidden;
-    }
+    /* Pagination footer — lives inside the section card, below its table. */
     .pagination {
       display: flex; align-items: center; justify-content: flex-end;
-      gap: 12px; padding: 10px 12px 4px; font-size: 12px;
+      flex-wrap: wrap;             /* narrow cards: wrap instead of widening the page */
+      gap: 12px; margin-top: 12px; font-size: 12px;
     }
     .page-btn {
-      padding: 6px 12px; border: 1px solid #dde1ec; border-radius: 6px;
-      background: #fff; color: #555; cursor: pointer;
+      padding: 6px 12px; border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--text-subtle); cursor: pointer;
       font-family: Arial, sans-serif; font-size: 12px;
     }
-    .page-btn:hover:not(:disabled) { border-color: #0052cc; color: #0052cc; }
+    .page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     .page-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: default; }
-    .page-info { color: #8a94a6; font-variant-numeric: tabular-nums; }
+    .page-info { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
-    /* Analytics panels (equity curve + breakdowns) */
-    .equity-card {
-      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
-      padding: 14px 18px; margin-bottom: 14px;
-    }
-    .equity-stats {
-      display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px;
-      font-size: 12px; color: #8a94a6;
-    }
-    .equity-stats strong { color: #1a1f36; font-variant-numeric: tabular-nums; }
-    .equity-stats .up   { color: #1a8042; }
-    .equity-stats .down { color: #b32a36; }
+    /* Analytics — equity curve + breakdown cards. Each panel is a .section so
+       it matches the tables above; the grid only controls the 2-up layout. */
     #equity-curve { display: block; width: 100%; height: 180px; }
+    .equity-stats {
+      display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px;
+      font-size: 12px; color: var(--text-muted);
+    }
+    .equity-stats strong { color: var(--text); font-variant-numeric: tabular-nums; }
+    .equity-stats .up   { color: var(--positive); }
+    .equity-stats .down { color: var(--negative); }
 
     .analytics-grid {
       display: grid; grid-template-columns: 1fr 1fr;
-      gap: 14px; margin-bottom: 14px;
+      align-items: start;          /* short panels keep their natural height */
+      gap: 18px; margin-bottom: 18px;
     }
-    .analytics-panel {
-      background: #fff; border: 1px solid #e8ecf5; border-radius: 10px;
-      padding: 14px 16px;
-    }
-    .analytics-panel.span-2 { grid-column: span 2; }
-    .panel-title {
-      font-size: 11px; font-weight: 600; color: #8a94a6;
-      text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 10px;
-    }
-    .analytics-panel table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .analytics-panel th {
-      text-align: left; padding: 6px 8px;
-      color: #8a94a6; font-size: 10px; text-transform: uppercase;
-      letter-spacing: 0.4px; border-bottom: 1px solid #e8ecf5; font-weight: 600;
-    }
-    .analytics-panel td { padding: 6px 8px; border-bottom: 1px solid #f4f6fb; color: #1a1f36; }
-    .analytics-panel tr:last-child td { border-bottom: none; }
-    @media (max-width: 720px) {
-      .analytics-grid { grid-template-columns: 1fr; }
-      /* Drop low-priority columns so the actionable ones (Ticker, Action,
-         Suggested bid, TP, SL, Reason) fit without long horizontal scroll */
-      .sig-table .mobile-hide { display: none; }
-    }
+    .analytics-grid .section { margin-bottom: 0; }
+    .analytics-grid .span-2  { grid-column: span 2; }
 
     /* Approve toggle */
     .approve-btn {
-      background: #fff; color: #0052cc; border: 1px solid #c0ccee;
-      border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
-      cursor: pointer; font-family: Arial, sans-serif;
+      background: var(--surface); color: var(--accent); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 4px 10px; font-size: 11px; font-weight: 600;
+      cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap;
     }
-    .approve-btn:hover { background: #f0f3fa; }
-    .approve-btn.approved { background: #1a8042; color: #fff; border-color: #1a8042; }
+    .approve-btn:hover:not(:disabled) { background: var(--accent-soft); }
+    .approve-btn.approved { background: var(--positive); color: #fff; border-color: var(--positive); }
     .approve-btn.approved:hover { background: #156634; }
     .limit-price-input {
       width: 72px; padding: 3px 6px; font-size: 12px; text-align: right;
-      border: 1px solid var(--border-input, #dde1ec); border-radius: 6px;
+      border: 1px solid var(--border-input); border-radius: var(--radius-sm);
       font-family: Arial, sans-serif; font-variant-numeric: tabular-nums;
     }
-    .limit-price-input:focus { outline: none; border-color: #0052cc; }
-    .tag-std      { background: #e8f0fe; color: #0052cc; }
-    .tag-std-high { background: #e6f6ee; color: #0a7c4b; }
+    .limit-price-input:focus { outline: none; border-color: var(--accent); }
+    .tag-std      { background: var(--accent-soft);   color: var(--accent); }
+    .tag-std-high { background: var(--positive-soft); color: var(--positive); }
     .tag-deep-pb  { background: #f3effe; color: #7a4dcc; }
-    .tag-val      { background: #e8f0fe; color: #0052cc; }
-    .tag-forced   { background: #fff4d6; color: #8a5a00; }
-    .src-auto { color: #8a94a6; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
-    .src-user { color: #b08000; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; font-weight: 600; }
-    .approved-summary {
-      font-size: 12px; color: #555; margin: 8px 0 12px;
-    }
-    .approved-summary .chip {
-      display: inline-block; background: #e6f6ee; color: #1a8042;
-      border-radius: 10px; padding: 2px 9px; margin: 2px 4px 2px 0;
-      font-size: 11px; font-weight: 600;
+    .tag-val      { background: var(--accent-soft);   color: var(--accent); }
+    .tag-forced   { background: var(--warning-soft);  color: var(--warning); }
+    .src-auto { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .src-user { color: var(--warning); font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; font-weight: 600; }
+
+    @media (max-width: 720px) {
+      .analytics-grid { grid-template-columns: 1fr; }
+      .analytics-grid .span-2 { grid-column: auto; }
+      .toolbar { flex-wrap: wrap; padding: 12px 16px; }
+      /* Drop low-priority columns so the actionable ones (Ticker, Action,
+         Suggested bid, TP, SL, Reason) fit without long horizontal scroll */
+      .sig-table .mobile-hide { display: none; }
     }
   </style>
 </head>
 <body>
   <h2>Live Signals</h2>
-  <p class="subtitle">Paper-trade engine — VALIDATED mean-reversion (TP +2% / SL −2% / 7d max hold · DoD ≤ −1% · not at 5d high · no-Friday)</p>
+  <p class="subtitle">Paper-trade engine — VALIDATED mean-reversion (TP +2% / SL −1% / 7d max hold · DoD ≤ −1% · not at 5d high · no-Friday · <strong>close-confirmed entry</strong>: signals are scanned all session but only filled once, after the close, at the official closing price)</p>
   <nav>
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
@@ -172,7 +156,7 @@
     </div>
   </div>
 
-  <div class="toolbar">
+  <div class="section toolbar">
     <button id="btn-run" onclick="runNow()">Run now</button>
     <span class="pill" id="pill-market">—</span>
     <span class="pill" id="pill-lag" title="Lag between latest trade in the feed and real time">—</span>
@@ -180,9 +164,9 @@
     <span class="meta" id="meta-text">—</span>
   </div>
 
-  <div class="section-title">New signals (latest run)</div>
-  <div class="approved-summary">Manual flow: approve a pending signal and set a <strong>buy limit price</strong>. The engine fills it once the market trades at/below your price — good for the trading day only (unfilled orders expire at close).</div>
-  <div class="table-wrap">
+  <div class="section">
+    <div class="section-title">New signals <span class="panel-note">— latest run</span></div>
+    <div class="section-subtitle"><strong>Auto-entry:</strong> a large-cap signal that clears every gate is bought at ask on the run that finds it — no approval needed. Rows still listed here cleared the gates but were <em>not</em> taken (wallet below the 35k floor, or past the 16:30 cutoff); you can still buy one by hand with a <strong>buy limit price</strong>, which fills once the market trades at/below it and expires at the close.</div>
     <table class="sig-table" id="newsig-table">
       <thead>
         <tr>
@@ -210,9 +194,9 @@
     </div>
   </div>
 
-  <div class="section-title">Watchlist signals — approve to trade (min 35k SEK buy-in)</div>
-  <div class="approved-summary" id="approved-summary">Set a <strong>buy limit price</strong> and click Approve to queue a same-day buy on a mid/small-cap signal. The engine fills at your price once the market reaches it.</div>
-  <div class="table-wrap">
+  <div class="section">
+    <div class="section-title">Watchlist signals <span class="panel-note">— approve to trade (min 35k SEK buy-in)</span></div>
+    <div class="section-subtitle" id="approved-summary">Set a <strong>buy limit price</strong> and click Approve to queue a same-day buy on a mid/small-cap signal. The engine fills at your price once the market reaches it.</div>
     <table class="sig-table">
       <thead>
         <tr>
@@ -238,9 +222,9 @@
     </div>
   </div>
 
-  <div class="section-title">Near-misses — approve to override filter</div>
-  <div class="approved-summary" id="forced-summary">These nearly passed the filter. Set a <strong>buy limit price</strong> and click Override to queue a same-day buy anyway — the engine fills at your price once the market reaches it.</div>
-  <div class="table-wrap">
+  <div class="section">
+    <div class="section-title">Near-misses <span class="panel-note">— approve to override filter</span></div>
+    <div class="section-subtitle" id="forced-summary">These nearly passed the filter. Set a <strong>buy limit price</strong> and click Override to queue a same-day buy anyway — the engine fills at your price once the market reaches it.</div>
     <table class="sig-table">
       <thead>
         <tr>
@@ -261,9 +245,9 @@
     </table>
   </div>
 
-  <div class="section-title">Pending orders — approved, awaiting fill</div>
-  <div class="approved-summary">Buy limit orders you've approved (from any of the tables above). Each fills into Open positions at your limit price once the market trades at/below it. Good for the trading day — unfilled orders expire at the close.</div>
-  <div class="table-wrap">
+  <div class="section">
+    <div class="section-title">Pending orders <span class="panel-note">— approved, awaiting fill</span></div>
+    <div class="section-subtitle">Buy limit orders you've approved (from any of the tables above). Each fills into Open positions at your limit price once the market trades at/below it. Good for the trading day — unfilled orders expire at the close.</div>
     <table class="sig-table">
       <thead>
         <tr>
@@ -283,13 +267,14 @@
     </table>
   </div>
 
-  <div class="section-title">Open positions</div>
-  <div class="table-wrap">
+  <div class="section">
+    <div class="section-title">Open positions</div>
     <table class="sig-table">
       <thead>
         <tr>
           <th>Ticker</th>
           <th>Tier</th>
+          <th class="mobile-hide">Sector</th>
           <th class="mobile-hide">Ver</th>
           <th class="num mobile-hide">Shares</th>
           <th class="num mobile-hide">Entry</th>
@@ -302,13 +287,17 @@
         </tr>
       </thead>
       <tbody id="open-body">
-        <tr><td colspan="11" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="12" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
+    <!-- Sector concentration. Informational: no engine gates on it. Added
+         2026-08-31 after four of that day's six exits were property names that
+         stopped out together. -->
+    <div class="conc-wrap" id="conc-wrap"></div>
   </div>
 
-  <div class="section-title">Live quotes (tracked tickers)</div>
-  <div class="table-wrap">
+  <div class="section">
+    <div class="section-title">Live quotes <span class="panel-note">— tracked tickers</span></div>
     <table class="sig-table">
       <thead>
         <tr>
@@ -332,11 +321,11 @@
     </div>
   </div>
 
-  <div class="section-title">SL cooldown — entries currently blocked</div>
-  <div class="approved-summary" id="cooldown-summary" style="margin-bottom:8px;">
-    Tickers that hit an SL today are blocked from same-day re-entry; the next trading day is fine. Listed here so you know which names are paused right now.
-  </div>
-  <div class="table-wrap" id="cooldown-wrap" style="margin-bottom:18px;">
+  <div class="section">
+    <div class="section-title">SL cooldown — entries currently blocked</div>
+    <div class="section-subtitle" id="cooldown-summary">
+      Tickers that hit an SL today are blocked from same-day re-entry; the next trading day is fine. Listed here so you know which names are paused right now.
+    </div>
     <table class="sig-table">
       <thead>
         <tr>
@@ -352,8 +341,8 @@
     </table>
   </div>
 
-  <div class="section-title">Closed trades</div>
-  <div class="table-wrap">
+  <div class="section">
+    <div class="section-title">Closed trades</div>
     <table class="sig-table">
       <thead>
         <tr>
@@ -381,44 +370,43 @@
     </div>
   </div>
 
-  <div class="section-title">Equity curve</div>
-  <div class="equity-card" id="equity-card" style="display:none;">
+  <div class="section" id="equity-card" style="display:none;">
+    <div class="section-title">Equity curve <span class="panel-note">— cumulative realized P&amp;L by exit date</span></div>
     <svg id="equity-curve" viewBox="0 0 800 160" preserveAspectRatio="none"></svg>
     <div class="equity-stats" id="equity-stats"></div>
   </div>
 
-  <div class="section-title">Performance breakdown</div>
   <div class="analytics-grid" id="analytics-grid" style="display:none;">
-    <div class="analytics-panel span-2">
-      <div class="panel-title">By entry source — automated engine vs user-approved</div>
-      <table>
+    <div class="section span-2">
+      <div class="section-title">By entry source <span class="panel-note">— automated engine vs user-approved</span></div>
+      <table class="sig-table">
         <thead>
           <tr><th>Source</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th></tr>
         </thead>
         <tbody id="source-body"></tbody>
       </table>
     </div>
-    <div class="analytics-panel span-2">
-      <div class="panel-title">By version <span class="panel-note">— which generation of the strategy each trade ran under</span></div>
-      <table>
+    <div class="section span-2">
+      <div class="section-title">By version <span class="panel-note">— which generation of the strategy each trade ran under</span></div>
+      <table class="sig-table">
         <thead>
           <tr><th>Version</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th><th class="mobile-hide">What changed</th></tr>
         </thead>
         <tbody id="version-body"></tbody>
       </table>
     </div>
-    <div class="analytics-panel">
-      <div class="panel-title">By conviction</div>
-      <table>
+    <div class="section">
+      <div class="section-title">By conviction</div>
+      <table class="sig-table">
         <thead>
           <tr><th>Tier</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th></tr>
         </thead>
         <tbody id="conviction-body"></tbody>
       </table>
     </div>
-    <div class="analytics-panel">
-      <div class="panel-title">By ticker</div>
-      <table>
+    <div class="section">
+      <div class="section-title">By ticker</div>
+      <table class="sig-table">
         <thead>
           <tr><th>Ticker</th><th class="num">N</th><th class="num">WR</th><th class="num">Avg ret</th><th class="num">P&amp;L</th></tr>
         </thead>
@@ -427,13 +415,16 @@
     </div>
   </div>
 
-  <div class="section-title">Latest run log</div>
-  <div id="log-panel"><span class="log-empty">Loading…</span></div>
+  <div class="section">
+    <div class="section-title">Latest run log</div>
+    <div id="log-panel"><span class="log-empty">Loading…</span></div>
+  </div>
 
   <script src="/nav.js"></script>
   <script src="/live_widget.js"></script>
   <script src="/live_common.js"></script>
   <script>
+    setBreakeven(0.020, -0.010);   // this engine's TP / SL pair
     let forceSellSet = new Set();
     let lastWatchlistHits = [];
     let lastNearMisses    = [];
@@ -503,6 +494,7 @@
           fetch('/live-force-sell').then(r => r.json()).catch(() => []),
           fetch('/live-limit-orders').then(r => r.json()).catch(() => ({})),
           loadTiers(),
+          loadSectors(),
           loadVersions(),
         ]);
         forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
@@ -761,7 +753,14 @@
         // pending — approve + set a buy limit price
         const order = lastLimitOrders[r.ticker];
         const tpsl = `${r.tp_preview != null ? fmt(r.tp_preview, 2) : '—'} / ${r.sl_preview != null ? fmt(r.sl_preview, 2) : '—'}`;
-        const statusPill = order ? '<span class="pill pill-on">Queued</span>' : '<span class="pill">Pending</span>';
+        // `not_taken` = cleared every gate but the engine did not buy it (below
+        // the size floor, or past the 16:30 cutoff). Say which, rather than a
+        // bare 'Pending' that reads as 'waiting for you'.
+        const statusPill = order
+          ? '<span class="pill pill-on">Queued</span>'
+          : (r.not_taken
+              ? `<span class="pill" title="${esc(r.not_taken)}">Not taken</span>`
+              : '<span class="pill">Pending</span>');
         return `<tr>
           <td class="ticker">${tickerLink(r.ticker)}</td>
           ${tierCell(r.ticker)}
@@ -1118,7 +1117,8 @@
     }
 
     function renderPortfolio(p) {
-      const WALLET_START = 500000;
+      // Contributed capital, not the opening balance — see engine_common.wallet_start.
+      const WALLET_START = p.wallet_start || 500000;
       const cash = p.cash || 0;
       const positions = p.positions || {};
       const closed = p.closed_trades || [];
@@ -1176,7 +1176,7 @@
       const openBody  = document.getElementById('open-body');
       const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
       if (!openList.length) {
-        openBody.innerHTML = '<tr><td colspan="11" class="empty-row">No open positions</td></tr>';
+        openBody.innerHTML = '<tr><td colspan="12" class="empty-row">No open positions</td></tr>';
       } else {
         openBody.innerHTML = openList.map(([tk, pos]) => {
           const lq    = lastQuotes[tk] || {};
@@ -1195,6 +1195,7 @@
           <tr>
             <td class="ticker">${tickerLink(tk)}</td>
             ${tierCell(tk)}
+            <td class="mobile-hide">${sectorPill(tk)}</td>
             ${verCell('signals', pos, 'mobile-hide')}
             <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
             <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
@@ -1213,6 +1214,27 @@
             </td>
           </tr>`;
         }).join('');
+      }
+
+      // Sector concentration under the open-positions table. Mirrors
+      // engine_common.sector_concentration so the page and live_signals.log
+      // never disagree. A sector at 40%+ of invested capital is drawn hot —
+      // that is a display threshold only, nothing blocks at it.
+      const concWrap = document.getElementById('conc-wrap');
+      if (concWrap) {
+        const rows = sectorConcentration(
+          openList.map(([tk, pos]) => ({ ticker: tk, cost: pos.cost_sek })));
+        concWrap.innerHTML = rows.length
+          ? `<div class="section-title" style="margin:16px 0 4px">Sector concentration</div>` +
+            rows.map(g => `
+              <div class="conc-row" title="${esc(g.tickers.join(', '))}">
+                <div class="conc-name">${esc(g.sector)}</div>
+                <div class="conc-track">
+                  <div class="conc-fill${g.pct >= 40 ? ' hot' : ''}" style="width:${g.pct.toFixed(1)}%"></div>
+                </div>
+                <div class="conc-val">${g.n} pos · ${g.pct.toFixed(0)}%</div>
+              </div>`).join('')
+          : '';
       }
 
       // Closed trades (newest first, paginated)

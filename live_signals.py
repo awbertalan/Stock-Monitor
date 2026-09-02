@@ -13,17 +13,30 @@ retired 2026-05-23 — see project_live_strategy_negative_ev memory).
     4) 20-day return > -15%           (crash guard — skip total-blowout regimes)
   Sizing:    single tier against a 500k SEK wallet, floor 35k:
                target 70k, cap 85k
-  Exits:     TP +2.0%, SL -2.0%, time-out at 7 trading days  (limit-fill capped)
-             — SL widened from -1.0% to -2.0% on 2026-05-25 after observing
-             that opening-volatility was knocking out many valid mean-reversion
-             trades on the -1% stop. Note: this raises the break-even WR from
-             33% (at 2:1 reward:risk) to 50% (at 1:1) — re-check EV in ~30 trades.
+  Exits:     TP +2.0%, SL -1.0%, time-out at 7 trading days  (limit-fill capped)
+             — back to the backtested pair (40.9% WR, +72 SEK/trade, profitable
+             in 10 of 11 years). Between 2026-05-25 and 2026-08-24 the stop ran
+             at -2.0%, widened to survive opening volatility but never
+             re-backtested; at 1:1 that needs 50% WR and the engine delivered
+             43.8% (7W/9L over 16 scored, -388 SEK/trade). At 2:1 the
+             break-even is 33.3%. Expect more stop-outs than at -2.0% — that is
+             the trade the backtest says is still worth making.
   Cooldown:  SL/TP/TIMEOUT exits all block same-day re-entry only — re-entry
              allowed on the next trading day. (SL cooldown was 7 trading days
              pre-2026-06-13; reduced to 1 to maximise opportunity to re-enter
              after the volatility that triggered the stop has passed.)
+  Cutoff:    no auto-entry after 16:30 local (matches patterns/cross).
+  Entries:   primary signals AUTO-ENTER at ask on the run that surfaces them
+             (2026-08-24), the same way live_patterns does. This reverts the
+             2026-05-27 manual-only flow, under which the engine only ever
+             surfaced candidates and the user had to approve each one with a
+             buy limit price — the wallet sat at zero open positions.
   Approval:  watchlist tickers approved via the UI are one-shot — the approval
-             is consumed automatically the first time a position is opened
+             is consumed automatically the first time a position is opened.
+             Approval is still required for mid/small caps (order size can
+             exceed available volume), it just now buys at market instead of
+             waiting for a user-set limit. User-placed limit orders still work
+             and still fill in section 4b.
 
 Universe:
   Primary   = every OMX large cap with sufficient history (auto-loaded each
@@ -87,10 +100,54 @@ CONVICTION_SIZING = {
     "low":    ( 50_000.0,  60_000.0),
 }
 
+# Superseded for entries by ENTRY_AT_CLOSE (sig-9, 2026-08-31) — kept because
+# past_late_entry_cutoff() is still the honest answer to "would an intraday
+# auto-entry have been allowed now", which the pending-signal surfacing uses.
+LATE_ENTRY_CUTOFF_MIN = 16 * 60 + 30   # 16:30 local
+
+# ── Close-confirmed entry (sig-9, 2026-08-31) ────────────────────────────────
+# Entries fire once per day, after the close, against the confirmed closing
+# price — not on the first intraday tick that dips 1% below yesterday's close.
+#
+# Why: replaying this exact filter over 64 entry days of minute data (2026-04-30
+# .. 2026-08-20) with only the execution regime varied:
+#
+#   close entry + close exit       n=2346   46.6% WR   +0.372%/trade
+#   close entry + intraday exit    n=2346   43.5% WR   +0.301%/trade
+#   INTRADAY entry + intraday exit n=4352   40.2% WR   +0.202%/trade   <- sig-8
+#
+# Entering intraday roughly doubles the trade count by taking names that dip 1%
+# and recover before the close — trades the backtest never saw — and costs about
+# 45% of the per-trade edge. With the wallet slot-constrained rather than
+# signal-constrained (6 open positions against a 35k floor), per-trade quality
+# is worth more than signal count.
+#
+# The fill is the official close. Real-world equivalent is a closing-auction
+# order; this does carry a mild lookahead (the close both triggers the entry and
+# sets the fill), the same assumption the arm-B figure above was measured under.
+#
+# Timing: the pass rides `last_ohlc_capture_date`, which maybe_capture_eod_ohlc()
+# only stamps once the feed has actually advanced past 17:30. That is the same
+# hardened settlement gate the EOD sweep uses, and it fires on any post-close
+# weekday tick — deliberately NOT a fixed 17:20-17:30 window, which on
+# 2026-08-31 saw zero runs (Mac asleep 16:12-18:04) and would have skipped the
+# day's entries silently.
+ENTRY_AT_CLOSE = True
+
 TP_PCT        = 0.020   # +2.0%
-SL_PCT        = -0.020  # -2.0% (widened from -1.0% on 2026-05-25 to survive opening volatility)
+SL_PCT        = -0.010  # -1.0% — RESTORED 2026-08-24 to the backtested value.
+                        # Widened to -2.0% on 2026-05-25 "to survive opening
+                        # volatility" and never re-backtested; that move took
+                        # break-even WR from 33.3% to 50.0% and the engine has
+                        # run at 43.8% (7W/9L over 16 scored) ever since.
 MAX_HOLD_DAYS = 7
 COOLDOWN_DAYS = 1       # block re-entry on a ticker for N trading days after an SL exit only (was 7, reduced 2026-06-13 to same-day-only block — re-enter next trading day)
+# Block a name already held in the Patterns or Cross wallet, collapsed to the
+# company stem. 2026-08-24 closed with Electrolux B here and Electrolux A in
+# Patterns — this engine had rejected Electrolux A itself as a duplicate but
+# could not see the other books. Trade-off documented in engine_common.
+CROSS_WALLET_DEDUPE = True
+
 DOD_THRESHOLD = -0.010  # require day-over-day close <= -1% to enter
 CRASH_GUARD   = -0.15   # require 20-day ret > -15% (skip total-blowout regimes)
 
@@ -135,6 +192,7 @@ STALE_EXIT_GRACE_DAYS = 4
 def load_state():
     return ec.load_state(STATE_PATH, {
         "cash":              WALLET_START,
+        "wallet_start":      WALLET_START,
         "positions":         {},
         "closed_trades":     [],
         "last_run":          None,
@@ -309,6 +367,35 @@ def signal_check(closes, today_date=None):
     }
 
 
+def past_late_entry_cutoff():
+    return ec.past_cutoff(LATE_ENTRY_CUTOFF_MIN)
+
+
+def close_confirmed_entry_ready(state, today):
+    """(ready, reason) for today's post-close entry pass.
+
+    Gated on `last_ohlc_capture_date` rather than on the wall clock: capture
+    only stamps that date after probe_data_lag() shows the feed past today's
+    17:30 close, so piggybacking on it means the entry pass cannot run against
+    quotes that are still mid-session. `reason` is persisted so a day with no
+    entries always says why on the page instead of looking like "no signals".
+    """
+    if not ENTRY_AT_CLOSE:
+        return False, "close-confirmed entry disabled"
+    iso = today.isoformat()
+    if state.get("last_entry_scan_date") == iso:
+        return False, "already scanned after today's close"
+    now_local = datetime.now()
+    if now_local.weekday() >= 5:
+        return False, "weekend"
+    mins_now = now_local.hour * 60 + now_local.minute
+    if mins_now < MARKET_CLOSE[0] * 60 + MARKET_CLOSE[1]:
+        return False, "before the 17:30 close"
+    if state.get("last_ohlc_capture_date") != iso:
+        return False, "feed has not settled past today's close yet"
+    return True, ""
+
+
 def probe_data_lag():
     """
     Fetch the most recent trade for the probe ticker and compute the gap
@@ -479,7 +566,11 @@ def build_universe():
         for row in csv.reader(f):
             if len(row) < 4:
                 continue
-            insref_raw, name, tier = row[0], row[1], row[-1].strip()
+            # Column 3 explicitly, never row[-1]: stock_names.csv gained sector
+            # columns (4,5) on 2026-08-31. Reading the last column here would
+            # have matched the sector name against the tier whitelist below and
+            # silently emptied the universe for all three engines.
+            insref_raw, name, tier = row[0], row[1], row[3].strip()
             try:
                 insref = int(insref_raw)
             except ValueError:
@@ -513,6 +604,10 @@ def get_live(insref):
             "bid":     q.get("bidprice"),
             "ask":     q.get("askprice"),
             "diffprc": q.get("diff1dprc"),
+            # Day's cumulative share volume — the liquidity gate's fallback when
+            # a ticker has no captured OHLC history. Already requested by
+            # infoScrapper's _QUOTE_FIELDS, so this is free.
+            "quantity": q.get("quantity"),
             "ok":      True,
         }
     return {"ok": False, "err": (q.get("error") if isinstance(q, dict) else "unknown")}
@@ -553,6 +648,16 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
                        if isinstance(pos["target_exit_date"], str)
                        else pos["target_exit_date"])
 
+        # A stop moved *after* entry (scripts/retighten_stops.py, used when
+        # SL_PCT changed while positions were open) may sit below where the
+        # market already is. Filling such a stop at the stop price would book a
+        # better-than-market exit that never existed — the same synthetic-fill
+        # problem STALE_EXIT_GRACE_DAYS was added to avoid. The marker is
+        # cleared the moment the position trades back above the new stop, from
+        # which point an ordinary stop-limit fill is legitimate again.
+        if pos.get("sl_fill_at_market") and cur_price > pos["sl"]:
+            pos.pop("sl_fill_at_market", None)
+
         exit_reason = None
         fill_price = cur_price
         days_past = (today - target_date).days
@@ -568,7 +673,10 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
             fill_price = pos["tp"]   # limit-sell @ TP — fills at TP, not above
         elif cur_price <= pos["sl"]:
             exit_reason = "SL"
-            fill_price = pos["sl"]   # stop-loss @ SL — fills at SL, not below
+            # Stop-loss @ SL fills at SL, not below — unless the stop was
+            # retightened under an already-lower market (see above), in which
+            # case the only honest fill is the real market price.
+            fill_price = cur_price if pos.get("sl_fill_at_market") else pos["sl"]
         elif today >= target_date:
             exit_reason = "TIMEOUT"
 
@@ -815,9 +923,25 @@ def main():
             print(f" OHLC capture: unexpected error: {e!r}")
         if is_in_eod_window() and state.get("last_eod_sweep_date") != today.isoformat():
             run_eod_sweep(state, today, now_local_ts)
-        else:
-            print(" Market closed (Stockholm OMX 09:00-17:30 Mon-Fri). Skipping.")
-        return
+
+        # sig-9: entries are close-confirmed, so the post-close tick falls
+        # THROUGH into the ordinary scan below instead of returning. Exits are
+        # applied first (run_eod_sweep above, then apply_exit_checks in step 3),
+        # so a name stopped out at today's close lands in the cooldown set
+        # before the entry scan can look at it.
+        ready, why = close_confirmed_entry_ready(state, today)
+        if not ready:
+            state["entry_gate"] = {"open": False, "reason": why,
+                                   "date": today.isoformat(), "checked": now_local_ts}
+            save_state(state)
+            print(f" Market closed (Stockholm OMX 09:00-17:30 Mon-Fri). "
+                  f"No entry pass: {why}.")
+            return
+        print(f" CLOSE-CONFIRMED ENTRY PASS — feed settled past today's close, "
+              f"scanning at closing prices")
+        close_entry_pass = True
+    else:
+        close_entry_pass = False
 
     # ---------- 0. Probe the data feed lag (one trades call on SEB A) + read
     #              S&P 500 regime context (no API call — local History.csv)
@@ -975,7 +1099,10 @@ def main():
 
     # Dedupe by company stem so we don't take A and B of the same name
     held_stems = {company_stem(tk) for tk in state["positions"]}
-    pending         = []   # candidates that passed every gate — await user approve+price
+    foreign_stems = (ec.foreign_held_stems(ec.sibling_wallets("signals"), company_stem)
+                     if CROSS_WALLET_DEDUPE else {})
+    pending         = []   # cleared every gate but could not be sized — UI shows them
+    auto_entries    = []   # opened at market by this run
     skipped_signals = []   # informational skips surfaced in the UI
     consumed_approvals    = set()
     consumed_force_entries = set()
@@ -983,16 +1110,50 @@ def main():
     # near ex-dividend dates / earnings reports (added 2026-05-25 after
     # Tele2 A was bought into a 6-days-stale ex-dividend tick).
     events_cache = calendar_cache.load_cache()
-    # MANUAL-ONLY flow (2026-05-27): primary signals no longer auto-enter. Each
-    # candidate that clears every gate is surfaced as a *pending* signal; the
-    # user approves it and sets a buy limit price in the UI, which becomes a
-    # same-day limit order (filled in section 4b below when live <= limit).
+    # AUTO-ENTRY flow (2026-08-24): a candidate that clears every gate is bought
+    # at ask on this run, mirroring live_patterns. Between 2026-05-27 and now
+    # this was manual-only — candidates were surfaced as *pending* and the user
+    # had to approve each one with a buy limit price; the result was a wallet
+    # holding zero open positions. Anything that clears the gates but cannot be
+    # sized (cash below the floor, or below POS_MIN after rounding) still lands
+    # in `pending` so the UI keeps showing it as actionable. User-placed limit
+    # orders are untouched and still fill in section 4b.
+    # After 16:30 nothing new is bought, but candidates still surface so the
+    # user can place a limit order by hand.
+    # sig-9: an intraday run never buys. It scans, applies exits and surfaces
+    # candidates as `pending` so the page still shows what is building during
+    # the session; only the post-close pass converts a candidate into a fill.
+    entries_open = close_entry_pass
+    if not entries_open:
+        print(f"   · intraday run ({datetime.now().strftime('%H:%M')}) — candidates surface "
+              f"as pending; entries fire after the close (sig-9)")
+
+    def surface_pending(t, lq, info, price, reason):
+        pending.append({
+            "ticker":          t["name"],
+            "insref":          t["insref"],
+            "last":            lq.get("last"),
+            "bid":             lq.get("bid"),
+            "ask":             lq.get("ask"),
+            "suggested_price": price,
+            "tp_preview":      round(price * (1 + TP_PCT), 4),
+            "sl_preview":      round(price * (1 + SL_PCT), 4),
+            "info":            info,
+            "from_watchlist":  bool(t.get("from_watchlist")),
+            "forced":          bool(info.get("forced")),
+            "not_taken":       reason,
+        })
+
     for c in candidates:
         t, lq, info, live_close = c["t"], c["lq"], c["info"], c["live_close"]
         name = t["name"]
         stem = company_stem(name)
         if stem in held_stems:
             skipped_signals.append({"ticker": name, "skipped": f"duplicate of held '{stem}'"})
+            continue
+        if stem in foreign_stems:
+            skipped_signals.append({"ticker": name,
+                                    "skipped": f"held in another wallet ({foreign_stems[stem]})"})
             continue
         blocked, why = calendar_cache.has_nearby_event(t["insref"], today, cache=events_cache)
         if blocked:
@@ -1013,19 +1174,79 @@ def main():
         if state["cash"] < POS_MIN:
             skipped_signals.append({"ticker": name, "skipped": f"low cash {state['cash']:.0f}"})
             continue
-        suggested = lq.get("ask") or live_close
-        pending.append({
-            "ticker":          name,
-            "insref":          t["insref"],
-            "last":            lq.get("last"),
-            "bid":             lq.get("bid"),
-            "ask":             lq.get("ask"),
-            "suggested_price": suggested,
-            "tp_preview":      round(suggested * (1 + TP_PCT), 4) if suggested else None,
-            "sl_preview":      round(suggested * (1 + SL_PCT), 4) if suggested else None,
-            "info":            info,
-            "from_watchlist":  bool(t.get("from_watchlist")),
-            "forced":          bool(info.get("forced")),
+        # sig-9: the close-confirmed pass fills at the confirmed CLOSE, not the
+        # ask. After 17:30 the ask is a stale end-of-session quote that can sit
+        # well away from where the stock actually settled — the first dry run of
+        # this pass filled BONESUPPORT at its 220.20 ask against a 218.60 close,
+        # booking an instant -0.73% the arm-B measurement never assumed. The
+        # intraday path keeps the ask because that is a real, executable offer.
+        entry_price = live_close if close_entry_pass else (lq.get("ask") or live_close)
+        if not entry_price:
+            skipped_signals.append({"ticker": name, "skipped": "no live quote"})
+            continue
+        if not entries_open:
+            surface_pending(t, lq, info, entry_price,
+                            "awaiting close confirmation")
+            continue
+
+        conviction  = info.get("conviction", "normal")
+        target, cap = CONVICTION_SIZING.get(conviction, CONVICTION_SIZING["normal"])
+        # Liquidity gate: a fill is only credible as a small slice of what the
+        # name actually trades. Caps the position rather than only rejecting it,
+        # so a mid-liquidity ticker can still take a smaller size.
+        liq = ec.liquidity_verdict(t["insref"], entry_price, lq)
+        cap, liq_skip = ec.apply_liquidity_cap(liq, cap, POS_MIN)
+        if liq_skip:
+            skipped_signals.append({"ticker": name, "skipped": liq_skip})
+            continue
+        shares, cost = ec.position_size(state["cash"], entry_price, target, cap, POS_MIN)
+        if shares <= 0:
+            # Cleared every gate but unaffordable at this price. Not a skip —
+            # the user can still place a smaller limit order by hand, so it
+            # stays in `pending` where the UI renders it as actionable.
+            surface_pending(t, lq, info, entry_price,
+                            f"size <{POS_MIN/1000:.0f}k after rounding")
+            continue
+
+        entry_info = dict(info)
+        entry_info.setdefault("conviction", "normal")
+        if t.get("from_watchlist"):
+            entry_info["from_watchlist"] = True
+        if info.get("forced"):
+            entry_info["forced"] = True
+            entry_info["entry_tag"] = "forced"
+        entry_info.setdefault("entry_tag", "auto")
+
+        tp_price = round(entry_price * (1 + TP_PCT), 4)
+        sl_price = round(entry_price * (1 + SL_PCT), 4)
+        exit_by  = add_trading_days(today, MAX_HOLD_DAYS)
+        state["cash"] -= cost
+        state["positions"][name] = {
+            "insref":           t["insref"],
+            "entry_price":      entry_price,
+            "shares":           shares,
+            "entry_date":       today.isoformat(),
+            "entry_ts":         now_local_ts,
+            "tp":               tp_price,
+            "sl":               sl_price,
+            "target_exit_date": exit_by.isoformat(),
+            "cost_sek":         cost,
+            "signal_info":      entry_info,
+            # "close" = filled at the confirmed official close by the sig-9
+            # post-close pass; "auto" was the sig-6..sig-8 intraday ask fill.
+            "fill_type":        "close" if close_entry_pass else "auto",
+            **V.stamp("signals"),
+        }
+        held_stems.add(stem)
+        if t.get("from_watchlist"):
+            consumed_approvals.add(name)
+        if info.get("forced"):
+            consumed_force_entries.add(name)
+        auto_entries.append({
+            "ticker":  name, "entry": entry_price, "limit": None,
+            "market":  lq.get("last"), "tp": tp_price, "sl": sl_price,
+            "shares":  shares, "cost": cost,
+            "exit_by": exit_by.isoformat(), "info": entry_info,
         })
 
     state["pending_signals"] = pending
@@ -1063,6 +1284,11 @@ def main():
         if stem in held_stems:
             orders_to_remove.add(tk)          # took a sibling share class — cancel
             continue
+        if stem in foreign_stems:
+            orders_to_remove.add(tk)          # another wallet holds it — cancel
+            skipped_signals.append({"ticker": tk,
+                                    "skipped": f"limit order cancelled — held in another wallet ({foreign_stems[stem]})"})
+            continue
         if state["cash"] < POS_MIN:
             continue                          # can't afford yet — keep waiting for cash
         # Carry the order's source attribution onto the position's signal_info so
@@ -1076,6 +1302,13 @@ def main():
         info.setdefault("conviction", "normal")
         conviction = info.get("conviction", "normal")
         target, cap = CONVICTION_SIZING.get(conviction, CONVICTION_SIZING["normal"])
+        liq = ec.liquidity_verdict(o.get("insref") or (lq.get("insref") if lq else None),
+                                   limit_price, lq)
+        cap, liq_skip = ec.apply_liquidity_cap(liq, cap, POS_MIN)
+        if liq_skip:
+            orders_to_remove.add(tk)          # too thin to fill at any size we'd hold
+            skipped_signals.append({"ticker": tk, "skipped": f"limit order cancelled — {liq_skip}"})
+            continue
         shares, cost = ec.position_size(state["cash"], limit_price, target, cap, POS_MIN)
         if shares <= 0:
             orders_to_remove.add(tk)          # can't make the min size at this price — drop
@@ -1166,6 +1399,16 @@ def main():
                   f"P&L {t['pnl_sek']:+,.0f} SEK ({t['ret_pct']*100:+.2f}%)   "
                   f"opened {t['entry_date']}")
 
+    if auto_entries:
+        print(f"\n--- AUTO ENTRIES THIS RUN ({len(auto_entries)}) ---")
+        for s in auto_entries:
+            tag_str = format_signal_tag(s["info"])
+            print(f"  BUY {tag_str:<10} {s['ticker']:<18}  {s['shares']:>5} sh @ {s['entry']:.2f}  "
+                  f"= {s['cost']:>9,.0f} SEK")
+            print(f"      target exit {s['tp']:.2f} (+{TP_PCT*100:.2f}%)   "
+                  f"stop {s['sl']:.2f} ({SL_PCT*100:+.2f}%)   "
+                  f"exit by {s['exit_by']}")
+
     if filled_now:
         print(f"\n--- LIMIT ORDERS FILLED THIS RUN ({len(filled_now)}) ---")
         for s in filled_now:
@@ -1185,12 +1428,12 @@ def main():
             print(f"  {tk:<22} limit {o.get('limit_price', 0):.2f}   market {mk_str}   placed {o.get('placed_date')}")
 
     if pending or skipped_signals:
-        print(f"\n--- NEW SIGNALS ({len(pending)} pending approval, {len(skipped_signals)} skipped) ---")
+        print(f"\n--- NEW SIGNALS ({len(pending)} cleared but not taken, {len(skipped_signals)} skipped) ---")
         for s in pending:
             tag_str = format_signal_tag(s["info"])
             i = s["info"]
-            print(f"  PENDING {tag_str:<10} {s['ticker']:<18}  last {s['last'] if s['last'] is not None else '?'}   "
-                  f"suggested {s['suggested_price']:.2f}   "
+            print(f"  NOT TAKEN {tag_str:<10} {s['ticker']:<18}  last {s['last'] if s['last'] is not None else '?'}   "
+                  f"({s.get('not_taken', 'awaiting approval')})   "
                   f"DoD {i['dod']*100:+.2f}%   20d {i['ret_20d']*100:+.1f}%")
         for s in skipped_signals[:3]:
             print(f"  skipped: {s['ticker']:<22} ({s['skipped']})")
@@ -1221,7 +1464,23 @@ def main():
                   f"entered {pos['entry_date']} @ {pos['entry_price']:.2f}   "
                   f"now {cur_price:.2f}   P&L {pnl:+,.0f} SEK ({ret*100:+.2f}%)")
             print(f"                          TP {pos['tp']:.2f}   SL {pos['sl']:.2f}   "
-                  f"exit by {pos['target_exit_date']}")
+                  f"exit by {pos['target_exit_date']}   "
+                  f"[{ec.sector_map().get(tk) or 'sector ?'}]")
+
+        # Sector concentration (2026-08-31). Informational only — nothing here
+        # blocks or resizes an entry. Added after a session where four of the
+        # day's six exits were property names that all stopped out together:
+        # the engines had no sector data at all, so a correlated book looked
+        # exactly like six unrelated positions right up until they moved as one.
+        conc = ec.sector_concentration(
+            list(state["positions"]),
+            {tk: p_["cost_sek"] for tk, p_ in state["positions"].items()})
+        invested = sum(g["cost"] for g in conc) or 1.0
+        print(f"\n  concentration:")
+        for g in conc:
+            bar = "#" * int(round(g["cost"] / invested * 20))
+            print(f"    {g['sector']:<34} {g['n']:>2} pos  {g['cost']:>9,.0f} SEK  "
+                  f"{g['cost']/invested*100:>5.1f}%  {bar}")
 
     # Compact diagnostic: closest-to-passing in primary universe
     def closeness(info):
@@ -1273,6 +1532,8 @@ def main():
         interesting.add(s["ticker"])
     for s in filled_now:
         interesting.add(s["ticker"])
+    for s in auto_entries:
+        interesting.add(s["ticker"])
     for tk in load_limit_orders():
         interesting.add(tk)
     for w in watchlist_hits:
@@ -1297,7 +1558,7 @@ def main():
     # state["pending_signals"]; we don't log them here to avoid churn.
     signal_events = []
     ts_iso = now.isoformat()
-    combined = ([{**s, "_action": "filled"}  for s in filled_now] +
+    combined = ([{**s, "_action": "filled"}  for s in filled_now + auto_entries] +
                 [{**s, "_action": "skipped"} for s in skipped_signals])
     for s in combined:
         name = s["ticker"]
@@ -1332,6 +1593,20 @@ def main():
     state.setdefault("recent_signals", [])
     state["recent_signals"].extend(signal_events)
     state["recent_signals"] = state["recent_signals"][-50:]
+
+    # sig-9: stamp the close-confirmed pass so it runs exactly once per day.
+    # Written at the very end, after entries and limit fills, so a crash midway
+    # leaves the date unset and the next post-close tick retries the whole pass
+    # rather than silently skipping the day's entries.
+    if close_entry_pass:
+        state["last_entry_scan_date"] = today.isoformat()
+        state["entry_gate"] = {"open": True, "reason": "", "date": today.isoformat(),
+                               "checked": now_local_ts,
+                               "entries": len(auto_entries)}
+    else:
+        state["entry_gate"] = {"open": False,
+                               "reason": "intraday run — entries fire after the close",
+                               "date": today.isoformat(), "checked": now_local_ts}
 
     save_state(state)
 

@@ -290,7 +290,7 @@
     <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
       A paper-trading engine that runs every <strong>3 minutes</strong> during market hours (Stockholm OMX 09:00–17:30 Mon–Fri)
       against a virtual 500k SEK wallet, persisting state in <code>live_portfolio.json</code>.
-      The strategy is a <strong>backtest-validated mean-reversion setup</strong>: enter after a single sharp down day, exit on a +2% bounce or −2% stop within 7 days.
+      The strategy is a <strong>backtest-validated mean-reversion setup</strong>: enter after a single sharp down day, exit on a +2% bounce or −1% stop within 7 days.
       Switched from the prior 0.5% / −2% / 5d pullback strategy on <strong>2026-05-23</strong> after backtest showed the old setup was −EV (needed 80% WR to break even, delivered 60%).
     </p>
     <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px; padding:10px 12px; background:#fff8e6; border:1px solid #f0d98a; border-radius:8px;">
@@ -352,8 +352,8 @@
       <span class="rule-val">A real bounce, not a fast scalp. Limit-fill capped — exit price is recorded at exactly +2% even if the polled price overshot.</span>
     </div>
     <div class="strategy-rule">
-      <span class="rule-label">Stop −2.0%</span>
-      <span class="rule-val">Widened from −1.0% to −2.0% on 2026-05-25 after observing that opening-volatility was knocking out many valid mean-reversion trades on the tighter stop. Reward:risk is now 1:1, so break-even WR moves from 33% to <strong>50%</strong> — re-evaluating EV in ~30 trades.</span>
+      <span class="rule-label">Stop −1.0%</span>
+      <span class="rule-val">Restored to the backtested −1.0% on <strong>2026-08-24</strong>. It ran at −2.0% from 2026-05-25 (widened to survive opening volatility, never re-backtested), which put reward:risk at 1:1 and break-even WR at 50% — the engine delivered 43.8% and −388 SEK/trade over that span. Back at 2:1, break-even is <strong>33%</strong>. Applies to Live Signals only; Patterns and Cross still run −2.0%.</span>
     </div>
     <div class="strategy-rule">
       <span class="rule-label">Time-out 7d</span>

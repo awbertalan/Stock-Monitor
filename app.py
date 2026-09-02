@@ -110,7 +110,10 @@ def _live_tier_map():
             for row in csv.reader(f):
                 if len(row) < 4:
                     continue
-                tier = row[-1].strip().lower()
+                # Column 3 explicitly, never row[-1]: stock_names.csv gained
+                # sector columns (4,5) on 2026-08-31, so the last column is no
+                # longer the cap tier.
+                tier = row[3].strip().lower()
                 if tier in TIER_LABELS:
                     tiers[row[1]] = tier
     except OSError:
@@ -178,7 +181,8 @@ def _read_live_portfolio():
         with open(LIVE_PORTFOLIO_PATH, encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"cash": 500000, "positions": {}, "closed_trades": [], "last_run": None}
+        return {"cash": 500000, "wallet_start": 500000, "positions": {},
+                "closed_trades": [], "last_run": None}
 
 
 def _read_live_patterns_portfolio():
@@ -186,7 +190,8 @@ def _read_live_patterns_portfolio():
         with open(LIVE_PATTERNS_PORTFOLIO_PATH, encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"cash": 500000, "positions": {}, "closed_trades": [], "last_run": None}
+        return {"cash": 500000, "wallet_start": 500000, "positions": {},
+                "closed_trades": [], "last_run": None}
 
 
 def _read_live_cross_portfolio():
@@ -194,8 +199,8 @@ def _read_live_cross_portfolio():
         with open(LIVE_CROSS_PORTFOLIO_PATH, encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"cash": 500000, "positions": {}, "closed_trades": [],
-                "pending_candidates": [], "last_run": None}
+        return {"cash": 500000, "wallet_start": 500000, "positions": {},
+                "closed_trades": [], "pending_candidates": [], "last_run": None}
 
 
 # ── changelog / version ledger ───────────────────────────────────────────────
@@ -1068,6 +1073,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_read_live_portfolio())
         elif parsed.path == "/live-tiers":
             self._json(_live_tier_map())
+        elif parsed.path == "/live-sectors":
+            # {ticker: sector} from stock_names.csv col 5 (scripts/tag_sectors.py).
+            # Mirrors /live-tiers: mtime-cached in engine_common, keyed by the
+            # display name the live pages already render. Informational — no
+            # engine reads it to gate an entry.
+            self._json(ec.sector_map())
         elif parsed.path == "/live-health":
             self._json(_live_health())
         elif parsed.path == "/changelog-data":

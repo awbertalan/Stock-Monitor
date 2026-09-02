@@ -67,7 +67,15 @@ document.addEventListener('DOMContentLoaded', () => {
 // 2026-05-23) and 33% on Patterns (left over from the +2/-1 stop, widened
 // 2026-05-25). Patterns' 50.9% WR rendered as a comfortable pass against its
 // stale 33% label when it was in fact sitting exactly on the break-even line.
-const BREAKEVEN_WR = 0.50;
+// Signals moved to SL -1.0% on 2026-08-24 while Patterns and Cross stayed at
+// -2.0%, so this can no longer be one shared number. Each page declares its own
+// engine's pair via setBreakeven(); the 0.50 default is the -2.0% case, so a
+// page that forgets to call it still gets the stricter bar rather than a
+// flattering one. `let`, not `const`, precisely so a page can override it.
+let BREAKEVEN_WR = 0.50;
+
+// |SL| / (TP + |SL|) — the win rate at which expectancy is zero.
+const setBreakeven = (tp, sl) => (BREAKEVEN_WR = Math.abs(sl) / (tp + Math.abs(sl)));
 
 const wrClass = wr =>
   wr === null || wr === undefined ? ''
@@ -106,6 +114,53 @@ function tierPill(name, fallback) {
 }
 
 const tierCell = (name, fallback) => `<td>${tierPill(name, fallback)}</td>`;
+
+// ── sector ───────────────────────────────────────────────────────────────────
+// Column 5 of stock_names.csv, backfilled by scripts/tag_sectors.py from the
+// feed's numeric `sector`/`sectorname` pair. Added 2026-08-31: on that session
+// four of the day's six exits were property names that stopped out together,
+// and nothing in the project stored a sector, so a book with 4 correlated
+// positions rendered identically to one with 4 unrelated ones.
+//
+// Informational only. No engine gates on it.
+let sectorMap = {};
+let _sectorPromise = null;
+
+function loadSectors() {
+  if (!_sectorPromise) {
+    _sectorPromise = fetch('/live-sectors')
+      .then(r => r.json())
+      .then(m => { sectorMap = (m && typeof m === 'object') ? m : {}; })
+      .catch(() => { _sectorPromise = null; });
+  }
+  return _sectorPromise;
+}
+
+const sectorOf = name => sectorMap[name] || '';
+
+function sectorPill(name) {
+  const s = sectorOf(name);
+  return s ? `<span class="pill sector-pill">${esc(s)}</span>` : '';
+}
+
+// [{sector, tickers, n, cost, pct}] heaviest first — mirrors
+// engine_common.sector_concentration so the page and the log agree.
+function sectorConcentration(positions) {
+  const groups = {};
+  let total = 0;
+  (positions || []).forEach(p => {
+    const sec  = sectorOf(p.ticker) || '(unknown)';
+    const cost = Number(p.cost) || 0;
+    (groups[sec] = groups[sec] || { sector: sec, tickers: [], n: 0, cost: 0 });
+    groups[sec].tickers.push(p.ticker);
+    groups[sec].n += 1;
+    groups[sec].cost += cost;
+    total += cost;
+  });
+  return Object.values(groups)
+    .map(g => ({ ...g, pct: total ? (g.cost / total) * 100 : 0 }))
+    .sort((a, b) => b.cost - a.cost || b.n - a.n);
+}
 
 // ── version stamps ───────────────────────────────────────────────────────────
 // Every position the engines open is stamped with the app version (which build

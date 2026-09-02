@@ -32,7 +32,13 @@ def _fetch_isin(insref):
 
 
 def _read_names_csv():
-    """Return {insref: (name, isin, mlist)} from stock_names.csv, or {} if absent."""
+    """Return {insref: (name, isin, mlist, sector_id, sector_name)} from
+    stock_names.csv, or {} if absent.
+
+    Columns 4 (sector_id) and 5 (sector_name) were appended 2026-08-31. They are
+    read and re-written here purely so a refresh sweep cannot silently drop them:
+    every writer funnels through _write_names_csv, which would otherwise emit the
+    original four columns and wipe the sector tags on the next Update All."""
     names = {}
     try:
         with open(_NAMES_CSV, newline='', encoding='utf-8') as f:
@@ -43,8 +49,10 @@ def _read_names_csv():
                         nm = row[1].strip()
                         isin_val  = row[2].strip() if len(row) >= 3 else ""
                         mlist_val = row[3].strip() if len(row) >= 4 else ""
+                        sec_id    = row[4].strip() if len(row) >= 5 else ""
+                        sec_name  = row[5].strip() if len(row) >= 6 else ""
                         if nm:
-                            names[iref] = (nm, isin_val, mlist_val)
+                            names[iref] = (nm, isin_val, mlist_val, sec_id, sec_name)
                     except (ValueError, IndexError):
                         pass
     except FileNotFoundError:
@@ -65,14 +73,24 @@ def _write_names_csv(names):
     try:
         with open(tmp, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            for iref, (nm, is_val, lst) in sorted(names.items()):
-                writer.writerow([iref, nm, is_val or "", lst or ""])
+            for iref, rec in sorted(names.items()):
+                nm, is_val, lst = rec[0], rec[1], rec[2]
+                sec_id   = rec[3] if len(rec) > 3 else ""
+                sec_name = rec[4] if len(rec) > 4 else ""
+                writer.writerow([iref, nm, is_val or "", lst or "",
+                                 sec_id or "", sec_name or ""])
         os.replace(tmp, _NAMES_CSV)
-    except Exception:
+    except Exception as e:
+        # Never swallow this silently. A failed rewrite used to leave callers
+        # reporting success ("1,980 written") against an unchanged file, which
+        # is indistinguishable from the write having worked until something
+        # much later reads the file back and finds the columns missing.
+        print(f" stock_names.csv write FAILED: {e!r}")
         try:
             os.remove(tmp)
         except OSError:
             pass
+        raise
 
 
 def _merge_name(names, insref, raw_name, isin=None, mlist=None):
@@ -86,15 +104,22 @@ def _merge_name(names, insref, raw_name, isin=None, mlist=None):
     except (ValueError, TypeError):
         return False
 
-    existing = names.get(insref, ("", "", ""))
+    existing = names.get(insref, ("", "", "", "", ""))
     isin  = str(isin).strip()  if isin  else ""
     mlist = str(mlist).strip() if mlist else ""
-    names[insref] = (raw_name, isin or existing[1], mlist or existing[2])
+    # Sector is never supplied by the scrape/refresh callers — it is written only
+    # by scripts/tag_sectors.py. Carry whatever is already on the row so an
+    # ordinary name/isin/list update does not clear it.
+    sec_id   = existing[3] if len(existing) > 3 else ""
+    sec_name = existing[4] if len(existing) > 4 else ""
+    names[insref] = (raw_name, isin or existing[1], mlist or existing[2],
+                     sec_id, sec_name)
     return True
 
 
 def upsert_name_csv(insref, raw_name, isin=None, mlist=None):
-    """Update or insert insref -> raw_name, isin, list in stock_names.csv (4 columns)."""
+    """Update or insert insref -> raw_name, isin, list in stock_names.csv.
+    Sector columns (4,5), when present, are preserved by _merge_name."""
     with _names_lock:
         names = _read_names_csv()
         if _merge_name(names, insref, raw_name, isin, mlist):
@@ -123,6 +148,43 @@ def upsert_names_bulk(updates):
                            upd[2] if len(upd) > 2 else None,
                            upd[3] if len(upd) > 3 else None):
                 applied += 1
+        if applied:
+            _write_names_csv(names)
+        return applied
+
+
+def upsert_sectors_bulk(updates):
+    """Write sector tags onto existing rows in a single read + write.
+
+    updates: iterable of (insref, sector_id, sector_name).
+
+    Only touches columns 4 and 5 — name/isin/list are left exactly as they are,
+    and an insref not already in the file is ignored rather than inserted (the
+    sector feed knows about instruments the universe deliberately excludes).
+    Returns the number of rows updated.
+    """
+    with _names_lock:
+        names   = _read_names_csv()
+        applied = 0
+        for upd in updates:
+            upd = tuple(upd)
+            if len(upd) < 3:
+                continue
+            try:
+                iref = int(upd[0])
+            except (ValueError, TypeError):
+                continue
+            rec = names.get(iref)
+            if rec is None:
+                continue
+            sec_id   = str(upd[1]).strip() if upd[1] not in (None, "") else ""
+            sec_name = str(upd[2]).strip() if upd[2] not in (None, "") else ""
+            if not sec_name:
+                continue
+            if len(rec) > 4 and rec[3] == sec_id and rec[4] == sec_name:
+                continue                      # already tagged, nothing to write
+            names[iref] = (rec[0], rec[1], rec[2], sec_id, sec_name)
+            applied += 1
         if applied:
             _write_names_csv(names)
         return applied

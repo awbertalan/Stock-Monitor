@@ -87,6 +87,12 @@ CONFLUENCE_MIN_COUNT  = 2
 # fixes failed to move it. Removing a name here re-enables it immediately.
 ENTRY_DISABLED_PATTERNS = frozenset({"Hammer"})
 
+# Block a name already held in the Signals or Cross wallet, collapsed to the
+# company stem. This engine bought Electrolux A on 2026-08-24 while Signals held
+# Electrolux B — 140k of one company across two books. Trade-off (the wallets
+# stop being independent strategy samples) documented in engine_common.
+CROSS_WALLET_DEDUPE = True
+
 # Log retention (same in-place truncation trick as live_signals)
 LOG_RETAIN_HOURS     = 24
 LOG_ROTATE_MIN_BYTES = 200_000
@@ -97,6 +103,7 @@ LOG_ROTATE_MIN_BYTES = 200_000
 def load_state():
     return ec.load_state(STATE_PATH, {
         "cash":          WALLET_START,
+        "wallet_start":  WALLET_START,
         "positions":     {},
         "closed_trades": [],
         "last_run":      None,
@@ -356,14 +363,19 @@ def main():
     if is_friday_today():
         out(" No entries on Friday (weekend-risk rule).")
         _report_open(state, live, out)
-        _persist_ui_snapshot(state, live)
+        _persist_ui_snapshot(state, live,
+                             entry_gate="no entries on Friday (weekend-risk rule)",
+                             ts=now_local_ts)
         save_state(state)
         log.close()
         return
     if past_late_entry_cutoff():
         out(f" Past 16:30 cutoff ({datetime.now().strftime('%H:%M')}) — no new entries.")
         _report_open(state, live, out)
-        _persist_ui_snapshot(state, live)
+        _persist_ui_snapshot(
+            state, live,
+            entry_gate=f"past the 16:30 late-entry cutoff ({datetime.now().strftime('%H:%M')})",
+            ts=now_local_ts)
         save_state(state)
         log.close()
         return
@@ -372,6 +384,8 @@ def main():
     recent_exits = ec.build_recent_exits(state)
 
     held_stems = {L.company_stem(tk) for tk in state["positions"]}
+    foreign_stems = (ec.foreign_held_stems(ec.sibling_wallets("patterns"), L.company_stem)
+                     if CROSS_WALLET_DEDUPE else {})
 
     # ── 5. Pattern scan: for each tradable, detect on latest completed bar ───
     pattern_fires = []
@@ -435,6 +449,10 @@ def main():
         if stem in held_stems:
             new_skipped.append({"ticker": name, "reason": f"duplicate stem '{stem}'"})
             continue
+        if stem in foreign_stems:
+            new_skipped.append({"ticker": name,
+                                "reason": f"held in another wallet ({foreign_stems[stem]})"})
+            continue
         blocked, why = calendar_cache.has_nearby_event(t["insref"], today, cache=events_cache)
         if blocked:
             new_skipped.append({"ticker": name, "reason": f"event window: {why}"})
@@ -454,7 +472,15 @@ def main():
             new_skipped.append({"ticker": name, "reason": f"low cash {state['cash']:.0f}"})
             continue
         entry_price = lq.get("ask") or lq["last"]
-        shares, cost = ec.position_size(state["cash"], entry_price, TARGET_SIZE, CAP_SIZE, POS_MIN)
+        # Liquidity gate: this engine's 2026-08-24 Electrolux A fill was 53% of
+        # that name's entire day volume. Caps the position rather than only
+        # rejecting it, so a mid-liquidity ticker can still take a smaller size.
+        liq = ec.liquidity_verdict(t["insref"], entry_price, lq)
+        cap, liq_skip = ec.apply_liquidity_cap(liq, CAP_SIZE, POS_MIN)
+        if liq_skip:
+            new_skipped.append({"ticker": name, "reason": liq_skip})
+            continue
+        shares, cost = ec.position_size(state["cash"], entry_price, TARGET_SIZE, cap, POS_MIN)
         if shares <= 0:
             new_skipped.append({"ticker": name, "reason": f"size <{POS_MIN/1000:.0f}k after rounding"})
             continue
@@ -518,7 +544,7 @@ def main():
 
     _report_open(state, live, out)
 
-    _persist_ui_snapshot(state, live, primary)
+    _persist_ui_snapshot(state, live, primary, skipped=new_skipped, ts=now_local_ts)
     # live_cross consumes this. "patterns" is the entry-eligible set, so a
     # disabled pattern can never reach Cross as a tradable fire either.
     state["recent_pattern_fires"] = [
@@ -535,7 +561,7 @@ def _report_open(state, live, out):
     ec.report_open(state, live, out, "  [PAT]     ")
 
 
-def _persist_ui_snapshot(state, live, primary=()):
+def _persist_ui_snapshot(state, live, primary=(), skipped=(), entry_gate=None, ts=None):
     """Refresh the UI-facing fields (`ticker_paths`, `last_quotes`) from this
     run's live quotes.
 
@@ -573,6 +599,16 @@ def _persist_ui_snapshot(state, live, primary=()):
     prior_quotes = state.get("last_quotes", {}) or {}
     state["last_quotes"] = ec.build_quote_snapshot(
         state["positions"].keys(), live, prior_quotes, "live-patterns")
+
+    # This run's gate decisions, for the "Blocked this run" panel. Written here
+    # rather than at the entry stage precisely because the Friday and post-16:30
+    # branches never reach that stage: leaving the field alone would republish
+    # the previous run's rejections under a fresh `last_run`, which is the
+    # stale-data-behind-a-fresh-timestamp trap that hid frozen prices on this
+    # same page for weeks. `entry_gate` says *why* nothing was evaluated, which
+    # is strictly more informative than an empty list.
+    state["last_skipped"]     = [{**s, "ts": ts} for s in (skipped or ())]
+    state["last_entry_gate"]  = entry_gate
 
 
 if __name__ == "__main__":

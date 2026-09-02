@@ -76,6 +76,14 @@ LATE_ENTRY_CUTOFF_MIN = 16 * 60 + 30   # 16:30 local — no new entries after
 # with the run's `ts`; we keep candidates fresh for one full trading day.
 PATTERN_FIRE_FRESH_HOURS = 30
 
+# Block a name already held in the Signals or Patterns wallet, collapsed to the
+# company stem. Securitas B sat in both this wallet and Patterns through
+# 2026-08-24. Note this bites harder here than in the other two engines: every
+# Cross candidate is by construction a name both upstream engines like, so it is
+# more likely than average to already be held by one of them. Trade-off
+# documented in engine_common.
+CROSS_WALLET_DEDUPE = True
+
 # Entries paused 2026-08-18. The premise of this wallet is that Signals ∩ Patterns
 # yields *higher*-quality entries; the first 20 scored trades say it inverts them.
 # Tweezer Bottom runs 69.2% WR (n=13) in the Patterns wallet but 25.0% (n=8) here,
@@ -99,6 +107,7 @@ LOG_ROTATE_MIN_BYTES = 200_000
 def load_state():
     return ec.load_state(STATE_PATH, {
         "cash":          WALLET_START,
+        "wallet_start":  WALLET_START,
         "positions":     {},
         "closed_trades": [],
         "last_run":      None,
@@ -209,6 +218,21 @@ def compute_candidates(signals_state, patterns_state, state, today, now_local):
     recent_exits = ec.build_recent_exits(state)
 
     held_stems = {L.company_stem(tk) for tk in state["positions"]}
+    # Both upstream states are already in hand, so pass them in rather than
+    # re-reading the same two files off disk.
+    foreign_stems = (ec.foreign_held_stems(
+        ec.sibling_wallets("cross"), L.company_stem,
+        states={"Signals": signals_state, "Patterns": patterns_state})
+        if CROSS_WALLET_DEDUPE else {})
+
+    # Last known price per ticker, for the liquidity cap below. compute_candidates
+    # runs before this engine fetches its own quotes, so it borrows the upstream
+    # engines' snapshots; the entry loop re-checks against a live quote.
+    ref_price = {}
+    for src_state in (patterns_state, signals_state):
+        for tk, q in (src_state.get("last_quotes") or {}).items():
+            if isinstance(q, dict) and q.get("last"):
+                ref_price.setdefault(tk, q["last"])
 
     # Build insref lookup from the upstream engines' ticker_paths and stock_names.csv
     insref_map = _insref_map(signals_state, patterns_state)
@@ -245,10 +269,19 @@ def compute_candidates(signals_state, patterns_state, state, today, now_local):
                 skip.append(f"SL cooldown {cd['tds']}/{COOLDOWN_DAYS}d")
             else:
                 skip.append(f"same-day re-entry blocked ({cd['last_reason']})")
-        # Stem dedup
+        # Stem dedup — own book, then the other two wallets
         stem = L.company_stem(tk)
         if stem in held_stems:
             skip.append(f"duplicate stem '{stem}'")
+        elif stem in foreign_stems:
+            skip.append(f"held in another wallet ({foreign_stems[stem]})")
+        # Liquidity — can this name absorb at least the position floor?
+        px = ref_price.get(tk)
+        if insref and px:
+            _, liq_skip = ec.apply_liquidity_cap(
+                ec.liquidity_verdict(insref, px), CAP_SIZE, POS_MIN)
+            if liq_skip:
+                skip.append(liq_skip)
         # Friday / late cutoff
         if is_friday_today():
             skip.append("no Friday entries")
@@ -407,7 +440,12 @@ def main():
                 new_skipped.append({"ticker": tk, "reason": f"low cash {state['cash']:.0f}"})
                 continue
             entry_price = lq.get("ask") or lq["last"]
-            shares, cost = ec.position_size(state["cash"], entry_price, TARGET_SIZE, CAP_SIZE, POS_MIN)
+            liq = ec.liquidity_verdict(cand["insref"], entry_price, lq)
+            cap, liq_skip = ec.apply_liquidity_cap(liq, CAP_SIZE, POS_MIN)
+            if liq_skip:
+                new_skipped.append({"ticker": tk, "reason": liq_skip})
+                continue
+            shares, cost = ec.position_size(state["cash"], entry_price, TARGET_SIZE, cap, POS_MIN)
             if shares <= 0:
                 new_skipped.append({"ticker": tk, "reason": f"size <{POS_MIN/1000:.0f}k after rounding"})
                 continue
