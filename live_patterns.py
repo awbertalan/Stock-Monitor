@@ -51,6 +51,7 @@ import engine_common as ec                           # noqa: E402
 import live_signals as L                             # reuse helpers          # noqa: E402
 import calendar_cache                                # noqa: E402
 import version as V                                  # noqa: E402
+import notify                                        # noqa: E402
 
 ROOT       = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR  = os.path.join(ROOT, "state")
@@ -265,13 +266,23 @@ PATTERNS = [
 ]
 
 
-def detect_patterns_on_yesterday(bars, daily_closes):
+def detect_patterns_on_yesterday(bars, daily_closes, errors=None, ticker=None):
     """Run all 6 patterns on the LATEST COMPLETED bar.
 
     "Latest completed" = bars[-1] when bars[-1].date < today; otherwise bars[-2]
     (today's bar is still forming during market hours). Returns a list of
     pattern names that triggered. Empty list if no pattern fires or if there
-    aren't enough bars."""
+    aren't enough bars.
+
+    A detector that raises is still skipped for this stock — one malformed bar
+    must not abort the whole scan — but the exception is no longer thrown away.
+    Pass `errors` (a list) and the raise is recorded as
+    {ticker, pattern, error} for the caller to log and persist. It used to be
+    `except Exception: pass`, which made a broken detector look exactly like a
+    quiet market: the name just stopped appearing in `hits`, on every stock, on
+    every 3-min tick, with nothing in the log. That matters doubly now that
+    live_cross counts these fires for its own confluence gate — one dead
+    detector can stall entries in two wallets at once."""
     if not bars:
         return []
     today = datetime.now().date()
@@ -287,8 +298,9 @@ def detect_patterns_on_yesterday(bars, daily_closes):
         try:
             if fn(bars, idx, daily_closes):
                 hits.append(name)
-        except Exception:
-            pass
+        except Exception as e:
+            if errors is not None:
+                errors.append({"ticker": ticker, "pattern": name, "error": repr(e)})
     return hits
 
 
@@ -344,10 +356,33 @@ def main():
                 live[tk] = {"last": state["positions"][tk]["entry_price"],
                             "ok": True, "source": "stale"}
 
+    # A `lastprice` of 0 — halted name, no print yet, or a bad tick — reaches us
+    # as a perfectly ok-looking quote: get_live() only rejects payloads carrying
+    # an 'error' key. The entry path below already refuses those, but
+    # apply_exit_checks only skips on `last is None`, so a zero sails past
+    # `0 >= tp` and satisfies `0 <= sl` — booking a phantom stop-loss at the
+    # stop price against a position that never moved, plus a cooldown that then
+    # blocks re-entry. Tag such quotes 'stale' instead: that is the flag
+    # apply_exit_checks and build_quote_snapshot already honour, so the position
+    # is left alone this run and the UI keeps showing its last known-good price.
+    bad_quotes = []
+    for tk, q in live.items():
+        last = q.get("last")
+        if last is None or q.get("source") == "stale":
+            continue
+        if not isinstance(last, (int, float)) or last <= 0:
+            bad_quotes.append(f"{tk}={last!r}")
+            q["source"] = "stale"
+    if bad_quotes:
+        out(f" Non-positive live quote(s) ignored this run ({len(bad_quotes)}): "
+            + ", ".join(bad_quotes[:10])
+            + (f"  ... +{len(bad_quotes) - 10} more" if len(bad_quotes) > 10 else ""))
+
     # ── 2. Apply exit checks (reuses live_signals' limit-fill logic).
     # Honour user-queued manual sells from live_patterns_force_sell.json.
     force_sells = L.load_force_sells(FORCE_SELL_PATH)
-    closed_now  = L.apply_exit_checks(state, today, now_local_ts, live, force_sells)
+    closed_now  = L.apply_exit_checks(state, today, now_local_ts, live, force_sells,
+                                      engine="patterns")
     L.consume_force_sells(
         {t["ticker"] for t in closed_now if t["reason"] == "MANUAL"},
         path=FORCE_SELL_PATH,
@@ -389,6 +424,16 @@ def main():
 
     # ── 5. Pattern scan: for each tradable, detect on latest completed bar ───
     pattern_fires = []
+    # Scan-stage rejections (unreadable/short history, crash guard) are kept
+    # OUT of new_skipped: that list is persisted as state["last_skipped"] and
+    # the page's "Blocked this run" panel describes it as "pattern fires the
+    # engine refused" — these names never fired anything. In a market-wide
+    # drawdown the crash guard alone can reject most of the universe, which
+    # would bury the genuine entry-stage blocks (confluence, cooldown, stem
+    # dedup, liquidity) in an unpaginated panel and push them out of the
+    # first-10 log block. Logged below under their own heading instead.
+    scan_skipped = []
+    det_errors = []
     for t in primary:
         name = t["name"]
         if name in state["positions"]:
@@ -405,17 +450,32 @@ def main():
         try:
             for ts, p in L.load_history_closes(t["csv"]):
                 daily_closes[datetime.fromtimestamp(ts / 1000, tz=timezone.utc).date()] = p
-        except OSError:
-            pass
+        except (OSError, csv.Error, UnicodeDecodeError) as e:
+            # Was `except OSError: pass`, which left daily_closes empty and let
+            # the run continue — and an empty dict does not fail the crash guard
+            # below, it skips it. Missing history silently *loosened* the one
+            # gate that refuses a falling knife (and simultaneously starved
+            # _downtrend_before of its wider context). A history we cannot read
+            # disqualifies the name; it is never evidence that it is safe.
+            scan_skipped.append({"ticker": name,
+                                 "reason": f"history unreadable ({e.__class__.__name__})"})
+            continue
 
-        # Crash guard
+        # Crash guard — inverted deliberately: fewer than 21 daily closes means
+        # ret_20d cannot be computed, so the guard cannot clear the name.
         all_closes = sorted(daily_closes.keys())
-        if len(all_closes) >= 21:
-            ret20 = daily_closes[all_closes[-1]] / daily_closes[all_closes[-21]] - 1.0
-            if ret20 <= CRASH_GUARD:
-                continue
+        if len(all_closes) < 21:
+            scan_skipped.append({"ticker": name,
+                                 "reason": f"insufficient daily history for crash guard ({len(all_closes)}/21)"})
+            continue
+        ret20 = daily_closes[all_closes[-1]] / daily_closes[all_closes[-21]] - 1.0
+        if ret20 <= CRASH_GUARD:
+            scan_skipped.append({"ticker": name,
+                                 "reason": f"crash guard: ret_20d {ret20*100:+.1f}%"})
+            continue
 
-        hits = detect_patterns_on_yesterday(bars, daily_closes)
+        hits = detect_patterns_on_yesterday(bars, daily_closes,
+                                            errors=det_errors, ticker=name)
         if hits:
             # "patterns" drives entries and the confluence count; "all_detected"
             # keeps the full picture for the log and for /live-patterns.
@@ -424,6 +484,30 @@ def main():
                 "patterns":     [h for h in hits if h not in ENTRY_DISABLED_PATTERNS],
                 "all_detected": hits,
             })
+
+    # Detector health. A raise inside a detector is per-stock, but a detector
+    # that trips on a shape common across the universe stops firing for
+    # *everything* — and since live_cross counts these fires for its own
+    # confluence gate, that silently drains two wallets while both logs look
+    # normal. Summarised here so the run log and /live-patterns can say
+    # "broken" instead of "no signal". Persisted via _persist_ui_snapshot so
+    # every exit path — including the Friday / post-16:30 early returns, which
+    # never scan — rewrites it and a healthy run clears a previous report.
+    by_pattern = {}
+    for e in det_errors:
+        d = by_pattern.setdefault(e["pattern"], {"count": 0,
+                                                 "sample": e["error"],
+                                                 "sample_ticker": e["ticker"]})
+        d["count"] += 1
+    if by_pattern:
+        out(f"\n--- DETECTOR ERRORS ({len(det_errors)} raise(s) across "
+            f"{len(by_pattern)} pattern(s)) ---")
+        for p, d in sorted(by_pattern.items(), key=lambda kv: -kv[1]["count"]):
+            out(f"  !! {p:<22} raised on {d['count']} name(s) — "
+                f"e.g. {d['sample_ticker']}: {d['sample']}")
+    det_report = {"ts": now_local_ts,
+                  "scanned": len(primary),
+                  "by_pattern": by_pattern}
 
     # ── 6. Enter positions for unique fires (respecting cooldown / stem dedup) ──
     new_entries = []
@@ -465,7 +549,10 @@ def main():
                 new_skipped.append({"ticker": name, "reason": f"same-day re-entry blocked (just exited {cd['last_reason']})"})
             continue
         lq = live.get(name)
-        if not lq or not lq.get("ok") or lq.get("last") in (None, 0):
+        # 'stale' here means the sanitiser above rejected this run's quote as
+        # non-positive — never size a position off it.
+        if (not lq or not lq.get("ok") or lq.get("last") in (None, 0)
+                or lq.get("source") == "stale"):
             new_skipped.append({"ticker": name, "reason": "no live quote"})
             continue
         if state["cash"] < POS_MIN:
@@ -513,6 +600,9 @@ def main():
             "entry": entry_price, "shares": shares, "cost": cost,
             "tp": tp_price, "sl": sl_price, "exit_by": exit_by.isoformat(),
         })
+        notify.queue_buy("patterns", name, entry_price, shares, cost=cost,
+                         tp=tp_price, sl=sl_price, exit_by=exit_by.isoformat(),
+                         pattern=" + ".join(fire["patterns"]))
 
     # ── 7. Reporting ──────────────────────────────────────────────────────────
     open_value = sum(p["shares"] * (live.get(tk, {}).get("last") or p["entry_price"])
@@ -542,9 +632,17 @@ def main():
         if len(new_skipped) > 10:
             out(f"  ... +{len(new_skipped) - 10} more skipped")
 
+    if scan_skipped:
+        out(f"\n--- NOT SCANNED ({len(scan_skipped)}) ---")
+        for s in scan_skipped[:10]:
+            out(f"  not scanned {s['ticker']:<22} {s['reason']}")
+        if len(scan_skipped) > 10:
+            out(f"  ... +{len(scan_skipped) - 10} more not scanned")
+
     _report_open(state, live, out)
 
-    _persist_ui_snapshot(state, live, primary, skipped=new_skipped, ts=now_local_ts)
+    _persist_ui_snapshot(state, live, primary, skipped=new_skipped, ts=now_local_ts,
+                         detector_errors=det_report)
     # live_cross consumes this. "patterns" is the entry-eligible set, so a
     # disabled pattern can never reach Cross as a tradable fire either.
     state["recent_pattern_fires"] = [
@@ -554,6 +652,7 @@ def main():
     ]
 
     save_state(state)
+    notify.flush(out=out)     # only after the wallet is written — see lib/notify.py
     log.close()
 
 
@@ -561,7 +660,8 @@ def _report_open(state, live, out):
     ec.report_open(state, live, out, "  [PAT]     ")
 
 
-def _persist_ui_snapshot(state, live, primary=(), skipped=(), entry_gate=None, ts=None):
+def _persist_ui_snapshot(state, live, primary=(), skipped=(), entry_gate=None, ts=None,
+                         detector_errors=None):
     """Refresh the UI-facing fields (`ticker_paths`, `last_quotes`) from this
     run's live quotes.
 
@@ -609,6 +709,13 @@ def _persist_ui_snapshot(state, live, primary=(), skipped=(), entry_gate=None, t
     # is strictly more informative than an empty list.
     state["last_skipped"]     = [{**s, "ts": ts} for s in (skipped or ())]
     state["last_entry_gate"]  = entry_gate
+
+    # Detector health, same reasoning as last_skipped: written on every exit
+    # path so a report from an earlier run can never survive behind a fresh
+    # `last_run`. The Friday and post-16:30 branches never scan, so they clear
+    # it (scanned: 0) rather than republishing an older run's raises.
+    state["detector_errors"] = (detector_errors if detector_errors is not None
+                                else {"ts": ts, "scanned": 0, "by_pattern": {}})
 
 
 if __name__ == "__main__":

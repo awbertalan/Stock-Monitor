@@ -1,14 +1,74 @@
 from urllib.request import urlopen
+from contextlib import contextmanager
 import csv, os, re, time, json, threading
+try:
+    import fcntl                      # POSIX only; absent on Windows
+except ImportError:                   # pragma: no cover - not a target platform
+    fcntl = None
 import env_loader
+import engine_common as ec
 env_loader.load_env()
 
 _ROOT          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root (this module lives in lib/)
 _TEMPLATE_PATH = os.path.join(_ROOT, 'web', 'stock_template.html')
 _NAMES_CSV     = os.path.join(_ROOT, 'stock_names.csv')
 _names_lock    = threading.Lock()
+# Separate lockfile rather than flock on stock_names.csv itself: every write
+# ends in os.replace, which swaps the inode out from under any lock held on the
+# old one.
+_NAMES_LOCKFILE = _NAMES_CSV + '.lock'
 TOKEN          = os.environ["MILLISTREAM_TOKEN"]
 _BASE          = "https://mws-2.millistream.com/mws.fcgi"
+
+
+@contextmanager
+def _names_file_lock(timeout=30.0):
+    """Serialise the stock_names.csv read-modify-write ACROSS processes.
+
+    _names_lock only covers threads inside one interpreter, and this file has
+    writers in more than one: app.py's refresh sweep (upsert_names_bulk at the
+    end of a sweep that can run for many minutes) and scripts/tag_sectors.py
+    (upsert_sectors_bulk). Because _write_names_csv is atomic, a writer holding
+    a stale snapshot never produces a torn file — it silently reinstates it, so
+    sector tags (column 5, feeding sector_concentration) or cap tiers (column 3,
+    which build_universe filters all three engines on) written meanwhile just
+    vanish with nothing logged.
+
+    Best effort by design: acquired non-blocking with retries, and if the lock
+    cannot be created or is still held after `timeout` we log and proceed
+    unserialised rather than stalling a refresh worker forever. That is no worse
+    than the behaviour this replaces.
+    """
+    if fcntl is None:
+        yield False
+        return
+    try:
+        fd = os.open(_NAMES_LOCKFILE, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as e:
+        print(f" stock_names.csv: lockfile unavailable ({e!r}) — writing unserialised")
+        yield False
+        return
+    held     = False
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    print(f" stock_names.csv: still locked by another process after "
+                          f"{timeout:.0f}s — writing anyway (last writer wins)")
+                    break
+                time.sleep(0.1)
+        yield held
+    finally:
+        try:
+            if held:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _fetch_isin(insref):
@@ -120,7 +180,7 @@ def _merge_name(names, insref, raw_name, isin=None, mlist=None):
 def upsert_name_csv(insref, raw_name, isin=None, mlist=None):
     """Update or insert insref -> raw_name, isin, list in stock_names.csv.
     Sector columns (4,5), when present, are preserved by _merge_name."""
-    with _names_lock:
+    with _names_lock, _names_file_lock():
         names = _read_names_csv()
         if _merge_name(names, insref, raw_name, isin, mlist):
             _write_names_csv(names)
@@ -137,7 +197,7 @@ def upsert_names_bulk(updates):
     updates: iterable of (insref, raw_name) or (insref, raw_name, isin, mlist).
     Returns the number of entries applied.
     """
-    with _names_lock:
+    with _names_lock, _names_file_lock():
         names   = _read_names_csv()
         applied = 0
         for upd in updates:
@@ -163,7 +223,7 @@ def upsert_sectors_bulk(updates):
     sector feed knows about instruments the universe deliberately excludes).
     Returns the number of rows updated.
     """
-    with _names_lock:
+    with _names_lock, _names_file_lock():
         names   = _read_names_csv()
         applied = 0
         for upd in updates:
@@ -278,8 +338,48 @@ def update_csvs(name, insref, rows, output_dir='.', rel_path=None, inst_type='',
     # 7-day window — overwrite with only the last 7 days of rows
     cutoff_ms = (time.time() - 7 * 24 * 3600) * 1000
     seven_day_rows = [r for r in rows if r[0] >= cutoff_ms]
-    with open(f"{base}_7d.csv", 'w', newline='', encoding='utf-8') as f:
-        csv.writer(f).writerows(seven_day_rows)
+    seven_path = f"{base}_7d.csv"
+
+    # Refuse to replace a populated 7d file with nothing.
+    #
+    # fetch_stock only raises when the ':[' marker or the header is missing. A
+    # payload whose field order shifted still "parses": every entry falls into
+    # the per-entry `except (IndexError, ValueError): continue` and the call
+    # returns rows=[] like a normal quiet stock. Opening this file in 'w' then
+    # truncated it to zero bytes before anyone knew the fetch was any good —
+    # and one Update All does that to the whole universe in a single sweep.
+    # These minute prints exist nowhere else: the deep archive keeps daily
+    # closes, and the feed only serves the trailing 7 days, so the loss is
+    # permanent. It is also invisible: this file is the sole price input of the
+    # live_patterns engine (load_intraday_minute_closes globs *_7d.csv), which
+    # would find no bars, detect no patterns, log a clean run and quietly stop
+    # trading.
+    #
+    # The trigger is `not rows` — nothing parsed at all, which is the evidence
+    # of the bad fetch above — and NOT an empty 7-day window. A thin name whose
+    # newest print sits just outside the cutoff still parses fine and returns
+    # rows; that is "the stock was quiet", not "the feed broke", and it falls
+    # through to the normal empty write below so the file self-clears exactly
+    # as it always did. Gating on the empty window instead froze week-old
+    # prints on disk and re-reported an error on every 15-minute sweep for any
+    # instrument that simply stopped trading.
+    #
+    # Refuse by returning False rather than raising: update_csvs is the first
+    # call in each caller's per-stock try block and the callers do more work
+    # after it — infoScrapper.sync_history (the daily History.csv live_signals
+    # reads), the name/index upserts. Unwinding them would stop the DAILY
+    # record too, and under the universe-wide payload shift this guard exists
+    # to defend against that would starve live_signals as well.
+    if not rows and os.path.exists(seven_path) and os.path.getsize(seven_path) > 0:
+        print(
+            f" {name}_{insref}_7d.csv: fetch parsed 0 rows at all — "
+            f"keeping the {os.path.getsize(seven_path)} bytes already on disk"
+        )
+        return False
+
+    # Atomic swap rather than open('w'): the destination is only ever the old
+    # file or the complete new one, never a half-written one.
+    ec.write_rows_atomic(seven_path, seven_day_rows)
 
     if rel_path:
         _generate_stock_html(output_dir, name, insref, rel_path, inst_type, currency, display_name)
@@ -288,6 +388,7 @@ def update_csvs(name, insref, rows, output_dir='.', rel_path=None, inst_type='',
         f"{name}_{insref}.csv  +{len(new_rows)} new rows  |  "
         f"{name}_{insref}_7d.csv  {len(seven_day_rows)} rows"
     )
+    return True
 
 
 if __name__ == '__main__':

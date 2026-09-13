@@ -168,6 +168,53 @@ nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
 }
 .live-widget .lw-mini:hover { color: var(--text); }
 
+/* Recent trades — the widget's compact echo of the Live Overview trade feed.
+   Two lines per trade because 220px cannot hold the overview's columns: the
+   identity + outcome on top, the two fill prices + exit clock beneath. Full
+   detail (both timestamps, shares, P&L, engine) rides in the row tooltip. */
+.live-widget .lw-trades { margin-top: 6px; }
+.live-widget .lw-trade {
+  display: block; padding: 5px 0; text-decoration: none; color: var(--text);
+  border-bottom: 1px dashed var(--border);
+}
+.live-widget .lw-trade:last-child { border-bottom: none; }
+.live-widget .lw-trade:hover .lw-trade-tk { color: var(--accent); }
+.live-widget .lw-trade-top {
+  display: flex; align-items: center; gap: 5px; font-size: 11.5px;
+}
+.live-widget .lw-trade-tk {
+  flex: 1; min-width: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; font-weight: 500;
+}
+.live-widget .lw-trade-ret {
+  font-variant-numeric: tabular-nums; font-weight: 600; font-size: 11px;
+  white-space: nowrap;
+}
+/* Exit reason, reusing the .reason-* palette from the live tables so TP is the
+   same green here as in the feed. Smaller and unpadded — at this size the
+   table pill's 8px side padding pushes the return off the row. */
+.live-widget .lw-trade-tag {
+  font-size: 8.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.3px; padding: 1px 4px; border-radius: 6px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.live-widget .lw-trade-bot {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 9.5px; color: var(--text-muted); margin-top: 1px;
+  padding-left: 13px;            /* clears the engine dot above */
+  font-variant-numeric: tabular-nums;
+}
+.live-widget .lw-trade-px {
+  flex: 1; min-width: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.live-widget .lw-trade-when { flex-shrink: 0; }
+.live-widget .lw-more {
+  display: block; margin-top: 7px; font-size: 10px; font-weight: 600;
+  color: var(--accent); text-decoration: none;
+}
+.live-widget .lw-more:hover { text-decoration: underline; }
+
 .live-widget .up   { color: var(--positive); }
 .live-widget .down { color: var(--negative); }
 
@@ -242,6 +289,13 @@ table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .reason-TP      { background: #e6f6ee; color: #1a8042; }
 .reason-SL      { background: #fce8ea; color: #b32a36; }
 .reason-TIMEOUT { background: #f0f0f5; color: #555;   }
+.reason-MANUAL  { background: var(--accent-soft);  color: var(--accent); }
+/* An outage artefact, not a strategy exit — see scoredTrades() in
+   live_common.js. Amber so it reads as "don't score this one". */
+.reason-STALE   { background: var(--warning-soft); color: var(--warning); }
+/* Feed-only: the position hasn't been sold yet. Outlined rather than filled so
+   it is distinguishable at a glance from the booked MANUAL exit above. */
+.reason-OPEN    { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 .sell-btn { background: #fff; color: #b08000; border: 1px solid #e0c060; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap; }
 .sell-btn:hover:not(:disabled) { background: #fff4d6; }
 .sell-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: not-allowed; background: #fff; }
@@ -284,6 +338,13 @@ table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     padding: 14px 16px !important;
     border-radius: var(--radius-md) !important;
   }
+
+  /* Columns the live pages mark as droppable on phones (Ver, Source, Shares,
+     Spread...). live_signals, live_patterns and live_cross each carried a
+     byte-identical copy of this rule in their own media query, so a fourth
+     page adding a wide table (the overview's trade feed) silently kept every
+     column. Shared here instead. */
+  .sig-table .mobile-hide { display: none; }
 
   /* Tables that don't fit: let them scroll horizontally within their card.
      The card itself stays full-width so it visually frames the scroll area. */
@@ -337,3 +398,45 @@ table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ver-excl { color: var(--text-muted); font-size: 10px; margin-left: 3px; }
 .ver-note { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
 .panel-note { font-weight: normal; text-transform: none; letter-spacing: 0; color: var(--text-muted); }
+
+/* Pagination footer — lives inside the section card, below its table. Shared
+   by every live page: Signals paginates several tables, Patterns and Cross
+   their closed-trades table. Was inline in live_signals.html until the other
+   two engines needed it too. */
+.pagination {
+  display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap;             /* narrow cards: wrap instead of widening the page */
+  gap: 12px; margin-top: 12px; font-size: 12px;
+}
+.page-btn {
+  padding: 6px 12px; border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text-subtle); cursor: pointer;
+  font-family: Arial, sans-serif; font-size: 12px;
+}
+.page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.page-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: default; }
+.page-info { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* Quote-quality cells on Open positions — shared by all three live pages.
+   .warn = the bid-ask spread is 25%+ of the position's TP distance, .neg = 50%+.
+   Thresholds live in live_common.js (SPREAD_WARN / SPREAD_BAD). */
+.sig-table td.warn { color: var(--warning); }
+.sig-table td.neg  { color: var(--negative); }
+
+/* Sign colouring inside tables. `.up` / `.down` (specificity 0,1,0) lose to
+   `.sig-table td` (0,1,1), so every Return / P&L column on every live page had
+   been rendering in the default near-black since these table rules moved into
+   the shared sheet — the one thing those columns exist to show. Restated here
+   at matching specificity, using the same token pair as the TP / SL pills so a
+   green number and a green pill on the same row are the same green (the global
+   .up / .down are a lighter hard-coded pair, kept for the stat cards). */
+.sig-table td.up      { color: var(--positive); }
+.sig-table td.down    { color: var(--negative); }
+.sig-table td.neutral { color: var(--text-subtle); }
+.q-stale {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--warning); margin-left: 4px;
+}
+/* Open positions runs 13-14 columns on every engine, so hold the ISO exit
+   date on one line instead of letting it break. */
+.sig-table .exit-cell { white-space: nowrap; }

@@ -96,7 +96,16 @@
     }
     .btn-full:hover    { background: var(--positive-soft); }
     .btn-full:disabled { color: var(--text-muted); border-color: var(--border); cursor: default; background: var(--surface); }
-    #save-status, #isin-status, #lists-status { font-size: 13px; color: var(--text-subtle); }
+    .notif-sinks { display: flex; flex-direction: column; gap: 8px; padding-left: 4px; }
+    .notif-hint {
+      font-size: 12px; color: var(--text-muted); line-height: 1.5;
+      margin: -2px 0 6px 26px; max-width: 640px;
+    }
+    .notif-hint code {
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: 4px; padding: 1px 4px; font-size: 11px;
+    }
+    #save-status, #isin-status, #lists-status, #notif-test-status { font-size: 13px; color: var(--text-subtle); }
     .status-ok   { color: var(--positive) !important; }
     .status-err  { color: var(--negative) !important; }
     .status-warn { color: var(--warning)  !important; }
@@ -238,6 +247,60 @@
   </div>
 
   <div class="section">
+    <div class="section-title">Trade Notifications</div>
+    <div class="section-desc">
+      One notification per fill, sent by the <strong>engines</strong> as they trade —
+      not by this page. A buy names the ticker, size, price, TP/SL and exit date;
+      a sell adds the return, P&amp;L and how long it was held. Queued during a run
+      and sent only once the wallet has been written, so nothing is announced
+      that a crash then rolls back.
+    </div>
+
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+      <label class="toggle-label">
+        <input type="checkbox" id="notif-enabled" onchange="saveNotif({ enabled: this.checked })">
+        Notify on every buy and sell
+      </label>
+      <span id="notif-status" style="font-size:12px; color:var(--text-muted);"></span>
+    </div>
+
+    <div id="notif-sinks" class="notif-sinks">
+      <label class="toggle-label">
+        <input type="checkbox" id="notif-macos" onchange="saveNotif({ macos: this.checked })">
+        macOS banner
+      </label>
+      <div class="notif-hint">
+        Posted by <code>osascript</code>, so macOS attributes it to
+        <strong>Script Editor</strong> — it must be allowed in
+        System&nbsp;Settings → Notifications, or the banner is dropped with no error.
+        Use Test below to check.
+      </div>
+
+      <label class="toggle-label">
+        <input type="checkbox" id="notif-macos-sound" onchange="saveNotif({ macos_sound: this.checked })">
+        Play a sound with the banner
+      </label>
+
+      <label class="toggle-label">
+        <input type="checkbox" id="notif-ntfy" onchange="saveNotif({ ntfy: this.checked })">
+        Push to phone via ntfy
+      </label>
+      <div class="notif-hint">
+        Subscribe to your topic in the <strong>ntfy</strong> app (iOS / Android) and
+        pushes arrive anywhere. The topic name is the only credential — anyone who
+        knows it can read your trades and push to your phone — so it lives in
+        <code>.env</code> as <code>NTFY_TOPIC</code> and is never sent to this page.
+        <span id="notif-topic-state"></span>
+      </div>
+    </div>
+
+    <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <button class="btn-full" id="btn-notif-test" onclick="testNotif()">Send Test Notification</button>
+      <span id="notif-test-status"></span>
+    </div>
+  </div>
+
+  <div class="section">
     <div class="section-title">ISIN Database</div>
     <div class="section-desc">
       Update ISIN numbers for all stocks in the database. This will fetch and populate
@@ -322,6 +385,111 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ auto_refresh_enabled: enabled })
       });
+    }
+
+    // Posts only the toggle that changed — app.py merges it into the existing
+    // notifications block rather than replacing it.
+    //
+    // The reply is READ, not assumed. A failed write leaves settings.json
+    // without a notifications block, and notify.config() then falls back to
+    // DEFAULTS — everything ON. "Save failed" and "everything is on" are the
+    // same file state, so a fire-and-forget toggle would print "the engines
+    // will trade silently" while every fill keeps pushing. On failure the
+    // checkbox goes back to what the file still holds, so the page never shows
+    // a state the engines are not reading.
+    const NOTIF_BOXES = {
+      enabled:     'notif-enabled',
+      macos:       'notif-macos',
+      macos_sound: 'notif-macos-sound',
+      ntfy:        'notif-ntfy',
+    };
+
+    function saveNotif(patch) {
+      const el = document.getElementById('notif-status');
+      fetch('/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notifications: patch })
+      })
+        .then(r => r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status })))
+        .then(d => {
+          if (!d || !d.ok) throw new Error((d && d.error) || 'save rejected');
+          el.className = '';
+          applyNotifEnabled();
+          return refreshNotifState();
+        })
+        .catch(e => {
+          Object.keys(patch).forEach(k => {
+            const box = document.getElementById(NOTIF_BOXES[k]);
+            if (box) box.checked = !patch[k];
+          });
+          applyNotifEnabled();
+          el.textContent = 'Not saved: ' + (e.message || e);
+          el.className   = 'status-err';
+        });
+    }
+
+    function applyNotifEnabled() {
+      const on = document.getElementById('notif-enabled').checked;
+      document.getElementById('notif-sinks').style.opacity = on ? '1' : '0.4';
+      document.getElementById('notif-status').textContent =
+        on ? '' : 'Off — the engines will trade silently';
+      document.querySelectorAll('#notif-sinks input').forEach(i => { i.disabled = !on; });
+    }
+
+    // Which sinks the ENGINES will actually use, straight from lib/notify.py —
+    // including whether .env carries a topic. A checkbox saying "ntfy" with no
+    // topic behind it is exactly the silent no-op this line exists to expose.
+    function refreshNotifState() {
+      return fetch('/notify-status').then(r => r.json()).then(st => {
+        const el = document.getElementById('notif-topic-state');
+        if (!el) return;
+        if (st.error) { el.innerHTML = ` <span class="status-err">status unavailable: ${esc(st.error)}</span>`; return; }
+        el.innerHTML = st.ntfy_topic_set
+          ? ` <span class="status-ok">NTFY_TOPIC is set</span> · server ${esc(st.ntfy_server)}`
+          : ` <span class="status-warn">NTFY_TOPIC is not set — add it to .env and restart the app; nothing will be pushed until then</span>`;
+      }).catch(() => {});
+    }
+
+    function testNotif() {
+      const btn = document.getElementById('btn-notif-test');
+      const el  = document.getElementById('notif-test-status');
+      btn.disabled = true;
+      el.className = '';
+      el.textContent = 'Sending…';
+      fetch('/notify-test', { method: 'POST' })
+        .then(r => r.json())
+        .then(res => {
+          if (res.error) {
+            el.className = 'status-err';
+            el.textContent = 'Failed: ' + res.error;
+          } else if (res.failed) {
+            // Failures first: a send that was ATTEMPTED and refused (ntfy
+            // unreachable, osascript non-zero) is not "no sink is active" —
+            // that wording sends the user editing a .env that is already
+            // correct. The real error only lives in res.log.
+            el.className = 'status-err';
+            el.textContent = res.failed + ' send(s) failed'
+              + (res.sent ? ' — ' + res.sent + ' got through' : '')
+              + (res.dropped ? ', ' + res.dropped + ' dropped' : '')
+              + (res.log ? ' — ' + res.log : '');
+          } else if (!res.sent) {
+            el.className = 'status-warn';
+            el.textContent = res.enabled
+              ? ((res.sinks && res.sinks.length)
+                   ? 'Nothing sent (' + (res.log || 'no reason reported') + ')'
+                   : 'Nothing sent — no sink is active (' + (res.log || 'check .env / toggles') + ')')
+              : 'Notifications are switched off';
+          } else {
+            el.className = res.failed ? 'status-warn' : 'status-ok';
+            el.textContent = `Sent ${res.sent} of ${res.sent + res.failed} via `
+              + (res.sinks.join(' + ') || 'nothing')
+              + '. Check your Mac' + (res.ntfy_ready ? ' and phone' : '')
+              + ' — if nothing arrived, allow Script Editor in System Settings → Notifications.';
+          }
+        })
+        .catch(e => { el.className = 'status-err'; el.textContent = 'Failed: ' + e; })
+        .finally(() => { btn.disabled = false; });
     }
 
     function updateISINs() {
@@ -432,6 +600,14 @@
       document.getElementById('market-start').value = settings.market_hours_start ?? 9;
       document.getElementById('market-end').value = settings.market_hours_end ?? 17;
       document.getElementById('refresh-workers').value = settings.refresh_workers ?? 10;
+
+      const n = settings.notifications || {};
+      document.getElementById('notif-enabled').checked     = n.enabled     ?? true;
+      document.getElementById('notif-macos').checked       = n.macos       ?? true;
+      document.getElementById('notif-macos-sound').checked = n.macos_sound ?? true;
+      document.getElementById('notif-ntfy').checked        = n.ntfy        ?? true;
+      applyNotifEnabled();
+      refreshNotifState();
 
       const uf         = settings.update_filter || {};
       const typeFilter = uf.types;      // null = all

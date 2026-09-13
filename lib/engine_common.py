@@ -19,6 +19,7 @@ lets two latent bugs be fixed once:
 """
 
 import csv
+import io
 import json
 import os
 import statistics
@@ -60,6 +61,50 @@ def write_json_atomic(path, obj, **dump_kwargs):
         raise
 
 
+def write_text_atomic(path, text, encoding="utf-8", newline=""):
+    """Write ``text`` to a temp file in the same directory, then atomically
+    ``os.replace`` it onto ``path``.
+
+    The CSV counterpart of write_json_atomic(). Several writers used to open the
+    real file in "w" mode — which truncates it *before* the new content is
+    known to be good — so a mid-write crash, an empty upstream fetch or a raised
+    parser left the destination short or empty. For History.csv and the
+    per-stock OHLC bars that file is the only copy of data going back years.
+    Building the full replacement first and swapping it in means the destination
+    is only ever the old file or the complete new one."""
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    # suffix is deliberately NOT ".csv": these land in the per-stock
+    # Instrumenttype/**/<stock>/ folders, which app.py enumerates generically by
+    # extension (a folder counts as a stock if it holds any *.csv, and the /files
+    # listing shows every *.csv). os.listdir doesn't hide dotfiles, so a ".csv"
+    # temp name would show up mid-write — and stay forever if the process is
+    # killed between mkstemp() and os.replace(), the exact case this helper is
+    # here for. Nothing reads the temp name; only the final os.replace matters.
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_rows_atomic(path, rows, encoding="utf-8"):
+    """Atomically write an iterable of row-sequences as CSV. Thin wrapper over
+    write_text_atomic() so callers don't hand-join fields and lose quoting."""
+    buf = io.StringIO()
+    csv.writer(buf).writerows(rows)
+    write_text_atomic(path, buf.getvalue(), encoding=encoding)
+
+
+
 # ── Wallet state ─────────────────────────────────────────────────────────────
 
 def load_state(path, default_skeleton):
@@ -76,8 +121,110 @@ def load_state(path, default_skeleton):
     return dict(default_skeleton)
 
 
+SNAPSHOT_RETAIN_DAILIES = 30
+
+
+def _prune_snapshots(backups_dir, prefix, retain):
+    """Keep the newest ``retain`` dailies plus the first snapshot of each month,
+    delete the rest — the same retention shape as rotate_log(). Enough recent
+    detail to undo a bad script, plus a thin monthly spine so a mistake noticed
+    long after the fact still has something older than the window to diff
+    against."""
+    days = []
+    for fname in os.listdir(backups_dir):
+        if not (fname.startswith(prefix) and fname.endswith(".json")):
+            continue
+        day = fname[len(prefix):-len(".json")]
+        try:
+            datetime.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            continue   # hand-made backups (.pre_deposit, .bak.*) are not ours to prune
+        days.append(day)
+    days.sort()
+    keep = set(days[-retain:])
+    monthly = {}
+    for day in days:
+        monthly.setdefault(day[:7], day)
+    keep.update(monthly.values())
+    for day in days:
+        if day in keep:
+            continue
+        try:
+            os.unlink(os.path.join(backups_dir, prefix + day + ".json"))
+        except OSError:
+            pass
+
+
+def snapshot_state(path, backups_dir=None, retain=SNAPSHOT_RETAIN_DAILIES):
+    """Copy the wallet at ``path`` to
+    ``state/backups/daily/<name>.<YYYY-MM-DD>.json`` once per local day, taken
+    *before* the day's first overwrite.
+
+    The wallet files are the only copy of every trade the engines have ever
+    booked: ``state/`` is gitignored so no version history exists, and
+    save_state() rewrites each file in full every three minutes.
+    write_json_atomic() protects against a *torn* write, which is a different
+    failure from a *wrong* one — nothing stopped a maintenance script or a bug
+    in a mutation path from committing structurally-valid but wrong state, and
+    this repo has already rewritten the historical record in place three times
+    (retighten_stops, backfill_versions, the pre_stale_reclass relabel), each
+    protected only by a human remembering to copy the file first. A daily
+    pre-write snapshot turns "noticed a week later" from unrecoverable into at
+    most one day of lost book.
+
+    Returns the path of today's snapshot — whether taken now or earlier in the
+    day — or None if there is no wallet on disk yet to copy. Cost on the
+    3-minute hot path is one os.path.exists(): the copy happens on the first
+    save of each day only."""
+    if not os.path.exists(path):
+        return None                     # brand-new wallet — nothing to preserve yet
+    name   = os.path.basename(path)
+    stem   = name[:-len(".json")] if name.endswith(".json") else name
+    prefix = stem + "."
+    if backups_dir is None:
+        backups_dir = os.path.join(os.path.dirname(os.path.abspath(path)),
+                                   "backups", "daily")
+    dest = os.path.join(backups_dir, prefix + today_local().isoformat() + ".json")
+    if os.path.exists(dest):
+        return dest
+    os.makedirs(backups_dir, exist_ok=True)
+    with open(path, "rb") as f:
+        payload = f.read()
+    # Parse before enshrining: snapshotting an already-broken file would burn
+    # the day's only recovery point, so an unparseable source raises instead.
+    json.loads(payload.decode("utf-8"))
+    fd, tmp = tempfile.mkstemp(dir=backups_dir, prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    _prune_snapshots(backups_dir, prefix, retain)
+    return dest
+
+
 def save_state(path, state):
     state["last_run"] = datetime.now(timezone.utc).isoformat()
+    # Snapshot before the overwrite, so the copy is the last known-good book
+    # rather than whatever this run is about to write. A backup that quietly
+    # stopped running is the exact failure it exists to guard against, so the
+    # reason is persisted into the wallet (and cleared on the next success)
+    # instead of being swallowed — a save must still go through, the wallet of
+    # record cannot be held hostage to a full disk.
+    try:
+        dest = snapshot_state(path)
+        if dest:
+            state["last_snapshot"] = os.path.basename(dest)
+        state.pop("snapshot_error", None)
+    except Exception as exc:
+        state["snapshot_error"] = "%s: %s" % (type(exc).__name__, exc)
     write_json_atomic(path, state, default=str)
 
 

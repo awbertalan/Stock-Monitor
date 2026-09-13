@@ -1,6 +1,9 @@
 from urllib.request import urlopen
 from datetime import datetime, timezone, timedelta
-import json, csv, os
+import json, csv, io, os
+import engine_common          # write_text_atomic — the history files are the only
+                              # copy of prices going back to 1992, so every rewrite
+                              # goes through a temp file + os.replace
 import env_loader
 env_loader.load_env()
 
@@ -313,15 +316,38 @@ def sync_history(name, insref, output_dir=".", force_full=False):
     if all(stored.get(int(ts)) == close for ts, close, _ in rows):
         return {"added": 0, "mode": "incremental", "reason": "already current"}
 
-    # Truncate at the first stored bar the window covers, then rewrite the window.
+    # Splice at the first stored bar the window covers: keep everything before it,
+    # then the freshly fetched window.
+    #
+    # This used to mutate the live file in two non-atomic steps — f.truncate(cut)
+    # on the real path, close, reopen in append mode, write the window back. Only
+    # the truncate was guarded, and the callers (app.refresh_one, webController)
+    # swallow exceptions, so anything failing between the two opens (ENOSPC, EIO,
+    # the interpreter torn down mid-sweep) left the file permanently ~21-60 days
+    # short with the sweep still reporting success. Nothing downstream defends
+    # against that: the engines take the last row as "yesterday", so a month-old
+    # close silently becomes the day-over-day reference and manufactures entry
+    # signals. Building prefix + window in memory and swapping the whole file in
+    # means readers only ever see the old file or the complete new one.
     cut = next(off for off, ts, _ in tail if ts >= window_start)
     try:
-        with open(path, "r+b") as f:
-            f.truncate(cut)
+        with open(path, "rb") as f:
+            prefix = f.read(cut)
     except OSError:
-        return {"added": 0, "mode": "incremental", "reason": "truncate failed"}
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerows(rows)
+        return {"added": 0, "mode": "incremental", "reason": "read failed"}
+    if len(prefix) != cut:
+        # The file shrank since _read_history_tail() measured it, so the byte
+        # offsets no longer mean anything. Rebuild rather than splice blind.
+        return _full("history file changed mid-sync")
+
+    buf = io.StringIO()
+    csv.writer(buf).writerows(rows)
+    try:
+        engine_common.write_text_atomic(
+            path, prefix.decode("utf-8", "replace") + buf.getvalue()
+        )
+    except OSError as e:
+        return {"added": 0, "mode": "incremental", "reason": f"rewrite failed: {e}"}
     print(f"{name}_{insref}_History.csv  window rewritten, {len(rows)} rows")
     return {"added": len(rows), "mode": "incremental", "reason": "window rewritten"}
 
@@ -339,8 +365,10 @@ def update_history_csv(name, insref, rows, output_dir=".", rewrite=False):
     path = history_path(name, insref, output_dir)
 
     if rewrite:
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerows(rows)
+        # Atomic swap, not open(path, "w"): "w" truncated the only copy of the
+        # series before the replacement was known good, so a failure partway
+        # through the write left a short file that readers happily parse.
+        engine_common.write_rows_atomic(path, rows)
         print(f"{name}_{insref}_History.csv  rewritten, {len(rows)} rows")
         return len(rows)
 

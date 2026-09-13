@@ -38,8 +38,49 @@
     .legend     { display: flex; gap: 16px; font-size: 12px; margin-top: 8px; flex-wrap: wrap; }
     .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 
+    /* ── trade feed ──────────────────────────────────────────────────────────
+       The only table in the project that crosses wallets, so the engine has to
+       be readable on every row — hence the coloured engine pill, matching the
+       equity-curve legend and the per-engine cards above. */
+    /* The widget's "full feed" link lands here — keep the card off the very top
+       edge of the viewport when it does. */
+    #trade-feed { scroll-margin-top: 16px; }
+    .feed-filters {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      margin-bottom: 12px; font-size: 12px;
+    }
+    .filter-label {
+      font-size: 10px; font-weight: bold; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.4px; margin-right: 2px;
+    }
+    .filter-label + .chip { margin-right: 0; }
+    .chip {
+      padding: 5px 11px; border: 1px solid var(--border-input);
+      border-radius: 999px; background: var(--surface); color: var(--text-subtle);
+      cursor: pointer; font-family: Arial, sans-serif; font-size: 12px;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--accent); }
+    .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .feed-sep { width: 1px; height: 18px; background: var(--border); margin: 0 8px; }
+    .feed-summary { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+    a.eng-pill { text-decoration: none; color: #fff; }
+    .eng-signals  { background: #0052cc; }
+    .eng-patterns { background: #1a8042; }
+    .eng-cross    { background: #b08000; }
+
+    /* Second line under each price: the timestamp it happened at. Keeps the
+       price column numeric and right-aligned while still showing the clock. */
+    .feed-ts { font-size: 10px; color: var(--text-muted); font-weight: normal; margin-top: 2px; white-space: nowrap; }
+    /* Still-open rows: their exit price is a live quote, not a fill, and their
+       return is unrealized — marked with a '~' and an accent edge so they are
+       never read as booked P&L. */
+    .sig-table tr.feed-open td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+    .feed-open .feed-ts { color: var(--accent); }
+
     @media (max-width: 720px) {
       .engine-grid { grid-template-columns: 1fr; }
+      .feed-summary { margin-left: 0; width: 100%; }
     }
   </style>
 </head>
@@ -114,20 +155,74 @@
     </div>
   </div>
 
+  <div class="section" id="trade-feed">
+    <div class="section-title">Trade feed <span class="panel-note">— every position across all three wallets, newest activity first</span></div>
+    <div class="feed-filters">
+      <span class="filter-label">Engine</span>
+      <button class="chip active" data-engine="all"      onclick="setFeedEngine('all', this)">All</button>
+      <button class="chip"        data-engine="signals"  onclick="setFeedEngine('signals', this)">Signals</button>
+      <button class="chip"        data-engine="patterns" onclick="setFeedEngine('patterns', this)">Patterns</button>
+      <button class="chip"        data-engine="cross"    onclick="setFeedEngine('cross', this)">Cross</button>
+      <span class="feed-sep"></span>
+      <span class="filter-label">Status</span>
+      <button class="chip active" data-status="all"    onclick="setFeedStatus('all', this)">All</button>
+      <button class="chip"        data-status="open"   onclick="setFeedStatus('open', this)">Open</button>
+      <button class="chip"        data-status="closed" onclick="setFeedStatus('closed', this)">Closed</button>
+      <span class="feed-summary" id="feed-summary"></span>
+    </div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Engine</th>
+          <th class="mobile-hide">Ver</th>
+          <th class="num">Bought at</th>
+          <th class="num">Sold at</th>
+          <th class="num mobile-hide">Shares</th>
+          <th class="num mobile-hide">Hold</th>
+          <th class="num">Return</th>
+          <th class="num">P&amp;L (SEK)</th>
+          <th>Exit</th>
+        </tr>
+      </thead>
+      <tbody id="feed-body">
+        <tr><td colspan="10" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div class="pagination" id="feed-pagination" style="display:none;">
+      <button class="page-btn" id="feed-prev" onclick="feedPager.change(-1)">‹ Prev</button>
+      <span class="page-info" id="feed-page-info">Page 1 of 1</span>
+      <button class="page-btn" id="feed-next" onclick="feedPager.change(1)">Next ›</button>
+    </div>
+  </div>
+
   <script src="/live_common.js"></script>
   <script>
+    // Read by tickerLink() in live_common.js — merged across all three wallets,
+    // since a feed row can come from any of them.
+    let tickerPaths = {};
+
     async function refresh() {
       try {
         const [sig, pat, crs] = await Promise.all([
           fetch('/live-portfolio').then(r => r.json()),
           fetch('/live-patterns-portfolio').then(r => r.json()),
           fetch('/live-cross-portfolio').then(r => r.json()),
+          loadVersions(),          // Ver pills on the trade feed
         ]);
+        tickerPaths = Object.assign({},
+          sig.ticker_paths || {}, pat.ticker_paths || {}, crs.ticker_paths || {});
         render({ signals: sig, patterns: pat, cross: crs });
       } catch (e) {
         console.error('refresh failed', e);
       }
     }
+
+    const ENGINES = [
+      { key: 'signals',  label: 'Signals',  color: '#0052cc', page: '/live-signals'  },
+      { key: 'patterns', label: 'Patterns', color: '#1a8042', page: '/live-patterns' },
+      { key: 'cross',    label: 'Cross',    color: '#b08000', page: '/live-cross'    },
+    ];
 
     function engineStats(p, color, label, link) {
       const cash = p.cash || 0;
@@ -186,7 +281,20 @@
       } else {
         const wrEl = document.getElementById('combined-wr');
         wrEl.textContent = (combinedWR*100).toFixed(0) + '%';
-        wrEl.className = 'stat-value ' + wrClass(combinedWR);
+        // Deliberately UNCOLOURED (explicit null bar). This tile pools closed
+        // trades from three engines running different payoff ratios, so there is
+        // no single break-even to grade it against: a 3:1 arm breaks even at 25%
+        // and a 1:1 arm at 50%, and the pooled bar depends on how the wins split
+        // between them, which a win-rate count cannot say. The page-global
+        // BREAKEVEN_WR default (0.50) would have painted a healthy 3:1 combined
+        // rate red — the stale-threshold bug live_common.js's comment block
+        // exists to kill. Nothing here declares the pairs either: the wallet
+        // JSONs don't carry TP/SL, so hardcoding them on this page would go
+        // stale on the next retune. Per-engine WR keeps its own bar on the
+        // engine pages, which do declare their pair via setBreakeven().
+        wrEl.className = 'stat-value ' + wrClass(combinedWR, null);
+        wrEl.title = 'Pooled across engines with different TP/SL pairs, so it is '
+                   + 'not graded against a break-even bar here — see each engine page.';
         document.getElementById('combined-wr-sub').textContent =
           `${combinedWins}W / ${combinedTrades - combinedWins}L`;
       }
@@ -215,7 +323,124 @@
         </div>`).join('');
 
       renderCurve(all);
+      buildFeed(d);
     }
+
+    // ── trade feed ───────────────────────────────────────────────────────────
+    // One row per position across all three wallets: what it cost, what it sold
+    // for, both timestamps, and which engine opened it. Each engine page shows
+    // only its own trades, so nothing in the project could answer "what did we
+    // trade this week" without opening three tabs and reading three tables.
+    //
+    // Still-open positions are included deliberately — a feed that only appears
+    // once a position closes hides today's activity, which is the part most
+    // worth seeing. Their exit side is the last live quote, not a fill, so it
+    // renders as unrealized ('~') and never counts toward the realized total.
+    let feedRows   = [];
+    let feedEngine = 'all';
+    let feedStatus = 'all';
+
+    const feedPager = makePager(
+      { body: 'feed-body', pager: 'feed-pagination', info: 'feed-page-info', prev: 'feed-prev', next: 'feed-next' },
+      10, () => feedRows.length ? 'No trades match these filters' : 'No trades yet');
+
+    function buildFeed(d) {
+      const rows = [];
+      for (const e of ENGINES) {
+        const p      = d[e.key] || {};
+        const quotes = (p.last_quotes && typeof p.last_quotes === 'object') ? p.last_quotes : {};
+
+        for (const t of (p.closed_trades || [])) {
+          rows.push({
+            engine: e, ticker: t.ticker, rec: t, open: false,
+            entryTs: t.entry_ts || t.entry_date || '',
+            exitTs:  t.exit_ts  || t.exit_date  || '',
+            entryPrice: t.entry_price, exitPrice: t.exit_price,
+            shares: t.shares, ret: t.ret_pct, pnl: t.pnl_sek,
+            reason: t.reason || '—',
+            sortKey: t.exit_ts || t.exit_date || t.entry_ts || '',
+          });
+        }
+        for (const [tk, pos] of Object.entries(p.positions || {})) {
+          const q   = quotes[tk] || {};
+          const now = (q.last != null) ? q.last : pos.entry_price;
+          rows.push({
+            engine: e, ticker: tk, rec: pos, open: true, stale: q.source === 'stale',
+            entryTs: pos.entry_ts || pos.entry_date || '', exitTs: '',
+            entryPrice: pos.entry_price, exitPrice: now,
+            shares: pos.shares,
+            ret: pos.entry_price ? now / pos.entry_price - 1 : 0,
+            pnl: (now - pos.entry_price) * (pos.shares || 0),
+            reason: 'OPEN',
+            sortKey: pos.entry_ts || pos.entry_date || '',
+          });
+        }
+      }
+      // Newest activity first: an exit for a closed trade, the entry for an open
+      // one. ISO timestamps sort lexicographically, so no Date parsing needed.
+      rows.sort((a, b) => String(b.sortKey).localeCompare(String(a.sortKey)));
+      feedRows = rows;
+      renderFeed();
+    }
+
+    function renderFeed(resetPage) {
+      const rows = feedRows.filter(r =>
+        (feedEngine === 'all' || r.engine.key === feedEngine) &&
+        (feedStatus === 'all' || (feedStatus === 'open' ? r.open : !r.open)));
+
+      const closed   = rows.filter(r => !r.open);
+      const realized = closed.reduce((s, r) => s + (r.pnl || 0), 0);
+      document.getElementById('feed-summary').innerHTML =
+        `${rows.length} trade${rows.length === 1 ? '' : 's'} · ${rows.length - closed.length} open · `
+        + `<span class="${cls(realized)}">${sign(realized)} SEK</span> realized`;
+
+      if (resetPage) feedPager.reset();
+      feedPager.setData(rows, feedRow);
+    }
+
+    function feedRow(r) {
+      const unreal = r.open ? 'Unrealized — the position is still open, so this is the last live quote rather than a fill' : '';
+      return `
+        <tr class="${r.open ? 'feed-open' : ''}">
+          <td class="ticker">${tickerLink(r.ticker)}</td>
+          <td><a class="pill eng-pill eng-${r.engine.key}" href="${r.engine.page}"
+                 title="Opened by the ${esc(r.engine.label)} engine">${esc(r.engine.label)}</a></td>
+          ${verCell(r.engine.key, r.rec, 'mobile-hide')}
+          <td class="num">${fmt(r.entryPrice, 2)}
+            <div class="feed-ts">${esc(fmtTs(r.entryTs) || r.entryTs || '—')}</div></td>
+          <td class="num" title="${esc(unreal)}">${r.exitPrice != null ? fmt(r.exitPrice, 2) : '—'}
+            <div class="feed-ts">${r.open
+              ? 'open' + (r.stale ? ' · stale quote' : ' · live quote')
+              : esc(fmtTs(r.exitTs) || r.exitTs || '—')}</div></td>
+          <td class="num mobile-hide">${fmt(r.shares, 0)}</td>
+          <td class="num mobile-hide">${esc(feedHold(r))}</td>
+          <td class="num ${cls(r.ret)}" title="${esc(unreal)}">${r.open ? '~' : ''}${pct(r.ret)}</td>
+          <td class="num ${cls(r.pnl)}" title="${esc(unreal)}">${r.open ? '~' : ''}${sign(r.pnl)}</td>
+          <td><span class="pill reason-${esc(r.reason)}">${esc(r.reason)}</span></td>
+        </tr>`;
+    }
+
+    // Entry -> exit for a closed trade; entry -> now for one still open.
+    function feedHold(r) {
+      if (!r.entryTs) return '—';
+      const a = new Date(r.entryTs);
+      const b = r.open ? new Date() : new Date(r.exitTs);
+      if (isNaN(a) || isNaN(b)) return '—';
+      const sec = Math.max(0, Math.round((b - a) / 1000));
+      if (sec >= 86400) return `${Math.round(sec / 86400)}d`;
+      if (sec >= 3600)  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+      if (sec >= 60)    return `${Math.floor(sec / 60)}m`;
+      return `${sec}s`;
+    }
+
+    // Chip handlers — one active chip per group, page resets so a filter never
+    // lands the reader on an empty page 4.
+    function pickChip(btn, attr) {
+      document.querySelectorAll(`.chip[data-${attr}]`).forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+    }
+    function setFeedEngine(v, btn) { feedEngine = v; pickChip(btn, 'engine'); renderFeed(true); }
+    function setFeedStatus(v, btn) { feedStatus = v; pickChip(btn, 'status'); renderFeed(true); }
 
     function renderCurve(engines) {
       // Build daily-bucketed cumulative-realized series per engine.

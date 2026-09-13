@@ -20,7 +20,6 @@
     .pattern-pill   { background: var(--accent-soft);   color: var(--accent); font-weight: 600; }
     .log-empty { color: var(--text-muted); font-style: italic; }
     @media (max-width: 720px) {
-      .sig-table .mobile-hide { display: none; }
     }
   </style>
 </head>
@@ -83,10 +82,12 @@
           <th>Ticker</th>
           <th>Tier</th>
           <th>Pattern</th>
+          <th class="mobile-hide">Sector</th>
           <th class="mobile-hide">Ver</th>
           <th class="num mobile-hide">Shares</th>
           <th class="num mobile-hide">Entry</th>
           <th class="num">Now</th>
+          <th class="num mobile-hide">Spread</th>
           <th class="num">P&amp;L</th>
           <th class="num mobile-hide">TP</th>
           <th class="num mobile-hide">SL</th>
@@ -95,9 +96,13 @@
         </tr>
       </thead>
       <tbody id="open-body">
-        <tr><td colspan="12" class="empty-row">Loading…</td></tr>
+        <tr><td colspan="14" class="empty-row">Loading…</td></tr>
       </tbody>
     </table>
+    <!-- Sector concentration. Informational: no engine gates on it. Same
+         block as Live Signals — a correlated book is the failure mode a
+         per-ticker table cannot show. -->
+    <div class="conc-wrap" id="conc-wrap"></div>
   </div>
 
   <div class="section">
@@ -139,23 +144,6 @@
   </div>
 
   <div class="section">
-    <div class="section-title">By version <span class="panel-note">— which generation of the strategy each trade ran under</span></div>
-    <table class="sig-table">
-      <thead>
-        <tr>
-          <th>Version</th>
-          <th class="num">N</th>
-          <th class="num">WR</th>
-          <th class="num">Avg ret</th>
-          <th class="num">P&amp;L</th>
-          <th class="mobile-hide">What changed</th>
-        </tr>
-      </thead>
-      <tbody id="version-body"><tr><td colspan="6" class="empty-row">Loading…</td></tr></tbody>
-    </table>
-  </div>
-
-  <div class="section">
     <div class="section-title">Closed trades</div>
     <table class="sig-table">
       <thead>
@@ -176,11 +164,33 @@
         <tr><td colspan="10" class="empty-row">No trades yet</td></tr>
       </tbody>
     </table>
+    <div class="pagination" id="closed-pagination" style="display:none;">
+      <button class="page-btn" id="closed-prev" onclick="closedPageChange(-1)">‹ Prev</button>
+      <span class="page-info" id="closed-page-info">Page 1 of 1</span>
+      <button class="page-btn" id="closed-next" onclick="closedPageChange(1)">Next ›</button>
+    </div>
   </div>
 
   <div class="section">
     <div class="section-title">Latest run log</div>
     <div id="log-panel"><span class="log-empty">Loading…</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">By version <span class="panel-note">— which generation of the strategy each trade ran under</span></div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Version</th>
+          <th class="num">N</th>
+          <th class="num">WR</th>
+          <th class="num">Avg ret</th>
+          <th class="num">P&amp;L</th>
+          <th class="mobile-hide">What changed</th>
+        </tr>
+      </thead>
+      <tbody id="version-body"><tr><td colspan="6" class="empty-row">Loading…</td></tr></tbody>
+    </table>
   </div>
 
   <script src="/live_common.js"></script>
@@ -189,6 +199,14 @@
     let forceSellSet = new Set();
     let tickerPaths = {};
 
+    // Closed trades, 10 per page. Until this existed the table rendered
+    // sorted.slice(0, 30), so anything past the 30th trade was unreachable.
+    const closedPager = makePager(
+      { body: 'closed-body', pager: 'closed-pagination', info: 'closed-page-info', prev: 'closed-prev', next: 'closed-next' },
+      10, 'No trades yet');
+
+    function closedPageChange(delta) { closedPager.change(delta); }
+
     async function refresh() {
       try {
         const [pf, log, sellQueue] = await Promise.all([
@@ -196,6 +214,7 @@
           fetch('/live-patterns-log').then(r => r.json()),
           fetch('/live-patterns-force-sell').then(r => r.json()).catch(() => []),
           loadTiers(),
+          loadSectors(),
           loadVersions(),
         ]);
         forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
@@ -287,6 +306,36 @@
         </tr>`).join('');
     }
 
+    /* POST /live-patterns-force-sell answers 409 {ok:false, error} when the
+       ticker is no longer an open position — the page can be a whole 3-minute
+       tick stale, so "Sell now" on a row the engine just closed at TP is a
+       normal refusal, not a fault. Until this existed the refusal was parsed
+       and dropped: the button simply re-enabled, which is indistinguishable
+       from a dead endpoint. Surface it where it cannot be missed, reusing the
+       health-banner tokens rather than re-adding one of the removed panels. */
+    let actionErrTimer = null;
+
+    function showActionError(msg) {
+      let el = document.getElementById('action-error');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'action-error';
+        el.className = 'health-banner critical';
+        const nav = document.querySelector('nav');
+        if (nav && nav.parentNode) nav.parentNode.insertBefore(el, nav.nextSibling);
+        else document.body.insertBefore(el, document.body.firstChild);
+      }
+      el.textContent = msg;               // textContent: the text is server-supplied
+      clearTimeout(actionErrTimer);
+      actionErrTimer = setTimeout(clearActionError, 15000);
+    }
+
+    function clearActionError() {
+      clearTimeout(actionErrTimer);
+      const el = document.getElementById('action-error');
+      if (el) el.remove();
+    }
+
     async function toggleForceSell(ticker, btn) {
       const adding = !forceSellSet.has(ticker);
       btn.disabled = true;
@@ -297,11 +346,21 @@
           body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
         }).then(r => r.json());
         if (res && res.ok) {
+          clearActionError();
           forceSellSet = new Set(res.queued || []);
+          refresh();
+        } else {
+          // Refused (409) or failed (400/500). The button label is derived from
+          // forceSellSet, which we deliberately leave untouched, so the row
+          // falls back to its real state; refresh() re-syncs the wallet so a
+          // row the engine already closed disappears.
+          showActionError((res && res.error) ||
+                          `Sell request for ${ticker} was refused by the server.`);
           refresh();
         }
       } catch (e) {
         console.error('toggle force-sell failed', e);
+        showActionError(`Could not reach the server — the sell for ${ticker} was NOT queued.`);
       } finally {
         btn.disabled = false;
       }
@@ -355,10 +414,11 @@
       const openBody = document.getElementById('open-body');
       const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
       if (!openList.length) {
-        openBody.innerHTML = '<tr><td colspan="12" class="empty-row">No open positions</td></tr>';
+        openBody.innerHTML = '<tr><td colspan="14" class="empty-row">No open positions</td></tr>';
       } else {
         openBody.innerHTML = openList.map(([tk, pos]) => {
-          const last = (p.last_quotes && p.last_quotes[tk] && p.last_quotes[tk].last) || pos.entry_price;
+          const lq   = (p.last_quotes && p.last_quotes[tk]) || {};
+          const last = (lq.last != null) ? lq.last : pos.entry_price;
           const pnl  = pos.shares * (last - pos.entry_price);
           const ret  = last / pos.entry_price - 1;
           const pat  = (pos.signal_info || {}).pattern || '?';
@@ -375,14 +435,16 @@
               <td class="ticker">${tickerLink(tk)}</td>
               ${tierCell(tk)}
               <td><span class="pill pattern-pill">${esc(pat)}</span></td>
+              <td class="mobile-hide">${sectorPill(tk)}</td>
               ${verCell('patterns', pos, 'mobile-hide')}
               <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
               <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
-              <td class="num">${fmt(last, 2)}</td>
+              <td class="num">${fmt(last, 2)}${staleMark(lq)}</td>
+              ${spreadCell(lq, pos, last)}
               <td class="num ${cls(ret)}">${pct(ret)}  <span class="small">(${sign(pnl)})</span></td>
               <td class="num mobile-hide">${fmt(pos.tp, 2)}</td>
               <td class="num mobile-hide">${fmt(pos.sl, 2)}</td>
-              <td class="small mobile-hide">${esc(pos.target_exit_date || '')}</td>
+              <td class="exit-cell mobile-hide">${esc(pos.target_exit_date || '')}<div class="small">from ${esc(fmtTs(pos.entry_ts) || pos.entry_date || '')}</div></td>
               <td>
                 <button class="sell-btn${queued ? ' queued' : ''}"
                         ${canSell ? '' : 'disabled'}
@@ -395,15 +457,32 @@
         }).join('');
       }
 
+      // Sector concentration under the open-positions table. Mirrors
+      // engine_common.sector_concentration so the page and live_patterns.log
+      // never disagree. A sector at 40%+ of invested capital is drawn hot —
+      // that is a display threshold only, nothing blocks at it.
+      const concWrap = document.getElementById('conc-wrap');
+      if (concWrap) {
+        const rows = sectorConcentration(
+          openList.map(([tk, pos]) => ({ ticker: tk, cost: pos.cost_sek })));
+        concWrap.innerHTML = rows.length
+          ? `<div class="section-title" style="margin:16px 0 4px">Sector concentration</div>` +
+            rows.map(g => `
+              <div class="conc-row" title="${esc(g.tickers.join(', '))}">
+                <div class="conc-name">${esc(g.sector)}</div>
+                <div class="conc-track">
+                  <div class="conc-fill${g.pct >= 40 ? ' hot' : ''}" style="width:${g.pct.toFixed(1)}%"></div>
+                </div>
+                <div class="conc-val">${g.n} pos · ${g.pct.toFixed(0)}%</div>
+              </div>`).join('')
+          : '';
+      }
+
       renderVersionBreakdown('patterns', closed, 'version-body');
 
-      // Closed trades (newest first)
-      const closedBody = document.getElementById('closed-body');
-      if (!closed.length) {
-        closedBody.innerHTML = '<tr><td colspan="10" class="empty-row">No trades yet</td></tr>';
-      } else {
-        const sorted = [...closed].sort((a,b) => (b.exit_date || '').localeCompare(a.exit_date || ''));
-        closedBody.innerHTML = sorted.slice(0, 30).map(t => {
+      // Closed trades (newest first), paginated 10 per page
+      const closedSorted = [...closed].sort((a,b) => (b.exit_date || '').localeCompare(a.exit_date || ''));
+      closedPager.setData(closedSorted, t => {
           const inLabel  = fmtTs(t.entry_ts) || t.entry_date || '';
           const outLabel = fmtTs(t.exit_ts)  || t.exit_date  || '';
           const pat      = (t.signal_info || {}).pattern || '?';
@@ -420,8 +499,7 @@
               <td class="num ${cls(t.pnl_sek)}">${sign(t.pnl_sek)}</td>
               <td><span class="pill reason-${esc(t.reason || '')}">${esc(t.reason || '')}</span></td>
             </tr>`;
-        }).join('');
-      }
+      });
     }
 
     function renderLog(log) {

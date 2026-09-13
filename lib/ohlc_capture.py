@@ -33,10 +33,51 @@ from datetime import datetime, timezone
 import env_loader
 env_loader.load_env()
 import infoScrapper    # noqa: E402
+import engine_common as ec    # noqa: E402
 
 ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root (this module lives in lib/)
 OHLC_DIR = os.path.join(ROOT, "ohlc")
 BASE     = os.path.join(ROOT, "Instrumenttype", "Equity", "SEK")
+# Sidecar next to the bars, NOT inside ohlc/*_OHLC.csv, so the *_OHLC.csv glob
+# in ohlc_status()/the patterns engine never picks it up as a stock.
+SKIPS_PATH = os.path.join(OHLC_DIR, "_capture_skips.json")
+
+# insrefs whose existing history could not be read during the last
+# capture_eod_ohlc() call, and were therefore left untouched. Kept as a module
+# attribute rather than folded into the return value because the caller
+# (live_signals.maybe_capture_eod_ohlc) stores that return as a plain bar count
+# in `ohlc_bars_total`; a silent skip is still a skip, so it has to be readable
+# somewhere. NOTE: no caller reads this attribute today — it is an in-process
+# debugging hook only. The channel that is actually wired is SKIPS_PATH below.
+#
+# The module attribute alone is not enough: capture runs inside the live_signals
+# process, while the /ohlc-capture page is served by app.py — a different
+# process with its own import of this module, where the attribute is forever
+# empty. So the same record is also persisted to SKIPS_PATH and read back by
+# ohlc_status(), which is the only channel the UI can actually see.
+LAST_CAPTURE_SKIPPED = []
+
+
+def _record_capture(today_str, captured, skipped):
+    """Publish this run's skip record to the module attribute and SKIPS_PATH.
+
+    Called on every path that counts as "capture ran today", including the
+    empty-universe one: the caller stamps `last_ohlc_capture_date` regardless
+    of what we return, so a sidecar left holding yesterday's date/counts would
+    be read as today's result. A failure to write the sidecar must not cost us
+    the day's bars, hence the guarded write.
+    """
+    global LAST_CAPTURE_SKIPPED
+    LAST_CAPTURE_SKIPPED = skipped
+    try:
+        ec.write_json_atomic(SKIPS_PATH, {
+            "date":     today_str,
+            "captured": captured,
+            "skipped":  skipped,
+        })
+    except OSError as e:
+        print(f" OHLC capture: could not record skip status to "
+              f"{SKIPS_PATH} ({e})")
 
 
 def capture_eod_ohlc(today, tradable, fetch_quotes_parallel):
@@ -55,14 +96,20 @@ def capture_eod_ohlc(today, tradable, fetch_quotes_parallel):
                                daylowprice fields that the simplified `lq`
                                dict doesn't carry.
 
-    Returns the number of stocks captured (skips stocks whose quote failed
-    or whose response lacked any of the OHLC fields).
+    Returns the number of stocks captured (skips stocks whose quote failed,
+    whose response lacked any of the OHLC fields, or whose existing history
+    could not be re-read — see LAST_CAPTURE_SKIPPED).
     """
-    if not tradable:
-        return 0
     os.makedirs(OHLC_DIR, exist_ok=True)
     today_str = today.isoformat()
+    if not tradable:
+        # An empty universe (feed outage, filter bug) still has to clear the
+        # sidecar. Without this the record stays on the last day that did run,
+        # and a reader sees that day's skips reported as today's.
+        _record_capture(today_str, 0, [])
+        return 0
     captured = 0
+    skipped = []
     # The simplified lq map only tells us whether the live endpoint is alive
     # for each ticker. We still need a full fetch_quote per stock for the
     # actual OHLC fields.
@@ -86,15 +133,37 @@ def capture_eod_ohlc(today, tradable, fetch_quotes_parallel):
             try:
                 with open(path, encoding="utf-8") as f:
                     rows = [r for r in csv.reader(f) if r and r[0] != today_str]
-            except OSError:
-                rows = []
+            except OSError as e:
+                # A failed read used to fall through with rows=[], and the write
+                # below then replaced the whole accumulated file with today's
+                # single bar. The file *exists*, so this is a transient error
+                # (EMFILE while the refresh workers hold every fd, EIO, a stale
+                # handle) — never an empty history. Skip the stock instead; the
+                # bar is one day, the file is every day since 2026-05-23 and the
+                # API cannot re-serve it.
+                skipped.append({"insref": insref,
+                                "name":   t.get("name"),
+                                "error":  str(e)})
+                print(f" OHLC capture: SKIPPED {t.get('name') or insref} "
+                      f"({insref}) — existing bars unreadable ({e}); "
+                      f"today's bar not written rather than risk the history")
+                continue
         rows.append([today_str, f"{o:g}", f"{h:g}", f"{l:g}", f"{c:g}", f"{v:.0f}"])
         try:
-            with open(path, "w", encoding="utf-8", newline="") as f:
-                csv.writer(f).writerows(rows)
+            # Atomic swap: the destination is only ever the old file or the
+            # complete new one, so a kill or power loss mid-write (launchd
+            # timeout, laptop sleep) can no longer truncate the history.
+            ec.write_rows_atomic(path, rows)
             captured += 1
         except OSError:
             pass
+    # Written on every run, including the clean one: an empty list is what
+    # clears a warning raised for a previous day.
+    _record_capture(today_str, captured, skipped)
+    if skipped:
+        names = [sk.get("name") or sk["insref"] for sk in skipped]
+        print(f" OHLC capture: {len(skipped)} stock(s) left untouched because "
+              f"their existing bars could not be read: {names}")
     return captured
 
 
@@ -103,7 +172,9 @@ def backfill_from_intraday(skip_today=True):
     OHLC bars and write them to `ohlc/{insref}_OHLC.csv`. Only fills bars
     that are NOT already present in the per-stock CSV — safe to re-run.
 
-    Returns {"stocks_touched": int, "bars_added": int, "bars_skipped": int}.
+    Returns {"stocks_touched": int, "bars_added": int, "bars_skipped": int,
+    "stocks_unreadable": int} — the last being stocks whose existing OHLC file
+    could not be read and were therefore left alone.
 
     Caveats:
       · *_7d.csv carries minute closes only, not true OHLC. The derived
@@ -119,9 +190,10 @@ def backfill_from_intraday(skip_today=True):
     os.makedirs(OHLC_DIR, exist_ok=True)
     today_str = datetime.now(timezone.utc).date().isoformat()
     folders = sorted(glob.glob(os.path.join(BASE, "*")))
-    stocks_touched = 0
-    bars_added     = 0
-    bars_skipped   = 0
+    stocks_touched    = 0
+    bars_added        = 0
+    bars_skipped      = 0
+    stocks_unreadable = 0
     for folder in folders:
         basename = os.path.basename(folder)
         try:
@@ -159,8 +231,16 @@ def backfill_from_intraday(skip_today=True):
                         if r:
                             existing_rows.append(r)
                             existing_dates.add(r[0])
-            except OSError:
-                pass
+            except OSError as e:
+                # Same trap as in capture_eod_ohlc(): swallowing the error left
+                # existing_rows empty, and the `merged` write below then wrote
+                # only the backfilled bars over a file that already held real
+                # captures. The file exists, so an unreadable one means a
+                # transient error — leave the stock alone.
+                stocks_unreadable += 1
+                print(f"  backfill: SKIPPED insref {insref} — existing bars "
+                      f"unreadable ({e}); left untouched")
+                continue
         new_rows = []
         for d in sorted(by_day):
             if skip_today and d == today_str:
@@ -175,16 +255,17 @@ def backfill_from_intraday(skip_today=True):
             continue
         merged = sorted(existing_rows + new_rows, key=lambda r: r[0])
         try:
-            with open(out_path, "w", encoding="utf-8", newline="") as f:
-                csv.writer(f).writerows(merged)
+            # tmp + os.replace — see the note in capture_eod_ohlc().
+            ec.write_rows_atomic(out_path, merged)
             stocks_touched += 1
             bars_added += len(new_rows)
         except OSError:
             pass
     return {
-        "stocks_touched": stocks_touched,
-        "bars_added":     bars_added,
-        "bars_skipped":   bars_skipped,
+        "stocks_touched":    stocks_touched,
+        "bars_added":        bars_added,
+        "bars_skipped":      bars_skipped,
+        "stocks_unreadable": stocks_unreadable,
     }
 
 
@@ -206,7 +287,18 @@ def ohlc_status():
         "sample_latest_bars": [
           last 5 rows of one representative stock, for sanity-check,
           [{"date": ..., "open": ..., "high": ..., "low": ..., "close": ..., "volume": ...}, ...]
-        ]
+        ],
+        "last_capture":   {"date": ..., "captured": N,
+                           "skipped": [{"insref": ..., "name": ..., "error": ...}]}
+                          — the SKIPS_PATH sidecar, or None if capture has not
+                          run since this was added. A non-empty `skipped` means
+                          those stocks kept their history but have NO bar for
+                          that date. NOT RENDERED YET: web/ohlc_capture.html
+                          draws only stock_count/total_bars and app.py's health
+                          block keys off last_ohlc_capture_date, so a run with
+                          skips still *looks* clean on the page. The data is
+                          served here so the page can be wired; until it is,
+                          the skips exist only in this payload and in logs/.
       }
     """
     out = {
@@ -217,6 +309,7 @@ def ohlc_status():
         "latest_date":     None,
         "per_stock":       [],
         "sample_latest_bars": [],
+        "last_capture":    ec.read_json(SKIPS_PATH, None),
     }
     if not os.path.isdir(OHLC_DIR):
         return out

@@ -55,7 +55,7 @@ import glob
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
@@ -67,6 +67,7 @@ import tradesScrapper  # noqa: E402
 import ohlc_capture    # noqa: E402
 import calendar_cache  # noqa: E402
 import version as V     # noqa: E402  — app/strategy version stamping
+import notify          # noqa: E402  — trade notifications (macOS banner / ntfy push)
 
 ROOT          = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR     = os.path.join(ROOT, "state")
@@ -134,13 +135,42 @@ LATE_ENTRY_CUTOFF_MIN = 16 * 60 + 30   # 16:30 local
 # day's entries silently.
 ENTRY_AT_CLOSE = True
 
-TP_PCT        = 0.020   # +2.0%
+TP_PCT        = 0.030   # +3.0% — RAISED 2026-09-03 from +2.0% (sig-10).
+                        # Winners run well past +2%; clipping there capped the
+                        # upside while leaving the -1% downside untouched.
+                        # Measured on two independent samples, varying only TP:
+                        #   11y close-to-close, 158 large caps, n=68,905
+                        #     +2%: 45.8% WR +0.353%/trade | +3%: 41.1% +0.545%
+                        #   true tick-order fills, 3.4M minute prints, n=2,723
+                        #     +2%: 44.7% WR +0.335%/trade | +3%: 37.4% +0.455%
+                        # Monotonic out to +4% on both, but the gain per extra
+                        # day of held capital flattens after +3% (per-capital-
+                        # day figures under DOD_THRESHOLD). Every one of the 11
+                        # years is positive. Expect ~42% WR, i.e. visibly more
+                        # red on the page for more money.
 SL_PCT        = -0.010  # -1.0% — RESTORED 2026-08-24 to the backtested value.
                         # Widened to -2.0% on 2026-05-25 "to survive opening
                         # volatility" and never re-backtested; that move took
                         # break-even WR from 33.3% to 50.0% and the engine has
                         # run at 43.8% (7W/9L over 16 scored) ever since.
+                        # Re-tested 2026-09-03 under true intraday fills and
+                        # deliberately LEFT ALONE. On close-only data a tighter
+                        # stop looks monotonically better, but that is an
+                        # artefact of never seeing an intraday touch; on tick
+                        # data the curve is a shallow U — -0.5%: +0.378% |
+                        # -1%: +0.335% | -2%: +0.299% | -3%: +0.342% per trade
+                        # (n=2,723). The stop level only trades win rate
+                        # against loss size. It is not a lever; TP and
+                        # DOD_THRESHOLD are.
 MAX_HOLD_DAYS = 7
+# How far BELOW the stop a stop-out may be booked. min(cur_price, sl) is the
+# honest rule across an overnight gap, but the engine only samples every 3 min
+# and cur_price is the raw `last` trade of a possibly thin Nordic name: an odd
+# lot or a print at a stale bid would otherwise be booked as the exit price of
+# the most frequent exit in this book. Wider than any plausible gap on a name
+# this engine will size into, tight enough that a bad tick cannot invent a
+# five-figure loss. Applied in apply_exit_checks.
+MAX_SL_SLIP   = 0.04
 COOLDOWN_DAYS = 1       # block re-entry on a ticker for N trading days after an SL exit only (was 7, reduced 2026-06-13 to same-day-only block — re-enter next trading day)
 # Block a name already held in the Patterns or Cross wallet, collapsed to the
 # company stem. 2026-08-24 closed with Electrolux B here and Electrolux A in
@@ -148,7 +178,23 @@ COOLDOWN_DAYS = 1       # block re-entry on a ticker for N trading days after an
 # could not see the other books. Trade-off documented in engine_common.
 CROSS_WALLET_DEDUPE = True
 
-DOD_THRESHOLD = -0.010  # require day-over-day close <= -1% to enter
+DOD_THRESHOLD = -0.020  # require day-over-day close <= -2% to enter.
+                        # DEEPENED 2026-09-03 from -1% (sig-10). Monotonic on
+                        # both samples — only real dislocations mean-revert:
+                        #   11y close n=68,905:  -1%: +0.353%/trade (2.46d hold,
+                        #     +0.143%/capital-day) | -2%: +0.385% | -3%: +0.423%
+                        #   tick fills n=2,723:  -1%: +0.335% | -2%: +0.390%
+                        #     | -3%: +0.434%
+                        # -2% over -3% deliberately: -3% scores higher per
+                        # trade (+0.267%/capital-day vs +0.231%) but fires only
+                        # ~3x/day across the 158-name universe against ~6.6x.
+                        # This wallet is slot-constrained, not signal-
+                        # constrained (6 open, 581k idle cash), so starving it
+                        # of candidates costs more than the extra edge earns.
+                        # Side note: this also confirms the most-negative-DoD-
+                        # first candidate ranking further down is ordered the
+                        # right way — deep down-days are the BEST bucket, not
+                        # the worst, on both samples.
 CRASH_GUARD   = -0.15   # require 20-day ret > -15% (skip total-blowout regimes)
 
 LIVE_FETCH_WORKERS = 10
@@ -165,7 +211,32 @@ LAG_PROBE_NAME     = "SEB A"
 # settled closing prices — gated by both clock time and the lag-probe trade time.
 EOD_WINDOW_START = (17, 45)
 EOD_WINDOW_END   = (18, 30)
+# Upper bound on the close-confirmed ENTRY pass (added 2026-09-08, sig-12).
+# Filling at the official close is justified as "the real-world equivalent of a
+# closing-auction order" — an order that must be submitted by ~17:25. The gate
+# had no upper bound, so the decision could be made arbitrarily late: entries
+# fired at 17:45, 18:01, 18:04, 18:05 and — on 2026-09-03 — 19:57, by which
+# point the US session had been open ~3.5h and post-close Nordic news had
+# landed. That is information no auction order could have had, i.e. lookahead
+# beyond the sig-9 measurement. Past this cutoff the day is SKIPPED rather than
+# entered late.
+#
+# An unbounded pass was originally deliberate: a fixed window produced zero
+# entries on 2026-08-31, when the Mac slept 16:12-18:04. That reasoning is now
+# obsolete — `pmset repeat wakepoweron 17:48 weekdays` plus the plist's 17:50
+# Mon-Fri StartCalendarInterval mean the window is reached on its own, and the
+# feed settles ~16 min after the close (~17:46), so this leaves ~45 min of
+# usable runway against a 3-minute cadence.
+#
+# Expressed as minutes AFTER THE CLOSE, not as a wall-clock time: on a 13:00
+# half-day an absolute 18:30 would have permitted a decision 5.5h after the
+# close, which is the exact thing this bound exists to prevent. On an ordinary
+# day close+60 == 18:30, i.e. identical to EOD_WINDOW_END.
+ENTRY_WINDOW_MINUTES = 60
 MARKET_CLOSE     = (17, 30)
+# Nasdaq Stockholm half-days close at 13:00 (Maundy Thursday, Jan 5, Apr 30, the
+# day before Ascension). Consulted through market_close_for(); see is_early_close.
+EARLY_CLOSE      = (13, 0)
 
 # Stockholm's closing auction prints a few seconds *before* 17:30:00 — the probe
 # ticker's final trade of the day lands at 17:29:54. Demanding trade_dt >= exactly
@@ -256,6 +327,31 @@ def consume_force_sells(consumed, path=None):
     ec.write_json_atomic(p, sorted(remaining), ensure_ascii=False)
 
 
+def reconcile_force_sells(state, closed_now, force_sells, path=None, engine="signals"):
+    """Consume the force-sell queue, INCLUDING entries that can never fire.
+
+    A ticker only ever left the queue when apply_exit_checks actually booked a
+    MANUAL exit for it. A queued ticker with no open position — the user pressing
+    "Sell now" on a row rendered moments before the post-close tick closed it —
+    therefore closed nothing, consumed nothing, and sat in
+    state/live_*_force_sell.json forever, invisible (the UI draws the "queued"
+    badge on an open-position row, and an orphan has no row). Force-sell is the
+    FIRST branch of the exit chain, so the next time that ticker was re-entered,
+    the very next 3-minute tick liquidated the fresh position at market — days
+    later, with nothing in any log saying why.
+
+    Orphans are pruned here and NAMED in the log: a dropped intent must be
+    visible, never silent. A position still open but deferred for want of a live
+    quote (see apply_exit_checks) is NOT an orphan and stays queued.
+    """
+    sold    = {t["ticker"] for t in closed_now if t["reason"] == "MANUAL"}
+    orphans = set(force_sells) - sold - set(state["positions"])
+    if orphans:
+        print(f"   pruned {len(orphans)} force-sell request(s) with no open "
+              f"{engine} position: {', '.join(sorted(orphans))}")
+    consume_force_sells(sold | orphans, path=path)
+
+
 def load_limit_orders():
     """User-placed buy limit orders for primary signals (manual approve+price
     flow). Dict keyed by ticker:
@@ -300,11 +396,16 @@ def load_history_closes(path):
 
 
 def add_trading_days(start_date, n):
+    """`n` real sessions forward — holidays skipped, not counted (see
+    is_trading_day). Counting them made a MAX_HOLD_DAYS=7 hold as short as 4
+    actual sessions over Easter, and could land target_exit_date on a day the
+    exchange is shut, where `today >= target_date` books a TIMEOUT at a price
+    that never traded."""
     d = start_date
     added = 0
     while added < n:
         d += timedelta(days=1)
-        if d.weekday() < 5:
+        if is_trading_day(d):
             added += 1
     return d
 
@@ -319,7 +420,7 @@ def trading_days_between(d1, d2):
     d = d1
     while d < d2:
         d += timedelta(days=1)
-        if d.weekday() < 5:
+        if is_trading_day(d):
             days += 1
     return days
 
@@ -328,8 +429,8 @@ def signal_check(closes, today_date=None):
     """VALIDATED mean-reversion entry filter.
 
     All four conditions must be true to pass:
-      1) Day-over-day return <= -1%   (today closed at least 1% below yesterday)
-      2) Today's close is NOT at the 5-day high
+      1) Day-over-day return <= DOD_THRESHOLD (today closed >=2% below yesterday)
+      2) Today's close is NOT at the 5-day high   [UNREACHABLE — see below]
       3) Today is not a Friday        (no carry over the weekend)
       4) 20-day return > -15%         (crash guard)
 
@@ -337,6 +438,14 @@ def signal_check(closes, today_date=None):
     today_date  — optional datetime.date for the Friday check. If None, today is
                   derived from datetime.now() in the caller's tz; this matches
                   how the live engine invokes this function during market hours.
+
+    Condition 2 can never fire and is kept only as documentation of intent.
+    Condition 1 already requires today to have closed below yesterday, and
+    yesterday sits inside the 5-day window, so `today_p >= hi5` is
+    unreachable for any passing candidate. Confirmed empirically on
+    2026-09-03: an 11-year 158-name backtest returns byte-identical results
+    with the check on and off (n=68,905 either way). Left in place because
+    removing it would change nothing and it documents the original filter.
     """
     if len(closes) < 21:
         return False, {"err": "insufficient history"}
@@ -372,28 +481,50 @@ def past_late_entry_cutoff():
 
 
 def close_confirmed_entry_ready(state, today):
-    """(ready, reason) for today's post-close entry pass.
+    """(ready, reason, missed_window) for today's post-close entry pass.
 
     Gated on `last_ohlc_capture_date` rather than on the wall clock: capture
     only stamps that date after probe_data_lag() shows the feed past today's
     17:30 close, so piggybacking on it means the entry pass cannot run against
     quotes that are still mid-session. `reason` is persisted so a day with no
     entries always says why on the page instead of looking like "no signals".
+
+    `missed_window` is True only for the ENTRY_WINDOW_MINUTES skip — a trading day
+    on which entries were possible and were forfeited. The page paints that as
+    a warning; every other closed reason is routine and stays muted.
     """
     if not ENTRY_AT_CLOSE:
-        return False, "close-confirmed entry disabled"
+        return False, "close-confirmed entry disabled", False
     iso = today.isoformat()
     if state.get("last_entry_scan_date") == iso:
-        return False, "already scanned after today's close"
+        return False, "already scanned after today's close", False
     now_local = datetime.now()
-    if now_local.weekday() >= 5:
-        return False, "weekend"
+    if not is_trading_day(now_local):
+        # Named apart so the page can tell a Saturday from Epiphany — both used
+        # to render as the generic "weekend".
+        return False, ("weekend" if now_local.weekday() >= 5 else "market holiday"), False
+    close_h, close_m = market_close_for(now_local)
     mins_now = now_local.hour * 60 + now_local.minute
-    if mins_now < MARKET_CLOSE[0] * 60 + MARKET_CLOSE[1]:
-        return False, "before the 17:30 close"
+    if mins_now < close_h * 60 + close_m:
+        half = " half-day" if is_early_close(now_local) else ""
+        return False, f"before the {close_h:02d}:{close_m:02d}{half} close", False
+    # Past the cutoff the day is skipped, not entered late — checked BEFORE the
+    # feed-settled test so a feed that only settles at 19:00 reports the real
+    # reason (window gone) rather than blaming the feed. `missed` is what the
+    # page escalates on: an ordinary closed gate renders as a muted line, and a
+    # skipped trading day must not look like "already scanned".
+    cutoff = close_h * 60 + close_m + ENTRY_WINDOW_MINUTES
+    if mins_now > cutoff:
+        half = " half-day" if is_early_close(now_local) else ""
+        return False, (f"past the {cutoff // 60:02d}:{cutoff % 60:02d} entry cutoff "
+                       f"({ENTRY_WINDOW_MINUTES} min after the "
+                       f"{close_h:02d}:{close_m:02d}{half} close) — no entries today"), True
     if state.get("last_ohlc_capture_date") != iso:
-        return False, "feed has not settled past today's close yet"
-    return True, ""
+        why = "feed has not settled past today's close yet"
+        if is_early_close(now_local):
+            why += " (13:00 half-day)"
+        return False, why, False
+    return True, "", False
 
 
 def probe_data_lag():
@@ -500,19 +631,124 @@ def company_stem(name):
     return name
 
 
+# ----------------------------------------------------------------------------- trading calendar
+
+# Nasdaq Stockholm non-trading days. Every date gate in the three engines used
+# to decide "trading day" with `weekday() < 5` alone, which counts Epiphany,
+# Good Friday, Midsummer Eve and the rest as ordinary sessions. Three live
+# consequences: is_market_open() was True on a shut weekday, so live_patterns
+# ran a full intraday pass — auto-entries included — against quotes that were
+# only the previous session's close; add_trading_days() counted holidays as
+# sessions, so the validated 7-day hold could be 4 real sessions over Easter;
+# and COOLDOWN_DAYS / STALE_EXIT_GRACE_DAYS miscounted the same way, expiring
+# an SL cooldown without a session having traded.
+#
+# Derived from Easter rather than pasted per year, so the table cannot silently
+# expire the way a hardcoded 2026 list would.
+
+_HOLIDAY_CACHE = {}
+
+
+def easter_sunday(year):
+    """Anonymous Gregorian algorithm — four Stockholm closures hang off Easter."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    p = (32 + 2 * e + 2 * i - h - k) % 7
+    q = (a + 11 * h + 22 * p) // 451
+    n = h + p - 7 * q + 114
+    return date(year, n // 31, n % 31 + 1)
+
+
+def market_holidays(year):
+    """Dates the Stockholm exchange is shut for the whole day."""
+    cached = _HOLIDAY_CACHE.get(year)
+    if cached is not None:
+        return cached
+    easter = easter_sunday(year)
+    # Midsummer Eve is the Friday inside Jun 19-25 (Midsummer Day is always the
+    # Saturday between Jun 20 and Jun 26), so it moves every year.
+    midsummer_eve = next(date(year, 6, d) for d in range(19, 26)
+                         if date(year, 6, d).weekday() == 4)
+    days = frozenset({
+        date(year, 1, 1),               # Nyårsdagen
+        date(year, 1, 6),               # Trettondedag jul
+        easter - timedelta(days=2),     # Långfredagen
+        easter + timedelta(days=1),     # Annandag påsk
+        date(year, 5, 1),               # Första maj
+        easter + timedelta(days=39),    # Kristi himmelsfärdsdag
+        date(year, 6, 6),               # Nationaldagen
+        midsummer_eve,                  # Midsommarafton
+        date(year, 12, 24),             # Julafton
+        date(year, 12, 25),
+        date(year, 12, 26),
+        date(year, 12, 31),             # Nyårsafton
+    })
+    _HOLIDAY_CACHE[year] = days
+    return days
+
+
+def is_trading_day(d):
+    """A weekday the Stockholm exchange actually opens."""
+    if isinstance(d, datetime):
+        d = d.date()
+    return d.weekday() < 5 and d not in market_holidays(d.year)
+
+
+def is_early_close(d):
+    """True on a 13:00 half-day.
+
+    Load-bearing: market_close_for() below moves the settle threshold and the
+    wall-clock gates onto 13:00 for these dates. That is the whole fix — with a
+    hardcoded 17:30 close the half-day's last print (~12:59) could never reach
+    the 17:25 threshold, so capture retried every 3 minutes until midnight, the
+    bar was left permanently missing from ohlc/, and close_confirmed_entry_ready
+    reported "feed has not settled past today's close yet" all day for Signals
+    AND for Cross (which reads the same key).
+
+    The flip side: a WRONG date here would let a perfectly normal session be
+    captured and traded at 13:05 on mid-session prices. Only add a date that is
+    genuinely a Stockholm half-day.
+    """
+    if isinstance(d, datetime):
+        d = d.date()
+    easter = easter_sunday(d.year)
+    return d in {
+        date(d.year, 1, 5),             # day before Epiphany
+        easter - timedelta(days=3),     # Skärtorsdagen
+        date(d.year, 4, 30),            # Valborgsmässoafton
+        easter + timedelta(days=38),    # day before Kristi himmelsfärdsdag
+    }
+
+
+def market_close_for(d):
+    """(hour, minute) the exchange closes on date `d` — 13:00 on a half-day.
+
+    Every close gate used the MARKET_CLOSE constant, which is only true on a
+    full session; see is_early_close() for what a hardcoded 17:30 did to the
+    four half-days a year.
+    """
+    return EARLY_CLOSE if is_early_close(d) else MARKET_CLOSE
+
+
 def is_market_open(now_local=None):
     if now_local is None:
         now_local = datetime.now()
-    if now_local.weekday() >= 5:
+    if not is_trading_day(now_local):
         return False
+    close_h, close_m = market_close_for(now_local)
     mins = now_local.hour * 60 + now_local.minute
-    return 9 * 60 <= mins <= 17 * 60 + 30
+    return 9 * 60 <= mins <= close_h * 60 + close_m
 
 
 def is_in_eod_window(now_local=None):
     if now_local is None:
         now_local = datetime.now()
-    if now_local.weekday() >= 5:
+    if not is_trading_day(now_local):
         return False
     mins  = now_local.hour * 60 + now_local.minute
     start = EOD_WINDOW_START[0] * 60 + EOD_WINDOW_START[1]
@@ -520,21 +756,63 @@ def is_in_eod_window(now_local=None):
     return start <= mins <= end
 
 
-def feed_settled_past_close(trade_dt):
-    """Has the feed advanced far enough to be showing today's closing prints?
+def eod_sweep_due(state, today, now_local=None):
+    """Is today's post-close exit sweep still owed?
 
-    Returns (settled, shortfall_str). shortfall_str is a human-readable "how much
-    earlier than the threshold" for the retry log line, and is "" when settled.
-    Reported in seconds under a minute so a near-miss can never again look like
-    a rounding artefact — see CLOSE_SETTLE_TOLERANCE.
+    Was `is_in_eod_window()`, a pure 17:45-18:30 wall-clock test: if the Mac
+    was asleep, launchd was throttled or the feed was still behind at 18:30,
+    the gate closed for the rest of the day and that day's positions were never
+    checked against real closing prices — silently, since last_eod_sweep_date
+    simply stayed on yesterday. Same narrow-window shape as the capture
+    incident, fixed the same way (2026-06-13): any post-close trading-day tick
+    may run it, and run_eod_sweep's own probe — feed_settled_past_close(),
+    anchored on TODAY's close — decides whether the prints it would fill
+    against are real, bailing with "retry next run" until they are. Idempotent
+    on last_eod_sweep_date, which the sweep stamps only once it has run.
+    EOD_WINDOW_START/END now only describe when this is EXPECTED to happen.
     """
-    close_time = trade_dt.replace(hour=MARKET_CLOSE[0], minute=MARKET_CLOSE[1],
+    if state.get("last_eod_sweep_date") == today.isoformat():
+        return False
+    if now_local is None:
+        now_local = datetime.now()
+    if not is_trading_day(now_local):
+        return False
+    close_h, close_m = market_close_for(now_local)
+    return now_local.hour * 60 + now_local.minute >= close_h * 60 + close_m
+
+
+def feed_settled_past_close(trade_dt, today=None):
+    """Has the feed advanced far enough to be showing TODAY's closing prints?
+
+    Returns (settled, reason). `reason` is a ready-to-print phrase for the retry
+    log line and for the persisted entry_gate, and is "" when settled. The
+    shortfall is reported in seconds under a minute so a near-miss can never
+    again look like a rounding artefact — see CLOSE_SETTLE_TOLERANCE.
+
+    The threshold used to be built from `trade_dt` itself, which answered "was
+    this trade near the close of ITS OWN day" — so a trade from ANY previous
+    session at/after 17:25 passed. maybe_capture_eod_ohlc happened to pre-check
+    the date; run_eod_sweep did not, so a frozen or day-stale feed let the sweep
+    book TP/SL/TIMEOUT exits against yesterday's prices and then stamp
+    last_eod_sweep_date so the real close was never swept. The threshold is now
+    built from `today`, and a stale-dated print can never satisfy it.
+    """
+    if today is None:
+        today = ec.today_local()
+    if trade_dt.date() != today:
+        return False, (f"feed still on {trade_dt.date().isoformat()} "
+                       f"(today {today.isoformat()})")
+    close_h, close_m = market_close_for(today)
+    close_time = trade_dt.replace(hour=close_h, minute=close_m,
                                   second=0, microsecond=0)
     threshold = close_time - CLOSE_SETTLE_TOLERANCE
     if trade_dt >= threshold:
         return True, ""
     secs = (threshold - trade_dt).total_seconds()
-    return False, (f"{int(secs)}s" if secs < 60 else f"{secs / 60:.1f}m")
+    short = f"{int(secs)}s" if secs < 60 else f"{secs / 60:.1f}m"
+    half  = " half-day" if is_early_close(today) else ""
+    return False, (f"feed only at {trade_dt.strftime('%H:%M:%S')} — {short} short "
+                   f"of the {close_h:02d}:{close_m:02d}{half} close threshold")
 
 
 # ----------------------------------------------------------------------------- universe
@@ -623,26 +901,66 @@ def fetch_live_parallel(tickers):
     return out
 
 
-def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
+def hold_duration(entry_ts, exit_ts):
+    """"19h 35m" / "2d" — the notification's counterpart to closedHold() in
+    web/live_common.js. Both stamps are local wall-clock with no zone, so they
+    are parsed with the same naive format and subtracted."""
+    try:
+        a = datetime.fromisoformat(str(entry_ts))
+        b = datetime.fromisoformat(str(exit_ts))
+    except (TypeError, ValueError):
+        return None
+    sec = max(0, int((b - a).total_seconds()))
+    if sec >= 86400:
+        return f"{round(sec / 86400)}d"
+    if sec >= 3600:
+        return f"{sec // 3600}h {(sec % 3600) // 60}m"
+    if sec >= 60:
+        return f"{sec // 60}m"
+    return f"{sec}s"
+
+
+def apply_exit_checks(state, today, now_local_ts, live, force_sells=None,
+                      engine="signals"):
     """Close any open positions whose current live price triggered TP/SL/timeout.
     Also honours a user-requested manual exit set: tickers in `force_sells`
     are sold at the current live price (no limit-fill cap — the user pressed
     "Sell now"), recorded with reason='MANUAL'. Force-sell takes priority
     over TP/SL/TIMEOUT so a position queued for exit gets sold regardless of
-    where the price is. Mutates state and returns the list of trades closed."""
+    where the price is — the one exception being a position with no live quote
+    at all, whose sell is DEFERRED (kept queued, logged, and listed in
+    state["force_sell_blocked"]) rather than filled at a synthetic price.
+    Mutates state and returns the list of trades closed.
+
+    `engine` only labels the notification — live_patterns and live_cross both
+    call this with their own key, since this is the one place all three engines
+    book a sell."""
     if force_sells is None:
         force_sells = set()
     closed_now = []
+    deferred_sells = []          # queued MANUAL exits this run could not fill
     for tk in list(state["positions"].keys()):
         pos = state["positions"][tk]
         lq = live.get(tk, {})
         cur_price = lq.get("last")
-        if cur_price is None:
-            continue
         # csv-fallback / stale = the live fetch failed and we substituted a
         # synthetic price (last CSV row or entry price). Never trigger price-
         # based exits on a non-live quote — wait for the next good run.
-        if lq.get("source") in ("csv-fallback", "stale"):
+        if cur_price is None or lq.get("source") in ("csv-fallback", "stale"):
+            # MANUAL is not price-triggered, but it still needs a real price to
+            # fill at, so it is DEFERRED — and said out loud. This guard sat
+            # ABOVE the force_sells branch, so a position whose quote fetch kept
+            # failing (the thin-name case) swallowed the user's "Sell now"
+            # silently: the button stayed "queued", the engine no-op'd every 3
+            # minutes and no log line ever named the position. A blocked intent
+            # has to be visible — see the standing rule on silent gates.
+            if tk in force_sells:
+                why = ("no quote at all this run" if cur_price is None
+                       else f"only a {lq.get('source')} price")
+                print(f"   MANUAL sell for {tk} DEFERRED — {why}; stays queued "
+                      f"for the next run with a live quote")
+                deferred_sells.append({"ticker": tk, "reason": why,
+                                       "source": lq.get("source"), "ts": now_local_ts})
             continue
         target_date = (datetime.fromisoformat(pos["target_exit_date"]).date()
                        if isinstance(pos["target_exit_date"], str)
@@ -650,11 +968,9 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
 
         # A stop moved *after* entry (scripts/retighten_stops.py, used when
         # SL_PCT changed while positions were open) may sit below where the
-        # market already is. Filling such a stop at the stop price would book a
-        # better-than-market exit that never existed — the same synthetic-fill
-        # problem STALE_EXIT_GRACE_DAYS was added to avoid. The marker is
-        # cleared the moment the position trades back above the new stop, from
-        # which point an ordinary stop-limit fill is legitimate again.
+        # market already is. That case is now covered by the general min() rule
+        # in the SL branch below; the marker is still cleared here so a stale
+        # flag cannot outlive the condition it described.
         if pos.get("sl_fill_at_market") and cur_price > pos["sl"]:
             pos.pop("sl_fill_at_market", None)
 
@@ -673,10 +989,23 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
             fill_price = pos["tp"]   # limit-sell @ TP — fills at TP, not above
         elif cur_price <= pos["sl"]:
             exit_reason = "SL"
-            # Stop-loss @ SL fills at SL, not below — unless the stop was
-            # retightened under an already-lower market (see above), in which
-            # case the only honest fill is the real market price.
-            fill_price = cur_price if pos.get("sl_fill_at_market") else pos["sl"]
+            # A stop can never fill BETTER than the market. Booking pos["sl"]
+            # whenever the price was at or under it assumed the stop was always
+            # touched on the way down — but under ENTRY_AT_CLOSE the engine's
+            # next look at a position is the following session's ~09:00 tick, so
+            # EVERY first stop test is taken across an overnight gap it never
+            # observed. On a gap-down open the stop price simply never traded and
+            # the fill was invented money: all 81 stop-outs in the three books
+            # closed at exactly -1.00% / -2.00%, while 10 of them opened BELOW
+            # their stop (~4,100 SEK of phantom P&L, and a flattered loss tail in
+            # the -EV analysis). min() is the honest rule, and it subsumes the
+            # sl_fill_at_market special case retighten_stops.py needed.
+            # Floored at MAX_SL_SLIP: ~87% of stop-outs are seen mid-session,
+            # where cur_price is a raw single print 0-3 min after the breach,
+            # not an opening auction — one odd lot must not book a -7% exit
+            # against a -1% stop and freeze it in closed_trades.
+            fill_price = max(min(cur_price, pos["sl"]),
+                             pos["sl"] * (1 - MAX_SL_SLIP))
         elif today >= target_date:
             exit_reason = "TIMEOUT"
 
@@ -711,6 +1040,14 @@ def apply_exit_checks(state, today, now_local_ts, live, force_sells=None):
             state["closed_trades"].append(closed)
             closed_now.append(closed)
             del state["positions"][tk]
+            # Queued, not sent: the wallet has not been written yet. Announcing
+            # a sell that a crash then rolls back is worse than a missed
+            # banner — see the delivery model in lib/notify.py.
+            notify.queue_sell(engine, closed,
+                              hold=hold_duration(closed.get("entry_ts"), now_local_ts))
+    # Always rewritten (empty included) so a cleared block cannot linger on the
+    # page under a fresh timestamp — the stale-behind-a-fresh-clock trap.
+    state["force_sell_blocked"] = deferred_sells
     return closed_now
 
 
@@ -726,13 +1063,14 @@ def maybe_capture_eod_ohlc(state, today):
 
     Gating:
       · skip if already captured today
-      · skip on weekends (no Stockholm close to capture)
-      · skip if local clock is still before MARKET_CLOSE (17:30)
+      · skip on weekends and Stockholm holidays (no close to capture)
+      · skip if local clock is still before the day's close (17:30, or 13:00
+        on a half-day — see market_close_for)
       · skip if the feed probe (SEB A trade timestamp) fails outright
-      · skip if the feed trade is from a different date than `today` —
-        guards against writing today's bar using yesterday's OHLC fields
-        when the feed hasn't yet advanced past the previous close
-      · skip if the feed is still before today's 17:30 close
+      · skip if the feed trade is from a different date than `today`, or is
+        still before today's close — both now answered by
+        feed_settled_past_close(), which guards against writing today's bar
+        from yesterday's OHLC fields
     Any skip leaves `last_ohlc_capture_date` unset so the next tick retries.
 
     Any weekday tick after 17:30 (inside or outside the EOD window) will
@@ -743,11 +1081,11 @@ def maybe_capture_eod_ohlc(state, today):
         return
 
     now_local = datetime.now()
-    if now_local.weekday() >= 5:
+    if not is_trading_day(now_local):
         return
     mins_now = now_local.hour * 60 + now_local.minute
-    close_mins = MARKET_CLOSE[0] * 60 + MARKET_CLOSE[1]
-    if mins_now < close_mins:
+    close_h, close_m = market_close_for(now_local)
+    if mins_now < close_h * 60 + close_m:
         return
 
     lag = probe_data_lag()
@@ -763,14 +1101,9 @@ def maybe_capture_eod_ohlc(state, today):
     if trade_dt is None:
         print(f" OHLC capture: feed probe failed ({lag.get('error','unknown')}); retry next run")
         return
-    if trade_dt.date() != today:
-        print(f" OHLC capture: feed still on {trade_dt.date().isoformat()} "
-              f"(today {today.isoformat()}); retry next run")
-        return
-    settled, shortfall = feed_settled_past_close(trade_dt)
+    settled, why = feed_settled_past_close(trade_dt, today)
     if not settled:
-        print(f" OHLC capture: feed only at {trade_dt.strftime('%H:%M:%S')} "
-              f"({shortfall} short of the close threshold); retry next run")
+        print(f" OHLC capture: {why}; retry next run")
         return
 
     primary, _ = build_universe()
@@ -806,10 +1139,9 @@ def run_eod_sweep(state, today, now_local_ts):
         save_state(state)
         return
 
-    settled, shortfall = feed_settled_past_close(trade_dt)
+    settled, why = feed_settled_past_close(trade_dt, today)
     if not settled:
-        print(f"   feed only at {trade_dt.strftime('%H:%M:%S')} "
-              f"({shortfall} short of the close threshold); retry next run")
+        print(f"   {why}; retry next run")
         save_state(state)
         return
     print(f"   feed settled (last {lag['ticker']} trade @ "
@@ -835,7 +1167,6 @@ def run_eod_sweep(state, today, now_local_ts):
 
     force_sells = load_force_sells()
     closed_now  = apply_exit_checks(state, today, now_local_ts, live, force_sells)
-    consume_force_sells({t["ticker"] for t in closed_now if t["reason"] == "MANUAL"})
 
     last_quotes = state.get("last_quotes", {})
     for tk, lq in live.items():
@@ -847,6 +1178,18 @@ def run_eod_sweep(state, today, now_local_ts):
             "source":   "live-eod",
         }
     state["last_quotes"] = last_quotes
+
+    # Wallet first, queue second. The exits above exist only in memory until
+    # save_state, yet the queue file used to be emptied here while the wallet was
+    # not written until the end of this function — with build_universe() and,
+    # once a day, a 158-fetch calendar refresh in between. Any abort in that gap
+    # destroyed the user's intent WITHOUT executing it (position still open,
+    # "queued" badge gone) while notify's atexit hook still pushed the "sold"
+    # that had just been rolled back. Saving first inverts the failure into a
+    # harmless one: the exit is booked and the queue may be consumed again next
+    # run — apply_exit_checks simply skips a ticker that is no longer open.
+    save_state(state)
+    reconcile_force_sells(state, closed_now, force_sells)
 
     if closed_now:
         print(f"\n--- CLOSED ON EOD SWEEP ({len(closed_now)}) ---")
@@ -870,6 +1213,15 @@ def run_eod_sweep(state, today, now_local_ts):
                   f"entered {pos['entry_date']} @ {pos['entry_price']:.2f}   "
                   f"close {cur_price:.2f}   P&L {pnl:+,.0f} SEK ({ret*100:+.2f}%)")
 
+    state["last_eod_sweep_date"] = today.isoformat()
+    save_state(state)
+
+    # Everything below runs AFTER the wallet is on disk, deliberately: the
+    # calendar refresh is 158 sequential HTTP fetches and used to sit between
+    # the booked exits and their save, which is the widest crash window in the
+    # engine. Nothing here mutates the wallet, so a failure now costs a stale
+    # event cache and nothing else.
+    #
     # OHLC capture moved to maybe_capture_eod_ohlc() — it now runs as a
     # self-gated daily step in main(), independent of positions being open
     # and of the narrow 17:45-18:30 EOD window. We still build the universe
@@ -887,9 +1239,6 @@ def run_eod_sweep(state, today, now_local_ts):
         print("   event calendar refreshed")
     else:
         print("   event calendar still fresh, skipping refresh")
-
-    state["last_eod_sweep_date"] = today.isoformat()
-    save_state(state)
 
 
 # ----------------------------------------------------------------------------- main
@@ -921,7 +1270,9 @@ def main():
             maybe_capture_eod_ohlc(state, today)
         except Exception as e:
             print(f" OHLC capture: unexpected error: {e!r}")
-        if is_in_eod_window() and state.get("last_eod_sweep_date") != today.isoformat():
+        # Not gated on the 17:45-18:30 clock window any more — see
+        # eod_sweep_due(); the feed probe inside the sweep is the real gate.
+        if eod_sweep_due(state, today):
             run_eod_sweep(state, today, now_local_ts)
 
         # sig-9: entries are close-confirmed, so the post-close tick falls
@@ -929,10 +1280,20 @@ def main():
         # applied first (run_eod_sweep above, then apply_exit_checks in step 3),
         # so a name stopped out at today's close lands in the cooldown set
         # before the entry scan can look at it.
-        ready, why = close_confirmed_entry_ready(state, today)
+        ready, why, missed_window = close_confirmed_entry_ready(state, today)
         if not ready:
-            state["entry_gate"] = {"open": False, "reason": why,
-                                   "date": today.isoformat(), "checked": now_local_ts}
+            # Written to BOTH keys: the pages read `last_entry_gate ||
+            # entry_gate`, so writing only one renders the previous run's
+            # reason under this run's fresh timestamp — the stale-behind-a-
+            # fresh-clock trap. No last_skipped touched here: this wallet does
+            # not publish one (see the end of main), and this branch is the one
+            # that fires on EVERY tick after the day's close-confirmed pass, so
+            # a clear here erases the day's list minutes after it is written.
+            gate = {"open": False, "reason": why,
+                    "date": today.isoformat(), "checked": now_local_ts,
+                    "missed_window": missed_window}
+            state["entry_gate"] = gate
+            state["last_entry_gate"] = gate
             save_state(state)
             print(f" Market closed (Stockholm OMX 09:00-17:30 Mon-Fri). "
                   f"No entry pass: {why}.")
@@ -1045,8 +1406,13 @@ def main():
     # ---------- 3. Exit checks on open positions
     force_sells = load_force_sells()
     closed_now  = apply_exit_checks(state, today, now_local_ts, live, force_sells)
-    # Remove any tickers actually sold from the queue (one-shot semantics).
-    consume_force_sells({t["ticker"] for t in closed_now if t["reason"] == "MANUAL"})
+    # Wallet first, queue second — see the note in run_eod_sweep. The scan below
+    # runs for minutes before this run reaches its own save_state, and a crash in
+    # there used to lose the sell while the atexit push announced it anyway.
+    save_state(state)
+    # One-shot semantics: drop the tickers actually sold, plus any queued ticker
+    # that no longer has a position to sell.
+    reconcile_force_sells(state, closed_now, force_sells)
 
     # ---------- 4. Scan primary universe — first gather candidates, then rank
     candidates = []
@@ -1099,7 +1465,26 @@ def main():
 
     # Dedupe by company stem so we don't take A and B of the same name
     held_stems = {company_stem(tk) for tk in state["positions"]}
-    foreign_stems = (ec.foreign_held_stems(ec.sibling_wallets("signals"), company_stem)
+    # Cross is deliberately excluded from the sibling set. Its dedupe flag is
+    # off on its own side (live_cross.CROSS_WALLET_DEDUPE = False) because every
+    # Cross candidate is BY CONSTRUCTION a name that passed this engine's
+    # signal_check that day — that is the x-4 gate — so the collision rate is
+    # 100% by design. Reading Cross's positions here made the check effectively
+    # bidirectional: the experimental arm silently deleted entries from the
+    # benchmark arm it is measured against, for up to MAX_HOLD_DAYS per Cross
+    # position, and not at random (Cross enters precisely on the days Signals
+    # could not). That is the capacity bias the separate Cross wallet and its
+    # 500k top-up exist to prevent. Patterns' book still blocks — independent
+    # setups, genuine share-class duplication.
+    # Cost, recorded here: the same company can now be held by Signals and Cross
+    # at once, so aggregate cross-wallet concentration is not capped by this gate.
+    # Keyed off ec.WALLET_FILES, never a repeated literal: a rename there would
+    # silently stop matching and put Cross back in the dedupe set — failing soft
+    # in the wrong direction, re-enabling a gate deliberately turned off.
+    cross_wallet_file = ec.WALLET_FILES["cross"][1]
+    sibling_paths = [(label, path) for label, path in ec.sibling_wallets("signals")
+                     if os.path.basename(path) != cross_wallet_file]
+    foreign_stems = (ec.foreign_held_stems(sibling_paths, company_stem)
                      if CROSS_WALLET_DEDUPE else {})
     pending         = []   # cleared every gate but could not be sized — UI shows them
     auto_entries    = []   # opened at market by this run
@@ -1248,6 +1633,8 @@ def main():
             "shares":  shares, "cost": cost,
             "exit_by": exit_by.isoformat(), "info": entry_info,
         })
+        notify.queue_buy("signals", name, entry_price, shares, cost=cost,
+                         tp=tp_price, sl=sl_price, exit_by=exit_by.isoformat())
 
     state["pending_signals"] = pending
 
@@ -1345,7 +1732,13 @@ def main():
             "tp": tp_price, "sl": sl_price, "shares": shares, "cost": cost,
             "exit_by": exit_by.isoformat(), "info": info,
         })
+        notify.queue_buy("signals", tk, limit_price, shares, cost=cost,
+                         tp=tp_price, sl=sl_price, exit_by=exit_by.isoformat(),
+                         pattern="your limit order filled")
 
+    # Wallet before queues again: the entries/fills above are still in-memory
+    # only, and consume_* rewrites the intent files immediately.
+    save_state(state)
     consume_limit_orders(orders_to_remove)
 
     if consumed_approvals:
@@ -1513,6 +1906,50 @@ def main():
     state["last_universe"] = primary_names
     state["last_watchlist"] = watchlist_names
     state["last_watchlist_hits"] = watchlist_hits
+
+    # sig-10 / x-4: the names that PASSED signal_check on this run, published as
+    # an explicit contract for live_cross. Cross previously keyed off
+    # `last_universe ∪ last_watchlist` — the whole radar, ~400 names, which is
+    # everything this engine can evaluate rather than anything it likes. That
+    # made Cross's "Signals half" a no-op filter. This is the real candidate set:
+    # DoD <= DOD_THRESHOLD, not at the 5-day high, not Friday, ret_20d > CRASH_GUARD.
+    #
+    # `gate` matters as much as the list. Under ENTRY_AT_CLOSE an intraday run
+    # still evaluates signal_check against a live mid-session quote, so an
+    # intraday hit is a provisional read that can evaporate by 17:30. Only the
+    # close-confirmed pass is a real signal, and Cross checks this field rather
+    # than trusting the list's mere presence.
+    #
+    # A user force-entry (state/live_force_entry.json) flips `ok = True` for a
+    # name signal_check just REJECTED and appends it to `candidates` like a real
+    # hit — and the panel that feeds that button is populated exclusively from
+    # names that FAILED signal_check. Publishing those here would have handed
+    # Cross a "passed sig-10" row it re-checks nothing of (compute_candidates
+    # never re-tests dod / at_5d_high / ret_20d), and Cross would auto-buy ~70k
+    # on a Signals half that never fired — the exact defective-gate problem the
+    # x-1..x-3 record was thrown away for. The override is the user's business,
+    # not a signal, so it is excluded and counted.
+    published_hits = [c for c in candidates if not (c["info"] or {}).get("forced")]
+    state["last_signal_hits"] = [
+        {"ticker":  c["t"]["name"],
+         "insref":  c["t"]["insref"],
+         "last":    c["live_close"],
+         "tier":    "mid/small" if c["t"].get("from_watchlist") else "large cap",
+         "dod":     c["info"].get("dod"),
+         "ret_20d": c["info"].get("ret_20d"),
+         "forced":  False,
+         "info":    c["info"]}
+        for c in published_hits
+    ]
+    state["last_signal_hits_meta"] = {
+        "date": today.isoformat(),
+        "ts":   now_local_ts,
+        "gate": "close-confirmed" if close_entry_pass else "intraday",
+        "n":    len(published_hits),
+        # Named so a day where Cross saw fewer names than the log's candidate
+        # count is explainable rather than mysterious.
+        "forced_excluded": len(candidates) - len(published_hits),
+    }
     state["approved_watchlist"] = sorted(approved_set)
     state["force_entry_approved"] = sorted(force_entry_set)
 
@@ -1600,19 +2037,49 @@ def main():
     # rather than silently skipping the day's entries.
     if close_entry_pass:
         state["last_entry_scan_date"] = today.isoformat()
-        state["entry_gate"] = {"open": True, "reason": "", "date": today.isoformat(),
-                               "checked": now_local_ts,
-                               "entries": len(auto_entries)}
+        gate = {"open": True, "reason": "", "date": today.isoformat(),
+                "checked": now_local_ts, "entries": len(auto_entries)}
     else:
-        state["entry_gate"] = {"open": False,
-                               "reason": "intraday run — entries fire after the close",
-                               "date": today.isoformat(), "checked": now_local_ts}
+        gate = {"open": False,
+                "reason": "intraday run — entries fire after the close",
+                "date": today.isoformat(), "checked": now_local_ts}
+    state["entry_gate"] = gate
+    # Same contract live_patterns / live_cross publish (last_entry_gate): the
+    # reason why nothing was entered. Only `entry_gate` used to be written, and no
+    # page reads that key for this wallet — so on the 1M book "the feed never
+    # settled", "already scanned today", "before the close" and "every candidate
+    # was blocked" all rendered identically to "no signals today". A gate that
+    # cannot be seen is the failure shape that hid the 6-second close-gate bug
+    # for two months.
+    # No last_skipped here, deliberately: web/live_signals.html has no panel
+    # reading it, and the not-ready early return above runs on every tick after
+    # the day's scan — so a list written here lived one tick before being
+    # cleared. Every skip is already logged as a "skipped" event in
+    # recent_signals. Publish the list together with the page that reads it.
+    state["last_entry_gate"] = gate
 
     save_state(state)
+    # Wallet is on disk — now it is safe to announce. Early-return paths (and
+    # the EOD sweep, which sells before ever reaching here) are covered by the
+    # atexit hook notify registers on the first queued event.
+    notify.flush()
 
 
 if __name__ == "__main__":
-    main()
+    # main() was called bare. Any exception escaping it killed the process
+    # BEFORE the two chained engines below ever ran — and the only LaunchAgent
+    # on this machine is this one, so Patterns and Cross exist only as these
+    # calls. A fault in Signals (ec.load_state deliberately re-raises on a
+    # corrupt live_portfolio.json) therefore left two perfectly healthy books
+    # unmanaged — no TP, no SL, no force-sell — on that tick and on every tick
+    # after, since a deterministic fault recurs every 180s. Same treatment its
+    # two dependents already had.
+    try:
+        main()
+    except Exception:
+        import traceback
+        print("\n[live_signals crash]")
+        traceback.print_exc()
     # After the mean-reversion engine finishes its 3-min cycle, run the
     # candlestick-pattern engine in the same process. Wrapped in try/except so
     # a bug in the newer patterns engine never breaks the validated live_signals

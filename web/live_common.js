@@ -61,25 +61,40 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ── trade scoring ────────────────────────────────────────────────────────────
-// All three engines run TP +2.0% / SL -2.0% — a 1:1 bet, so the strategy only
-// pays above a 50% win rate. The pages used to hard-code three *different*
+// The three engines no longer share a TP/SL pair, so neither can they share a
+// break-even win rate. Patterns runs TP +2.0% / SL -2.0% (a 1:1 bet, paying
+// only above 50%); Signals has run TP +3.0% / SL -1.0% since sig-10 and Cross
+// the same pair since x-4, both from 2026-09-03 (a 3:1 bet, paying above 25%).
+// The pages used to hard-code three *different*
 // thresholds: 80% on Signals (left over from the 0.5%/-2.0% strategy retired
 // 2026-05-23) and 33% on Patterns (left over from the +2/-1 stop, widened
 // 2026-05-25). Patterns' 50.9% WR rendered as a comfortable pass against its
 // stale 33% label when it was in fact sitting exactly on the break-even line.
-// Signals moved to SL -1.0% on 2026-08-24 while Patterns and Cross stayed at
-// -2.0%, so this can no longer be one shared number. Each page declares its own
-// engine's pair via setBreakeven(); the 0.50 default is the -2.0% case, so a
-// page that forgets to call it still gets the stricter bar rather than a
+// Signals moved to SL -1.0% on 2026-08-24 (and TP +3.0% on 2026-09-03) while
+// Patterns stayed at +2/-2, so this can no longer be one shared
+// number. Each page declares its own
+// engine's CURRENT pair via setBreakeven(); the 0.50 default is the -2.0% case,
+// so a page that forgets to call it still gets the stricter bar rather than a
 // flattering one. `let`, not `const`, precisely so a page can override it.
 let BREAKEVEN_WR = 0.50;
 
 // |SL| / (TP + |SL|) — the win rate at which expectancy is zero.
 const setBreakeven = (tp, sl) => (BREAKEVEN_WR = Math.abs(sl) / (tp + Math.abs(sl)));
 
-const wrClass = wr =>
-  wr === null || wr === undefined ? ''
-    : (wr > BREAKEVEN_WR ? 'up' : (wr < BREAKEVEN_WR ? 'down' : 'neutral'));
+// `breakeven` defaults to the page's CURRENT pair, which is the right bar for a
+// tile about the strategy running today and the wrong one for anything that
+// spans generations. Cross showed why: all 27 of its closed trades are x-1,
+// taken at +2/-2 where 50% is break-even, and 43% of them won — a loss, and the
+// realised P&L beside it read -9,469 SEK. Scored against x-4's 25% bar the same
+// 43% rendered green, i.e. "the confluence gate is working, size it up". So the
+// bar is now an argument: pass the one the trades were actually taken under
+// (verBreakeven) whenever rows are grouped by version. A `null` breakeven means
+// no pair is on record for those trades — the caller gets '' and the number
+// renders uncoloured, which is honest, rather than being graded against a
+// threshold that never applied to it.
+const wrClass = (wr, breakeven = BREAKEVEN_WR) =>
+  wr === null || wr === undefined || breakeven === null || breakeven === undefined ? ''
+    : (wr > breakeven ? 'up' : (wr < breakeven ? 'down' : 'neutral'));
 
 // Positions the engine was not running to manage, booked STALE past their exit
 // date (see STALE_EXIT_GRACE_DAYS in live_signals.py). The cash moved for real
@@ -193,6 +208,42 @@ function verInfo(engine, ver) {
   return hist.find(r => r.version === ver) || null;
 }
 
+// The TP/SL pair a version actually traded, expressed as its break-even win
+// rate, parsed out of that version's strategy_history `params` free text
+// ("TP +2.0% / SL -2.0% / 7d hold"). CHANGELOG.json carries no numeric tp/sl
+// fields yet; reading the string it already publishes keeps the ledger the one
+// source of truth instead of a second copy of every historical pair living here
+// and drifting out of step with it.
+//
+// A version that changed something other than the pair may not restate it —
+// x-2 reads "entries paused, exits still managed" — so the pair carries forward
+// from the most recent earlier version that does state one, which is what such
+// a row means (under x-2 exits went on being managed at x-1's +2/-2). The walk
+// is ordered by `from` because strategy_history is not stored chronologically:
+// new rows are prepended, so patterns reads pat-5, pat-1, pat-2, ... in file
+// order.
+//
+// Returns null when nothing on record states a pair, so the caller can decline
+// to colour the number rather than grade it against a guess.
+function verBreakeven(engine, ver) {
+  const hist = verLedger && verLedger.strategy_history ? verLedger.strategy_history[engine] : null;
+  if (!hist) return null;
+  const chron = [...hist].sort((a, b) =>
+    String(a.from || '9999').localeCompare(String(b.from || '9999')));
+  const at = chron.findIndex(r => r.version === ver);
+  if (at < 0) return null;
+  for (let i = at; i >= 0; i--) {
+    const m = /TP\s*\+?(\d+(?:\.\d+)?)\s*%\s*\/\s*SL\s*-?(\d+(?:\.\d+)?)\s*%/i
+      .exec(chron[i].params || '');
+    if (m) {
+      const tp = parseFloat(m[1]);
+      const sl = Math.abs(parseFloat(m[2]));
+      if (tp + sl > 0) return sl / (tp + sl);
+    }
+  }
+  return null;
+}
+
 // Render one trade's / position's strategy version as a pill linking to the
 // changelog. `rec` is a closed_trade or position dict.
 function verPill(engine, rec) {
@@ -224,6 +275,10 @@ const verCell = (engine, rec, tdClass = '') =>
 //
 // Scoring matches the rest of the page: realised P&L counts every exit, WR and
 // average return count scoredTrades() only (STALE exits are outage artefacts).
+// Each row is graded against ITS OWN version's break-even, not the page's
+// current one — a table whose whole purpose is to separate generations must not
+// score a +2/-2 generation against the +3/-1 bar of the generation that
+// replaced it, which is exactly how Cross's losing 43% x-1 row came out green.
 function renderVersionBreakdown(engine, closed, bodyId) {
   const body = document.getElementById(bodyId);
   if (!body) return;
@@ -251,11 +306,18 @@ function renderVersionBreakdown(engine, closed, bodyId) {
       const total  = all.reduce((s, t) => s + (t.pnl_sek || 0), 0);
       const info   = verInfo(engine, v);
       const excl   = all.length - n;
+      const be     = verBreakeven(engine, v);
+      const beNote = wr === null ? ''
+        : (be === null
+            ? `No TP/SL on record for ${v} — win rate left uncoloured rather than `
+              + `graded against another generation's bar`
+            : `${(be*100).toFixed(0)}% break-even under ${v}'s own TP/SL pair`
+              + (info && info.params ? ` (${info.params})` : ''));
       return `
         <tr>
           <td>${verPill(engine, all[0])}</td>
           <td class="num" title="${excl ? esc(excl + ' STALE exit(s) excluded from WR / avg ret') : ''}">${n}${excl ? `<span class="ver-excl">+${excl}</span>` : ''}</td>
-          <td class="num ${wr === null ? '' : wrClass(wr)}">${wr === null ? '—' : (wr*100).toFixed(0) + '%'}</td>
+          <td class="num ${wrClass(wr, be)}" title="${esc(beNote)}">${wr === null ? '—' : (wr*100).toFixed(0) + '%'}</td>
           <td class="num ${avgRet === null ? '' : cls(avgRet)}">${avgRet === null ? '—' : pct(avgRet, 2)}</td>
           <td class="num ${cls(total)}">${sign(total)}</td>
           <td class="mobile-hide ver-note">${info ? esc(info.note) : ''}</td>
@@ -263,3 +325,99 @@ function renderVersionBreakdown(engine, closed, bodyId) {
     }).join('');
   body.innerHTML = rows || '<tr><td colspan="6" class="empty-row">No closed trades yet</td></tr>';
 }
+
+// ── table pagination ─────────────────────────────────────────────────────────
+// Shared by all three live pages. Lifted out of live_signals.html once Patterns
+// and Cross needed it: both were rendering `sorted.slice(0, 30)`, which quietly
+// hid every trade past the 30th — Patterns had 75 closed trades and showed 30
+// with nothing on the page to say so.
+//
+// setData() caches the full array plus a row-renderer (which captures its
+// calling closure, e.g. lastLimitOrders), so Prev/Next can re-slice between
+// the pages' auto-refreshes without re-fetching. The footer stays hidden while
+// everything fits on one page.
+const PAGE_SIZE = 10;
+
+// `emptyMsg` may be a function, for a table whose empty state depends on why it
+// is empty — the overview's trade feed distinguishes "nothing traded yet" from
+// "nothing matches the current filter chips", which read identically otherwise.
+function makePager(ids, colspan, emptyMsg, pageSize = PAGE_SIZE) {
+  const state = { page: 1, data: [], rowFn: null };
+  function render() {
+    const body  = document.getElementById(ids.body);
+    const pager = document.getElementById(ids.pager);
+    if (!body) return;
+    if (!state.data.length) {
+      const msg = (typeof emptyMsg === 'function') ? emptyMsg() : emptyMsg;
+      body.innerHTML = `<tr><td colspan="${colspan}" class="empty-row">${msg}</td></tr>`;
+      if (pager) pager.style.display = 'none';
+      return;
+    }
+    const totalPages = Math.max(1, Math.ceil(state.data.length / pageSize));
+    if (state.page > totalPages) state.page = totalPages;
+    if (state.page < 1) state.page = 1;
+    const start = (state.page - 1) * pageSize;
+    const pageRows = state.data.slice(start, start + pageSize);
+    body.innerHTML = pageRows.map(state.rowFn).join('');
+    if (!pager) return;
+    if (state.data.length <= pageSize) {
+      pager.style.display = 'none';
+    } else {
+      pager.style.display = '';
+      document.getElementById(ids.info).textContent =
+        `Showing ${start + 1}–${start + pageRows.length} of ${state.data.length}  ·  Page ${state.page} of ${totalPages}`;
+      document.getElementById(ids.prev).disabled = state.page <= 1;
+      document.getElementById(ids.next).disabled = state.page >= totalPages;
+    }
+  }
+  return {
+    setData(data, rowFn) { state.data = data; state.rowFn = rowFn; render(); },
+    change(delta) { state.page += delta; render(); },
+    // Jump back to the first page. setData() deliberately *keeps* the current
+    // page so a 2-minute auto-refresh doesn't yank the reader back to the top;
+    // a filter change is the opposite case and calls this first.
+    reset() { state.page = 1; },
+  };
+}
+
+// ── quote quality: spread + staleness ────────────────────────────────────────
+// Both were folded out of the standalone "Live quotes" table on Signals and now
+// ride on the Open positions row of every live page.
+//
+// The spread is graded against the position's OWN take-profit distance rather
+// than a fixed percentage, so it stays honest if an engine runs a different TP:
+// a 1% spread against a +2% target is half the edge, and the engines' liquidity
+// gate screens median VOLUME, not spread, so nothing declines a name for a wide
+// quote. Display only.
+const SPREAD_WARN = 0.25;   // spread >= 25% of the TP distance
+const SPREAD_BAD  = 0.50;   // >= 50% — half the edge goes to the spread
+
+function spreadInfo(lq, pos, now) {
+  lq = lq || {};
+  const spr    = (lq.bid != null && lq.ask != null) ? (lq.ask - lq.bid) : null;
+  const pct_    = (spr != null && now) ? spr / now : null;
+  const tpDist = (pos && pos.tp && pos.entry_price) ? (pos.tp / pos.entry_price - 1) : null;
+  const share  = (pct_ != null && tpDist) ? pct_ / tpDist : null;
+  const cls_   = share == null ? '' : share >= SPREAD_BAD ? 'neg' : share >= SPREAD_WARN ? 'warn' : '';
+  const title  = spr == null
+    ? 'No bid/ask in the last quote'
+    : `Bid ${fmt(lq.bid, 2)} / Ask ${fmt(lq.ask, 2)}`
+      + (lq.diff_pct != null ? ` · day ${lq.diff_pct >= 0 ? '+' : ''}${lq.diff_pct.toFixed(2)}%` : '')
+      + (share != null ? ` — ${(share*100).toFixed(0)}% of this position's +${(tpDist*100).toFixed(2)}% target` : '');
+  return { pct: pct_, share, cls: cls_, title };
+}
+
+// A spread is never negative, so it renders unsigned (pct() would prefix a '+').
+const spreadCell = (lq, pos, now, tdClass = 'num mobile-hide') => {
+  const s = spreadInfo(lq, pos, now);
+  return `<td class="${tdClass} ${s.cls}" title="${esc(s.title)}">`
+       + `${s.pct != null ? (s.pct*100).toFixed(2) + '%' : '—'}</td>`;
+};
+
+// 'stale' means the live fetch failed on the last run and the engine kept the
+// previous good quote rather than showing a synthetic price — see
+// build_quote_snapshot() in lib/engine_common.py. Without this the row shows a
+// plausible-looking price with no hint that P&L is behind.
+const staleMark = lq => (lq && lq.source === 'stale')
+  ? ' <span class="q-stale" title="Live quote unavailable on the last run — this is the previous good price, so P&amp;L may be behind">stale</span>'
+  : '';

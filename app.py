@@ -1,4 +1,4 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from concurrent.futures import ThreadPoolExecutor
 import sys
 import threading, webbrowser, json, urllib.parse, os, csv, time, re
@@ -151,8 +151,7 @@ def _read_watchlist():
 
 
 def _write_watchlist(wl):
-    with open(WATCHLIST_PATH, 'w', encoding='utf-8') as f:
-        json.dump(wl, f, ensure_ascii=False)
+    ec.write_json_atomic(WATCHLIST_PATH, wl, ensure_ascii=False, indent=None)
 
 
 def _read_alerts():
@@ -164,8 +163,7 @@ def _read_alerts():
 
 
 def _write_alerts(alerts):
-    with open(ALERTS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(alerts, f, ensure_ascii=False, indent=2)
+    ec.write_json_atomic(ALERTS_PATH, alerts, ensure_ascii=False)
 
 
 def _read_paper_trades():
@@ -289,8 +287,20 @@ _HEALTH_ENGINES = (
     ("Cross",    "live_cross_portfolio.json"),
 )
 
+# Same labels as _HEALTH_ENGINES, paired with the force-sell queue each wallet
+# reads, so an orphaned entry can be named after the engine it is armed against.
+_HEALTH_FORCE_SELLS = (
+    ("Signals",  LIVE_FORCE_SELL_PATH),
+    ("Patterns", LIVE_PATTERNS_FORCE_SELL_PATH),
+    ("Cross",    LIVE_CROSS_FORCE_SELL_PATH),
+)
+
 _MARKET_OPEN_MIN  = 9 * 60
 _MARKET_CLOSE_MIN = 17 * 60 + 30
+# Off-hours an engine can only be judged on whether it was still alive AT the
+# close, not merely at some point during the day — see the else: branch in
+# _live_health(). 30 minutes of slack absorbs a Mac that sleeps a little early.
+_HEALTH_SESSION_END_MIN = _MARKET_CLOSE_MIN - 30
 
 
 def _market_is_open(now):
@@ -322,6 +332,7 @@ def _live_health():
     session  = _last_completed_session(now)
 
     engines = []
+    states  = {}
     for label, fname in _HEALTH_ENGINES:
         try:
             with open(os.path.join(STATE_DIR, fname), encoding='utf-8') as f:
@@ -330,6 +341,7 @@ def _live_health():
             engines.append({"name": label, "status": "critical", "age_min": None,
                             "detail": "state file unreadable"})
             continue
+        states[label] = st
 
         last_run = st.get("last_run")
         dt = None
@@ -351,12 +363,29 @@ def _live_health():
             status = "ok" if age_min <= 30 else ("warn" if age_min <= 90 else "critical")
             detail = f"last run {age_min:.0f} min ago"
         else:
-            # Off-hours: only care that it was alive for the last session.
-            ran_since = dt.astimezone().date() >= session
-            status = "ok" if ran_since else "critical"
-            detail = (f"last run {age_min / 60:.0f}h ago"
-                      if ran_since else
-                      f"has not run since the {session.isoformat()} session")
+            # Off-hours: it has to have been alive for the last session — and
+            # alive until that session's CLOSE. A date-only test called an
+            # engine that ticked once at 09:03 and then died (the exit-78
+            # failure mode: every later tick exits with no output) "ok" all the
+            # way to the next open, which is exactly the window someone is most
+            # likely to glance at the banner. Everything after the last stamp —
+            # stops, 7-day timeouts, the EOD sweep — did not run.
+            local     = dt.astimezone()
+            ran_since = local.date() >= session
+            stopped_min = local.hour * 60 + local.minute
+            if not ran_since:
+                status = "critical"
+                detail = f"has not run since the {session.isoformat()} session"
+            elif local.date() == session and stopped_min < _HEALTH_SESSION_END_MIN:
+                short_h = (_MARKET_CLOSE_MIN - stopped_min) / 60.0
+                # A tick or two short of the close is a machine sleeping early;
+                # hours short means the session ran unattended.
+                status = "warn" if short_h <= 2 else "critical"
+                detail = (f"stopped at {local.strftime('%H:%M')} — {short_h:.1f}h "
+                          f"before the {session.isoformat()} close")
+            else:
+                status = "ok"
+                detail = f"last run {age_min / 60:.0f}h ago"
         engines.append({"name": label, "status": status,
                         "age_min": round(age_min, 1), "detail": detail})
 
@@ -387,11 +416,84 @@ def _live_health():
                      "detail": ("current" if behind == 0
                                 else f"{behind} trading day{'s' if behind > 1 else ''} behind")})
 
+    # Stranded "Sell now" intent. A queued ticker is consumed only when THAT
+    # ticker exits with reason MANUAL, so one queued against a position that had
+    # already closed is never consumed — and apply_exit_checks tests the queue
+    # ahead of TP/SL/TIMEOUT, so it market-sells the NEXT position opened in that
+    # name. POST /live-*-force-sell now refuses those at the door, but an entry
+    # stranded before that guard existed is still armed and was rendered nowhere:
+    # the pages draw the Sell-now state only inside open-position rows, so a
+    # queue entry with no row to sit in is invisible. It belongs in the banner.
+    for label, path in _HEALTH_FORCE_SELLS:
+        st = states.get(label)
+        if st is None:
+            continue          # wallet already reported critical; nothing to match against
+        orphans = sorted(t for t in _read_force_sell_file(path)
+                         if t not in (st.get("positions") or {}))
+        if orphans:
+            jobs.append({"name": f"{label} sell-now queue", "status": "critical",
+                         "last": None,
+                         "detail": ("queued with no open position: "
+                                    + ", ".join(orphans)
+                                    + " — armed, and will market-sell the next "
+                                      "position opened in that name")})
+
     rank  = {"ok": 0, "warn": 1, "critical": 2}
     items = engines + jobs
     worst = max((i["status"] for i in items), key=lambda s: rank[s]) if items else "ok"
     return {"worst": worst, "market_open": open_now,
             "session": session.isoformat(), "engines": engines, "jobs": jobs}
+
+
+# _live_health() had exactly one consumer: a banner the live pages draw when a
+# browser opens them. That reproduces the precondition of the outages above — a
+# banner in a UI nobody opened for six weeks is still nothing. This loop pushes
+# the same verdict through lib/notify (the phone sink the engines already use)
+# so silent death is loud without a browser.
+#
+# It pushes on TRANSITION, not on every check, and the "already alerted" memory
+# is in-process only: this server must not write into state/, which the engines
+# own. A restart therefore re-alerts once while a fault is still standing, which
+# is the right way round. It is deliberately only half the fix — it still needs
+# THIS process to be alive; a LaunchAgent-driven watchdog script is the other.
+_HEALTH_WATCH_INTERVAL_S = 15 * 60
+
+
+def _health_watchdog_loop():
+    last = "ok"
+    while True:
+        time.sleep(_HEALTH_WATCH_INTERVAL_S)
+        try:
+            health = _live_health()
+            worst  = health.get("worst", "ok")
+            if worst == last:
+                continue
+            import notify
+            if worst == "ok":
+                notify.queue_message("✅ Engine health: recovered",
+                                     ["All engines and daily jobs are current again."],
+                                     tag="white_check_mark", priority=3)
+            else:
+                lines = [f"{i['name']}: {i.get('detail') or i['status']}"
+                         for i in (health.get("engines") or []) + (health.get("jobs") or [])
+                         if i.get("status") != "ok"]
+                notify.queue_message(f"🚨 Engine health: {worst}",
+                                     lines or ["(no detail)"],
+                                     tag="rotating_light",
+                                     priority=5 if worst == "critical" else 4)
+            sent, failed, _ = notify.flush()
+            print(f"[health-watchdog] {last} -> {worst}: {sent} sent, {failed} failed")
+            # Advance the "already alerted" mark only when nothing FAILED, so a
+            # push that could not be delivered (ntfy down, no network) is retried
+            # on the next pass instead of being remembered as "already told them"
+            # — the one thing this loop exists to prevent. A flush that sent
+            # nothing because the sinks are switched off is not a failure: the
+            # owner turned them off, and holding the transition forever would
+            # re-alert on every pass once they turned them back on.
+            if failed == 0:
+                last = worst
+        except Exception as e:                         # noqa: BLE001
+            print(f"[health-watchdog] check failed: {e!r}")
 
 
 # A handful of state files are flat "list of tickers" queues shared with the
@@ -409,6 +511,21 @@ def _write_force_sell_file(path, tickers):
     ec.write_json_atomic(path, sorted(set(tickers)), ensure_ascii=False)
 
 
+# Retired with x-4 (2026-09-03) along with the Live Cross approval flow. These
+# two helpers now have NO call sites: the GET route was deleted and POST
+# /live-cross-approved answers 410, so the file is not reachable through the app
+# by any means and is readable only with `cat`. They are kept as the documented
+# shape of that file, not as a supported read path — do not trust an earlier
+# version of this comment that implied otherwise.
+#
+# state/live_cross_approved.json still holds the tickers the owner approved under
+# the old flow. Nothing consumes, displays or clears them, which is the third
+# clause of the surface-your-gates rule left open on purpose rather than by
+# oversight: clearing it means writing state/ from the web process, and showing
+# it means a permanent non-ok row on the health banner. If the approval gate is
+# ever revived, CLEAR THE FILE FIRST — those approvals predate the current
+# strategy version, and a new engine reading them would auto-enter every one of
+# them at whatever price happens to be current.
 def _read_live_cross_approved():       return _read_force_sell_file(LIVE_CROSS_APPROVED_PATH)
 def _write_live_cross_approved(items): _write_force_sell_file(LIVE_CROSS_APPROVED_PATH, items)
 def _read_live_approved():             return _read_force_sell_file(LIVE_APPROVED_PATH)
@@ -443,8 +560,12 @@ def _calendar_events(insref):
 
 
 def _write_live_limit_orders(orders):
-    with open(LIVE_LIMIT_ORDERS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(orders, f, ensure_ascii=False, indent=2)
+    # Atomic, like every other queue file shared with the engines. This one
+    # truncated the live file first, and the engine re-reads it mid-run inside
+    # consume_limit_orders(): a torn read there parses as "no orders pending"
+    # (both readers swallow JSONDecodeError) and the engine then durably wrote
+    # that empty dict back over the whole queue.
+    ec.write_json_atomic(LIVE_LIMIT_ORDERS_PATH, orders, ensure_ascii=False)
 
 
 def _read_last_log_run(max_chars=12000):
@@ -498,8 +619,7 @@ def _start_live_run():
 
 
 def _write_paper_trades(trades):
-    with open(PAPER_TRADES_PATH, 'w', encoding='utf-8') as f:
-        json.dump(trades, f, ensure_ascii=False, indent=2)
+    ec.write_json_atomic(PAPER_TRADES_PATH, trades, ensure_ascii=False)
 
 
 def _evaluate_paper_trades(trades):
@@ -609,19 +729,105 @@ _DEFAULT_SETTINGS = {
     "market_hours_start": 9,
     "market_hours_end": 17,
     "refresh_workers": 10,
+    # Trade notifications, sent by the ENGINES (not this server) — one per fill.
+    # See lib/notify.py. The ntfy topic is a credential and lives in .env, so it
+    # is deliberately absent here: /get-settings is readable by anything that
+    # can reach the web app.
+    "notifications": {
+        "enabled":     True,
+        "macos":       True,
+        "macos_sound": True,
+        "ntfy":        True,
+        "ntfy_server": "https://ntfy.sh",
+    },
 }
+
+
+# Why the two failure modes are split below: a *missing* settings.json is a
+# legitimate first run, but an *unparseable* one used to return the same clean
+# defaults with nothing said. The next /settings POST then read those defaults,
+# merged one toggle into them and wrote them back — making the loss permanent,
+# and silently resetting update_filter to "all instruments", which is a ~62x
+# sweep (61k instruments instead of the 987 Equity/SEK ones). So the reason is
+# logged and /get-settings reports it.
+#
+# The loader deliberately does NOT touch the file. It runs on every
+# /get-settings poll and inside _auto_refresh_loop, so moving the bad file
+# aside from here means a read path destroying its own input: a half-saved
+# hand-edit would vanish from state/settings.json, taking update_filter with it
+# and reverting lib/notify.py (a separate process reading the same path) to
+# all-sinks-on. The bad file is moved aside from the POST path instead, where a
+# good one is about to take its place.
+_settings_error = {"error": None}
+
+# settings.json is a read-modify-write (load, merge one toggle, write back) and
+# the server is threaded, so two overlapping POSTs — the Settings page fires one
+# per checkbox — would each merge into the same pre-write file and the second
+# would lose the first. write_json_atomic makes each write all-or-nothing; it
+# does nothing about lost updates. NOTE: _load_settings() does not take this
+# lock (it is a pure read), so it stays callable from inside the locked block.
+_settings_lock = threading.Lock()
 
 
 def _load_settings():
     try:
         with open(SETTINGS_PATH, encoding='utf-8') as f:
-            return {**_DEFAULT_SETTINGS, **json.load(f)}
-    except (FileNotFoundError, json.JSONDecodeError):
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            raise json.JSONDecodeError("settings.json is not a JSON object", "", 0)
+        _settings_error["error"] = None
+        return {**_DEFAULT_SETTINGS, **loaded}
+    except FileNotFoundError:
+        _settings_error["error"] = None
         return dict(_DEFAULT_SETTINGS)
+    except json.JSONDecodeError as e:
+        _settings_error["error"] = (
+            f"settings.json was unreadable ({e}) — serving defaults; "
+            "fix or delete state/settings.json, or save from the Settings page "
+            "(which keeps the bad file as settings.json.corrupt-<ts>)"
+        )
+        print(f"[settings] {_settings_error['error']}")
+        return dict(_DEFAULT_SETTINGS)
+
+
+def _allowed_ntfy_origins():
+    """The origins the engines may be pointed at for ntfy pushes.
+
+    ntfy.sh, plus one self-hosted server named by NTFY_SERVER in .env — the same
+    place the topic itself lives. Deliberately not "any host that parses":
+    POST /settings has no authentication and the server binds 0.0.0.0, so
+    whatever is stored here is where anything on the LAN or the Tailnet can make
+    the engines send NTFY_TOPIC, which IS the credential (see lib/notify.py).
+    """
+    origins = ["https://ntfy.sh"]
+    env = (os.environ.get("NTFY_SERVER") or "").strip().rstrip("/")
+    if env:
+        origins.append(env)
+    return origins
+
+
+def _validated_ntfy_server(value):
+    """Normalised origin if `value` names an allowed ntfy server, else None.
+
+    A startswith("https://") test is not enough on either axis. It accepts any
+    host, and it accepts a path: "https://ntfy.sh/mytopic" survives rstrip("/"),
+    and _send_ntfy would POST to it — ntfy treats the path as a topic, publishes
+    the raw JSON body there and answers 200, so flush() counts it as sent and
+    nothing ever reports that the feed moved to a topic embedded in a value
+    /get-settings hands to any client.
+    """
+    parts = urllib.parse.urlsplit(str(value or "").strip())
+    if (parts.path not in ("", "/") or parts.query or parts.fragment
+            or parts.username or parts.password):
+        return None
+    origin = f"{parts.scheme}://{parts.netloc}".lower()
+    allowed = {o.lower() for o in _allowed_ntfy_origins()}
+    return origin if origin in allowed else None
 
 _index_lock          = threading.Lock()
 _refresh_status_lock = threading.Lock()
-_refresh_all_status  = {"running": False, "done": 0, "total": 0}
+_refresh_all_status  = {"running": False, "done": 0, "total": 0,
+                        "errors": 0, "errors_sample": [], "message": ""}
 _backfill_status     = {"running": False, "done": 0, "total": 0, "fetched": 0, "skipped": 0, "errors": 0, "message": ""}
 _isin_status         = {"running": False, "done": 0, "total": 0, "updated": 0, "failed": 0, "elapsed_s": 0, "message": ""}
 _list_status         = {"running": False, "done": 0, "total": 0, "updated": 0, "failed": 0, "skipped": 0, "elapsed_s": 0, "message": ""}
@@ -678,19 +884,33 @@ def _scan_all_stocks():
 
 def _upsert_index(entry):
     with _index_lock:
+        # "Absent" and "unparseable" are not the same thing here. An absent index
+        # is a legitimate cold start, but an unparseable one used to fall back to
+        # [] and then write that back — collapsing the ~9.6 MB index of every
+        # instrument on disk to the single row being upserted, silently. Refuse
+        # instead: the index is a derived cache that the next /refresh-all rebuilds
+        # wholesale from _scan_all_stocks(), so skipping one upsert costs nothing
+        # while overwriting it costs everything.
         try:
             with open(INDEX_PATH, encoding='utf-8') as f:
                 index = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except FileNotFoundError:
             index = []
+        except json.JSONDecodeError as e:
+            print(f"[index] {INDEX_PATH} is unparseable ({e}) — skipping the upsert of "
+                  f"{entry.get('name') or entry.get('insref')}; run a full refresh to rebuild it")
+            return
+        if not isinstance(index, list):
+            print(f"[index] {INDEX_PATH} is not a JSON list — skipping the upsert of "
+                  f"{entry.get('name') or entry.get('insref')}; run a full refresh to rebuild it")
+            return
         for i, e in enumerate(index):
             if e.get("insref") == entry["insref"]:
                 index[i] = entry
                 break
         else:
             index.append(entry)
-        with open(INDEX_PATH, 'w', encoding='utf-8') as f:
-            json.dump(index, f, ensure_ascii=False)
+        ec.write_json_atomic(INDEX_PATH, index, ensure_ascii=False, indent=None)
 
 
 def _filter_label(update_filter):
@@ -719,62 +939,101 @@ def _refresh_worker_count():
 
 
 def _do_refresh_all(update_filter=None):
-    # Always scan the directory so every stock with CSV data is included,
-    # regardless of what the index file currently knows about.
-    stocks = _scan_all_stocks()
-    with _index_lock:
-        with open(INDEX_PATH, 'w', encoding='utf-8') as f:
-            json.dump(stocks, f, ensure_ascii=False)
-    if isinstance(update_filter, dict):
-        type_filter = update_filter.get("types")
-        curr_filter = update_filter.get("currencies")
-        if type_filter is not None:
-            stocks = [s for s in stocks if s["type"] in type_filter]
-        if curr_filter is not None:
-            stocks = [s for s in stocks if s["currency"] in curr_filter]
-    _refresh_all_status["total"] = len(stocks)
-    _refresh_all_status["done"]  = 0
-
-    # Names are accumulated and written once at the end. upsert_name_csv rewrites
-    # the whole ~2 MB stock_names.csv per call while holding a global lock, which
-    # was ~47% of a full sweep's wall clock and would serialise every worker.
-    pending_names = {}
-    names_lock    = threading.Lock()
-    done_lock     = threading.Lock()
-
-    def refresh_one(stock):
-        try:
-            stock_dir = os.path.normpath(os.path.join(INST_DIR, stock["path"]))
-            if stock_dir.startswith(INST_DIR):
-                _, _, rows, raw_name = webScrapper.fetch_stock(stock["insref"])
-                with names_lock:
-                    pending_names[stock["insref"]] = raw_name
-                webScrapper.update_csvs(
-                    stock["name"], stock["insref"], rows,
-                    output_dir=stock_dir, rel_path=stock["path"],
-                    inst_type=stock["type"], currency=stock["currency"],
-                    display_name=raw_name,
-                )
-                infoScrapper.sync_history(
-                    stock["name"], stock["insref"], output_dir=stock_dir
-                )
-        except Exception:
-            pass
-        with done_lock:
-            _refresh_all_status["done"] += 1
-
-    workers = _refresh_worker_count()
+    # The whole body sits inside try/finally because the running flag used to be
+    # cleared only in the executor's finally: a raise from _scan_all_stocks() or
+    # from the index write above it pinned "running" True until a restart, and
+    # every later /refresh-all answered "already running" with no reason kept
+    # anywhere. The status dict now also carries how the sweep ENDED, not just
+    # how far it got.
+    _refresh_all_status.update({"errors": 0, "errors_sample": [], "message": "Running…"})
     try:
-        if workers > 1 and len(stocks) > 1:
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                list(ex.map(refresh_one, stocks))
+        # Always scan the directory so every stock with CSV data is included,
+        # regardless of what the index file currently knows about.
+        stocks = _scan_all_stocks()
+        with _index_lock:
+            ec.write_json_atomic(INDEX_PATH, stocks, ensure_ascii=False, indent=None)
+        if isinstance(update_filter, dict):
+            type_filter = update_filter.get("types")
+            curr_filter = update_filter.get("currencies")
+            if type_filter is not None:
+                stocks = [s for s in stocks if s["type"] in type_filter]
+            if curr_filter is not None:
+                stocks = [s for s in stocks if s["currency"] in curr_filter]
+        _refresh_all_status["total"] = len(stocks)
+        _refresh_all_status["done"]  = 0
+
+        # Names are accumulated and written once at the end. upsert_name_csv rewrites
+        # the whole ~2 MB stock_names.csv per call while holding a global lock, which
+        # was ~47% of a full sweep's wall clock and would serialise every worker.
+        pending_names = {}
+        names_lock    = threading.Lock()
+        done_lock     = threading.Lock()
+
+        def refresh_one(stock):
+            err = None
+            try:
+                stock_dir = os.path.normpath(os.path.join(INST_DIR, stock["path"]))
+                if stock_dir.startswith(INST_DIR):
+                    _, _, rows, raw_name = webScrapper.fetch_stock(stock["insref"])
+                    with names_lock:
+                        pending_names[stock["insref"]] = raw_name
+                    webScrapper.update_csvs(
+                        stock["name"], stock["insref"], rows,
+                        output_dir=stock_dir, rel_path=stock["path"],
+                        inst_type=stock["type"], currency=stock["currency"],
+                        display_name=raw_name,
+                    )
+                    infoScrapper.sync_history(
+                        stock["name"], stock["insref"], output_dir=stock_dir
+                    )
+            except Exception as e:
+                # This was a bare `except Exception: pass` with the done counter
+                # ticking regardless, so a sweep in which every fetch raised (an
+                # expired token, DNS, a Millistream 503) still reported
+                # total/total complete — and the three engines went on trading
+                # against price history that had quietly stopped advancing.
+                err = f"{stock['name']}: {e!r}"
+            with done_lock:
+                _refresh_all_status["done"] += 1
+                if err:
+                    _refresh_all_status["errors"] += 1
+                    if len(_refresh_all_status["errors_sample"]) < 5:
+                        _refresh_all_status["errors_sample"].append(err)
+
+        workers = _refresh_worker_count()
+        try:
+            if workers > 1 and len(stocks) > 1:
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    list(ex.map(refresh_one, stocks))
+            else:
+                for stock in stocks:
+                    refresh_one(stock)
+        finally:
+            # Flush names even if the sweep was cut short, so the work isn't lost.
+            if pending_names:
+                webScrapper.upsert_names_bulk(pending_names.items())
+
+        total  = _refresh_all_status["total"]
+        errs   = _refresh_all_status["errors"]
+        sample = "; ".join(_refresh_all_status["errors_sample"])
+        if total == 0:
+            _refresh_all_status["message"] = (
+                f"FAILED — the update filter matched no instruments "
+                f"({_filter_label(update_filter)}); nothing was refreshed")
+        elif errs >= total:
+            _refresh_all_status["message"] = (
+                f"FAILED — all {total} fetches raised; no price data was updated. {sample}")
+        elif errs:
+            _refresh_all_status["message"] = f"Completed with {errs} of {total} failing. {sample}"
         else:
-            for stock in stocks:
-                refresh_one(stock)
+            _refresh_all_status["message"] = f"Completed — {total} instruments, no errors"
+        print(f"[refresh] {_refresh_all_status['message']}")
+    except Exception as e:
+        import traceback
+        _refresh_all_status["message"] = f"FAILED — {e!r}"
+        print(f"[refresh] sweep aborted before it could run: {e!r}")
+        traceback.print_exc()
     finally:
-        # Flush names even if the sweep was cut short, so the work isn't lost.
-        if pending_names:
-            webScrapper.upsert_names_bulk(pending_names.items())
         _refresh_all_status["running"] = False
         with _dashboard_cache_lock:
             _dashboard_cache.clear()
@@ -1012,7 +1271,21 @@ class Handler(BaseHTTPRequestHandler):
             params = urllib.parse.parse_qs(parsed.query)
             self._ls(params.get("path", [""])[0])
         elif parsed.path == "/get-settings":
-            self._json(_load_settings())
+            # settings_error is present only when the file on disk was
+            # unreadable, so the page can say "these are defaults, not yours"
+            # instead of presenting defaults as the saved config.
+            payload = _load_settings()
+            if _settings_error["error"]:
+                payload = {**payload, "settings_error": _settings_error["error"]}
+            self._json(payload)
+        elif parsed.path == "/notify-status":
+            # Which sinks are actually live, including whether .env carries a
+            # topic — never the topic itself.
+            try:
+                import notify
+                self._json(notify.status())
+            except Exception as e:                     # noqa: BLE001
+                self._json({"error": str(e)})
         elif parsed.path == "/instrument-types":
             self._json(webController.insttype_list)
         elif parsed.path == "/currencies":
@@ -1109,9 +1382,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"text": _read_last_log_run_at(LIVE_PATTERNS_LOG_PATH)})
         elif parsed.path == "/live-cross-portfolio":
             self._json(_read_live_cross_portfolio())
-        elif parsed.path == "/live-cross-approved":
-            with _live_cross_approved_lock:
-                self._json(_read_live_cross_approved())
         elif parsed.path == "/live-cross-force-sell":
             with _live_cross_force_sell_lock:
                 self._json(_read_force_sell_file(LIVE_CROSS_FORCE_SELL_PATH))
@@ -1133,11 +1403,26 @@ class Handler(BaseHTTPRequestHandler):
             length = 0
         raw    = self.rfile.read(length)
 
+        if self.path == "/notify-test":
+            # Fires one specimen buy + sell through every enabled sink. The
+            # macOS banner fails SILENTLY when Script Editor is not allowed in
+            # System Settings -> Notifications, so "did it arrive" can only be
+            # answered by the user looking at their Mac and phone.
+            try:
+                import notify
+                lines = []
+                res = notify.send_test(out=lines.append)
+                res["log"] = "\n".join(lines)
+                self._json(res)
+            except Exception as e:                     # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+            return
         if self.path == "/settings":
             try:
                 self._save_settings(json.loads(raw.decode()))
             except Exception as e:
-                self._json({"error": str(e)})
+                self._json({"ok": False, "error": str(e)},
+                           status=400 if isinstance(e, (ValueError, TypeError, KeyError)) else 500)
             return
         if self.path == "/watchlist":
             try:
@@ -1155,7 +1440,8 @@ class Handler(BaseHTTPRequestHandler):
                         _dashboard_cache.pop('favorites', None)
                 self._json({"ok": True, "watchlist": wl})
             except Exception as e:
-                self._json({"error": str(e)})
+                self._json({"ok": False, "error": str(e)},
+                           status=400 if isinstance(e, (ValueError, TypeError, KeyError)) else 500)
             return
         if self.path == "/alerts":
             try:
@@ -1177,7 +1463,8 @@ class Handler(BaseHTTPRequestHandler):
                     _write_alerts(alerts)
                 self._json({"ok": True, "alerts": alerts})
             except Exception as e:
-                self._json({"error": str(e)})
+                self._json({"ok": False, "error": str(e)},
+                           status=400 if isinstance(e, (ValueError, TypeError, KeyError)) else 500)
             return
         if self.path == "/paper-trades":
             try:
@@ -1213,7 +1500,8 @@ class Handler(BaseHTTPRequestHandler):
                     _write_paper_trades(trades)
                 self._json({"ok": True, "trades": trades})
             except Exception as e:
-                self._json({"error": str(e)})
+                self._json({"ok": False, "error": str(e)},
+                           status=400 if isinstance(e, (ValueError, TypeError, KeyError)) else 500)
             return
         if self.path == "/update-isins":
             if not _isin_status["running"]:
@@ -1237,8 +1525,13 @@ class Handler(BaseHTTPRequestHandler):
                                      _read_live_approved, _write_live_approved, "approved")
             return
         if self.path == "/live-cross-approved":
-            self._mutate_ticker_list(raw, _live_cross_approved_lock,
-                                     _read_live_cross_approved, _write_live_cross_approved, "approved")
+            # Removed with x-4 (2026-09-03): Live Cross auto-enters, so an
+            # approval queue has nothing to consume it. Answered explicitly
+            # rather than deleted, so an old cached page gets an error it can
+            # show instead of writing to a file no engine reads any more.
+            self._json({"ok": False,
+                        "error": "Live Cross auto-enters since x-4 — there is no approval queue."},
+                       status=410)
             return
         if self.path == "/live-force-entry":
             self._mutate_ticker_list(raw, _live_force_entry_lock,
@@ -1249,14 +1542,32 @@ class Handler(BaseHTTPRequestHandler):
             # The engine executes it on the next run via apply_exit_checks(force_sells=...).
             if self.path.endswith("/live-patterns-force-sell"):
                 path_const, lock = LIVE_PATTERNS_FORCE_SELL_PATH, _live_patterns_force_sell_lock
+                read_wallet = _read_live_patterns_portfolio
             elif self.path.endswith("/live-cross-force-sell"):
                 path_const, lock = LIVE_CROSS_FORCE_SELL_PATH, _live_cross_force_sell_lock
+                read_wallet = _read_live_cross_portfolio
             else:
                 path_const, lock = LIVE_FORCE_SELL_PATH, _live_force_sell_lock
+                read_wallet = _read_live_portfolio
+
+            def _refuse_if_not_open(ticker):
+                # A queued ticker is only ever consumed when THAT ticker exits
+                # with reason MANUAL, so one queued against a position that is
+                # already closed is never consumed — and the page can be a whole
+                # 3-minute tick stale, so clicking "Sell now" on a row the engine
+                # just closed at TP was enough to strand one. It then sits in the
+                # file until the engine re-enters that name and market-sells the
+                # brand-new position on its first tick. Refuse it at the door.
+                positions = (read_wallet() or {}).get("positions") or {}
+                if ticker not in positions:
+                    return (f"{ticker} is not an open position in this wallet — "
+                            "the engine may have already closed it. Refresh the page.")
+                return None
+
             self._mutate_ticker_list(raw, lock,
                                      lambda: _read_force_sell_file(path_const),
                                      lambda items: _write_force_sell_file(path_const, items),
-                                     "queued")
+                                     "queued", validate_add=_refuse_if_not_open)
             return
         if self.path == "/live-limit-orders":
             # Place (or cancel) a user buy limit order for a pending primary
@@ -1269,7 +1580,7 @@ class Handler(BaseHTTPRequestHandler):
                 action = data.get("action", "add")
                 ticker = str(data.get("ticker", "")).strip()
                 if not ticker:
-                    self._json({"error": "missing ticker"})
+                    self._json({"ok": False, "error": "missing ticker"}, status=400)
                     return
                 with _live_limit_orders_lock:
                     orders = _read_live_limit_orders()
@@ -1277,10 +1588,10 @@ class Handler(BaseHTTPRequestHandler):
                         try:
                             price = float(data.get("price"))
                         except (TypeError, ValueError):
-                            self._json({"error": "invalid price"})
+                            self._json({"ok": False, "error": "invalid price"}, status=400)
                             return
                         if price <= 0:
-                            self._json({"error": "price must be > 0"})
+                            self._json({"ok": False, "error": "price must be > 0"}, status=400)
                             return
                         # Enrich insref/info/source from whichever of the three
                         # signal lists the ticker is in: primary pending signals,
@@ -1297,7 +1608,9 @@ class Handler(BaseHTTPRequestHandler):
                         elif ticker in nm:
                             src, from_watchlist, forced = nm[ticker], False, True
                         else:
-                            self._json({"error": f"{ticker} is not a current signal/watchlist/near-miss"})
+                            self._json({"ok": False,
+                                        "error": f"{ticker} is not a current signal/watchlist/near-miss"},
+                                       status=409)
                             return
                         import datetime as _dt
                         orders[ticker] = {
@@ -1314,7 +1627,8 @@ class Handler(BaseHTTPRequestHandler):
                     _write_live_limit_orders(orders)
                 self._json({"ok": True, "orders": orders})
             except Exception as e:
-                self._json({"error": str(e)})
+                self._json({"ok": False, "error": str(e)},
+                           status=400 if isinstance(e, (ValueError, TypeError, KeyError)) else 500)
             return
 
         body = urllib.parse.parse_qs(raw.decode())
@@ -1427,10 +1741,60 @@ class Handler(BaseHTTPRequestHandler):
         if "refresh_workers" in new_settings:
             validated["refresh_workers"] = max(1, min(MAX_REFRESH_WORKERS,
                                                      int(new_settings["refresh_workers"])))
-        existing = _load_settings()
-        existing.update(validated)
-        with open(SETTINGS_PATH, 'w', encoding='utf-8') as fp:
-            json.dump(existing, fp, ensure_ascii=False, indent=2)
+        # Only the toggles this POST actually carries; they are merged onto the
+        # stored block under _settings_lock below, so the read they merge into
+        # cannot be overtaken by a second checkbox click.
+        notif_changes = None
+        if "notifications" in new_settings:
+            n = new_settings["notifications"]
+            if isinstance(n, dict):
+                notif_changes = {}
+                for key in ("enabled", "macos", "macos_sound", "ntfy"):
+                    if key in n:
+                        notif_changes[key] = bool(n[key])
+                if "ntfy_server" in n:
+                    # An allowed origin only — see _validated_ntfy_server(). A
+                    # value we will not send credentials to is refused out loud
+                    # rather than dropped, which used to answer {"ok": true}
+                    # while quietly keeping the old server.
+                    srv = _validated_ntfy_server(n.get("ntfy_server"))
+                    if srv is None:
+                        self._json({"ok": False,
+                                    "error": ("ntfy_server must be one of: "
+                                              + ", ".join(_allowed_ntfy_origins())
+                                              + " — a self-hosted one goes in .env "
+                                                "as NTFY_SERVER, next to NTFY_TOPIC")},
+                                   status=400)
+                        return
+                    notif_changes["ntfy_server"] = srv
+        # Read-modify-write under one lock — see _settings_lock. The whole merge
+        # has to be inside it, not just the write: two threads that both read
+        # first and then write would each drop the other's toggle.
+        with _settings_lock:
+            existing = _load_settings()
+            if notif_changes is not None:
+                # Merge, don't replace: the page posts only the toggle that
+                # changed, and a partial post must not wipe the other sinks.
+                cur = dict(_DEFAULT_SETTINGS["notifications"])
+                cur.update(existing.get("notifications") or {})
+                cur.update(notif_changes)
+                validated["notifications"] = cur
+            existing.update(validated)
+            if _settings_error["error"]:
+                # The file on disk did not parse, so `existing` is defaults plus
+                # this POST and the old contents are about to be overwritten.
+                # Keep them: this is the one place a corrupt file may be moved
+                # aside, because a good one replaces it on the very next line.
+                try:
+                    os.replace(SETTINGS_PATH, SETTINGS_PATH + f".corrupt-{int(time.time())}")
+                except OSError:
+                    pass
+            # Atomic. This file is now written on every notification checkbox click
+            # and read cross-process (lib/notify.py reads it on every engine flush),
+            # so a truncating rewrite that lost the race served notification
+            # DEFAULTS — every sink back on — to whoever read it mid-write, and a
+            # crash mid-flush left it unparseable for good.
+            ec.write_json_atomic(SETTINGS_PATH, existing, ensure_ascii=False)
         self._json({"ok": True})
 
     def _file(self, mime, path):
@@ -1445,24 +1809,34 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def _json(self, data):
-        self.send_response(200)
+    def _json(self, data, status=200):
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
-    def _mutate_ticker_list(self, raw, lock, read_fn, write_fn, result_key):
+    def _mutate_ticker_list(self, raw, lock, read_fn, write_fn, result_key,
+                            validate_add=None):
         """Add/remove one ticker in a shared list-of-tickers queue file under
         `lock`, then reply {ok, <result_key>: sorted list}. Backs the approval /
         forced-entry / force-sell POST endpoints, which differ only by which
-        file+lock they touch and the key they echo back."""
+        file+lock they touch and the key they echo back.
+
+        `validate_add` (optional) vets a ticker before it is queued and returns
+        a refusal string to reject it. Removals are never vetted: an entry that
+        should not be in the file must always be removable."""
         try:
             data   = json.loads(raw.decode())
             action = data.get("action", "add")
             ticker = str(data.get("ticker", "")).strip()
             if not ticker:
-                self._json({"error": "missing ticker"})
+                self._json({"ok": False, "error": "missing ticker"}, status=400)
                 return
+            if action == "add" and validate_add is not None:
+                refusal = validate_add(ticker)
+                if refusal:
+                    self._json({"ok": False, "error": refusal}, status=409)
+                    return
             with lock:
                 items = read_fn()
                 if action == "add" and ticker not in items:
@@ -1472,7 +1846,11 @@ class Handler(BaseHTTPRequestHandler):
                 write_fn(items)
             self._json({"ok": True, result_key: sorted(set(items))})
         except Exception as e:
-            self._json({"error": str(e)})
+            # A failed write must not answer 200: the pages branch on res.ok
+            # only, so a 200 {"error": ...} is indistinguishable from a queued
+            # sell — the one manual override the owner has over TP/SL.
+            self._json({"ok": False, "error": str(e)},
+                       status=400 if isinstance(e, (ValueError, TypeError, KeyError)) else 500)
 
     def _stock_page(self, rel_path):
         if not rel_path:
@@ -1896,10 +2274,21 @@ def _startup_refresh():
     print("[startup] Startup update complete.")
 
 
-class QuietHTTPServer(HTTPServer):
+class QuietHTTPServer(ThreadingHTTPServer):
     """Suppress benign connection-reset tracebacks from clients that drop
     mid-request (mobile / Tailscale roaming, tab closes, browser prefetch
-    cancels). Real errors still log normally."""
+    cancels). Real errors still log normally.
+
+    Threaded, not serial. Several GET routes block on a Millistream fetch
+    inside the handler (/quote and /orderbook 8s, /trades 15s, /calendar 6s on
+    a cache miss), and on the single-threaded base class that stalled *every*
+    other request for the whole timeout — including the POST behind "Sell now",
+    which could miss a 3-minute engine tick while a background stock page was
+    waiting on the tape. The shared state files are guarded by per-file locks
+    plus engine_common's atomic writer, so concurrent handlers are safe.
+    """
+    daemon_threads = True
+
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]
         if isinstance(exc, (ConnectionResetError, ConnectionAbortedError,
@@ -1913,6 +2302,7 @@ PORT = 8765
 if __name__ == "__main__":
     threading.Thread(target=_auto_refresh_loop, daemon=True).start()
     threading.Thread(target=_startup_refresh, daemon=True).start()
+    threading.Thread(target=_health_watchdog_loop, daemon=True).start()
     server = QuietHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Opening browser at http://localhost:{PORT}")
     webbrowser.open(f"http://localhost:{PORT}")

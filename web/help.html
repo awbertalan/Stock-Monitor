@@ -128,6 +128,7 @@
     <a href="#rsi">RSI</a>
     <a href="#patterns">Pattern Engine</a>
     <a href="#alerts">Alerts</a>
+    <a href="#trade-notifications">Trade Notifications</a>
     <a href="#market-panel">Market Panel</a>
     <a href="#settings">Settings</a>
     <a href="#tips">Quick Tips</a>
@@ -290,43 +291,47 @@
     <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
       A paper-trading engine that runs every <strong>3 minutes</strong> during market hours (Stockholm OMX 09:00–17:30 Mon–Fri)
       against a virtual 500k SEK wallet, persisting state in <code>live_portfolio.json</code>.
-      The strategy is a <strong>backtest-validated mean-reversion setup</strong>: enter after a single sharp down day, exit on a +2% bounce or −1% stop within 7 days.
+      The strategy is a <strong>backtest-validated mean-reversion setup</strong>: enter after a single sharp down day, exit on a +3% bounce or −1% stop within 7 days (target raised from +2% on <strong>2026-09-03</strong>, sig-10).
       Switched from the prior 0.5% / −2% / 5d pullback strategy on <strong>2026-05-23</strong> after backtest showed the old setup was −EV (needed 80% WR to break even, delivered 60%).
     </p>
     <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px; padding:10px 12px; background:#fff8e6; border:1px solid #f0d98a; border-radius:8px;">
-      <strong>Manual entry (since 2026-05-27).</strong> The engine no longer auto-buys. Each run it surfaces signals that pass the filter as
-      <strong>Pending</strong> rows in the <em>New signals</em> table; <em>you</em> approve which to buy and type a <strong>buy limit price</strong>.
-      The engine still manages exits (TP / SL / time-out) on its own. See "Manual entry — approve + set a buy limit price" below.
+      <strong>Auto-entry (since 2026-08-24).</strong> The engine buys on its own — there is <em>no approval step</em>. Intraday runs only
+      surface candidates as <strong>Pending</strong> in the run log; the single post-close pass each day turns every candidate that clears the gates into a fill
+      at the confirmed official close, sized 70k target / 85k cap / 35k floor. Exits (TP / SL / time-out) are managed by the engine as before.
+      This reverted the manual approve-and-price flow that ran 2026-05-27 → 2026-08-24, during which the wallet sat at zero open positions.
+      See "Auto-entry — how a signal becomes a fill" below.
     </p>
 
-    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Manual entry — approve + set a buy limit price</div>
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Auto-entry — how a signal becomes a fill</div>
     <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
-      Every candidate that clears the entry filter (and the dedup / cooldown / event-window / cash gates) appears in the
-      <strong>New signals</strong> table as a <strong>Pending</strong> row with a <strong>Buy limit</strong> input pre-filled with the current ask.
-      Adjust the price if you want and click <strong>Approve buy</strong> to place a same-day buy limit order. The row then shows
-      <strong>Queued</strong> with a cancel button.
+      Every candidate that clears the entry filter (and the dedup / cooldown / event-window / liquidity / cash gates) is bought by the engine itself,
+      at the <strong>confirmed official close</strong>, and stamped with the strategy version that opened it. No approval, no buy-limit input, nothing to click.
+      The ask was abandoned in sig-9: after 17:30 it is a stale end-of-session quote that can sit well away from where the stock settled
+      (the first dry run filled BONESUPPORT at a 220.20 ask against a 218.60 close, an instant −0.73%). Only the intraday path — which never
+      opens a position — still prices off the ask.
     </p>
     <div class="strategy-rule">
-      <span class="rule-label">Limit fill</span>
-      <span class="rule-val">On the next run the engine fills the order at <strong>your limit price</strong> once the market trades at/below it. If the market never reaches your price, nothing is bought.</span>
+      <span class="rule-label">Close-confirmed</span>
+      <span class="rule-val">An intraday run never buys (sig-9). It scans, applies exits and surfaces candidates as <strong>Pending</strong>; only the one post-close pass per day converts a candidate into a fill. Since the New signals table was removed, those pending candidates are visible only in the <em>Latest run log</em>, not as a table on the page.</span>
     </div>
     <div class="strategy-rule">
-      <span class="rule-label">Good for the day</span>
-      <span class="rule-val">Unfilled orders expire at the close — re-approve the next day if you still want the trade. Orders are stored in <code>live_limit_orders.json</code>.</span>
+      <span class="rule-label">No 16:30 cutoff</span>
+      <span class="rule-val">Signals does <em>not</em> apply the 16:30 late-entry cutoff — only Patterns does, and Cross deliberately skips it too, so there is no parity to assume.
+      Entry timing here is decided solely by the close-confirmed pass, which waits for the feed to settle past the 17:30 close. A candidate still showing as
+      <strong>Pending</strong> at 17:00 can therefore still be bought that same evening — that is the gate working, not failing.</span>
     </div>
     <div class="strategy-rule">
       <span class="rule-label">Sizing at fill</span>
-      <span class="rule-val">When an order fills, the usual 70k target / 85k cap / 35k floor sizing is applied against available cash at that moment. TP/SL are then anchored to your fill price.</span>
+      <span class="rule-val">70k target / 85k cap / 35k floor against cash at that moment, with the cap tightened further when the name's turnover can't absorb it. TP/SL are anchored to the fill price. A candidate that clears every gate but can't be sized (cash below the floor, or below 35k after rounding) stays <strong>Pending</strong> in the run log rather than being dropped quietly.</span>
     </div>
-    <p style="font-size:13px; color:#444; line-height:1.6; margin:10px 0 0;">
-      The table also shows this run's <strong>Filled</strong> rows (just bought → also appear under Open positions) and <strong>Skipped</strong> rows
-      (a signal dropped by a gate, with the reason). Watchlist-approved and near-miss-override tickers flow through this same approve+price gate before any buy.
-    </p>
-    <p style="font-size:13px; color:#444; line-height:1.6; margin:10px 0 0;">
-      The <strong>Pending orders — approved, awaiting fill</strong> table (just above Open positions) is a single consolidated view of every queued buy limit order,
-      whatever table you placed it from. It shows the source (Auto / Watchlist / Forced), your limit, the current market price, how far the market is from filling,
-      and a Cancel button. Orders move from here into Open positions the moment they fill.
-    </p>
+    <div class="highlight-box" style="margin-top:10px;">
+      <strong>The manual buy path no longer exists in the UI.</strong> The <em>New signals</em>, <em>Watchlist signals</em>, <em>Near-misses</em>
+      and <em>Pending orders</em> tables were removed from the Live Signals page in the 2026-09 refactor, so there is no way from any page to
+      place, price or cancel a buy limit order, approve a watchlist ticker, or override the filter. The plumbing is still there and still works
+      — <code>/live-limit-orders</code>, <code>/live-approved</code> and <code>/live-force-entry</code> are still served, the engine still
+      fills user-placed limit orders and still consumes <code>live_approved.json</code> / <code>live_force_entry.json</code> — but nothing
+      writes to it any more. Treat it as dormant, not as a workflow you can drive from the browser.
+    </div>
 
     <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Entry conditions (all four must pass)</div>
     <div class="strategy-rule">
@@ -348,12 +353,12 @@
 
     <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Exits</div>
     <div class="strategy-rule">
-      <span class="rule-label">Target +2.0%</span>
-      <span class="rule-val">A real bounce, not a fast scalp. Limit-fill capped — exit price is recorded at exactly +2% even if the polled price overshot.</span>
+      <span class="rule-label">Target +3.0%</span>
+      <span class="rule-val">A real bounce, not a fast scalp. Limit-fill capped — the exit price is recorded at exactly the target even if the polled price overshot. Raised from +2.0% on <strong>2026-09-03</strong> (sig-10) and mirrored by Live Cross (x-4); Live Patterns still targets +2.0%.</span>
     </div>
     <div class="strategy-rule">
       <span class="rule-label">Stop −1.0%</span>
-      <span class="rule-val">Restored to the backtested −1.0% on <strong>2026-08-24</strong>. It ran at −2.0% from 2026-05-25 (widened to survive opening volatility, never re-backtested), which put reward:risk at 1:1 and break-even WR at 50% — the engine delivered 43.8% and −388 SEK/trade over that span. Back at 2:1, break-even is <strong>33%</strong>. Applies to Live Signals only; Patterns and Cross still run −2.0%.</span>
+      <span class="rule-val">Restored to the backtested −1.0% on <strong>2026-08-24</strong>. It ran at −2.0% from 2026-05-25 (widened to survive opening volatility, never re-backtested), which put reward:risk at 1:1 and break-even WR at 50% — the engine delivered 43.8% and −388 SEK/trade over that span. Back at 2:1, break-even is <strong>33%</strong>. Applies to Live Signals and — since <strong>2026-09-03</strong> (x-4) — Live Cross, which mirrors sig-10 so its record can be read against the Signals wallet. Live Patterns still runs −2.0% as the control on a different entry rule.</span>
     </div>
     <div class="strategy-rule">
       <span class="rule-label">Time-out 7d</span>
@@ -386,26 +391,20 @@
       </div>
       <div class="feature-card">
         <div class="feature-card-title">Watchlist — OMX Mid + Small Cap</div>
-        <div class="feature-card-desc">~198 names. By default <em>surfaced only</em>, never auto-traded — liquidity is thinner. You can opt in individual names via the approval toggle (see below).</div>
+        <div class="feature-card-desc">~198 names. <em>Surfaced only</em>, never auto-traded — liquidity is thinner. Opting an individual name in is currently impossible from the UI: the approval control was removed with the rest of the manual buy path (see below).</div>
       </div>
     </div>
 
-    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Watchlist approval — opt mid/small caps into trading</div>
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Watchlist approval — dormant since the UI table was removed</div>
     <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
-      The Live Signals page has a <strong>Watchlist signals — approve to trade</strong> table showing every mid/small-cap ticker
-      that is currently signalling. Each row has a <strong>Buy limit</strong> price input (pre-filled with the last price). Set a price and click
-      <strong>Approve buy</strong> to place a <strong>same-day buy limit order</strong> (stored in <code>live_limit_orders.json</code> with a <code>from_watchlist</code> flag).
-      The engine fills it at your limit price once the market trades at/below it, with the normal 70k target / 85k cap / 35k floor sizing applied at fill.
-      Filled watchlist entries carry a <code>-WL</code> suffix on the tag (e.g. <code>[VAL-WL]</code>) so you can split win-rate by origin.
+      The engine half still works: each run it reads <code>live_approved.json</code> and promotes any ticker listed there into the tradable scan,
+      one-shot — the approval is consumed the first time a position opens — and a filled watchlist entry carries a <code>-WL</code> suffix on
+      the tag (e.g. <code>[VAL-WL]</code>) so win rate can be split by origin. What no longer exists is the way to <em>put</em> a ticker in that file:
+      the <strong>Watchlist signals — approve to trade</strong> table was deleted from the Live Signals page, and nothing else writes it.
     </p>
-    <div class="highlight-box blue" style="margin-top:0; margin-bottom:10px;">
-      <strong>Good for the day.</strong> An unfilled watchlist order expires at the close — re-approve the next day if you still want it.
-      Each fill is independent: there is no "approve once, buy forever" — every buy is a deliberate price + approve action.
-    </div>
     <div class="highlight-box" style="margin-top:0;">
-      <strong>When to approve:</strong> the validated filter found a signal on a mid/small-cap stock you trust, the order size
-      will be modest (35–85k), and you've sanity-checked that the average daily turnover is comfortably
-      larger than the order. Pick a buy limit at or below the current price to avoid chasing a thin book.
+      <strong>What this means in practice:</strong> mid/small caps are monitor-only for now. Until an approval control is put back
+      (or <code>/live-approved</code> is POSTed to by hand), no watchlist name can enter and no new trade will carry the <code>-WL</code> tag.
     </div>
 
     <div class="highlight-box blue" style="margin-top:14px;">
@@ -417,39 +416,33 @@
     </div>
 
     <div class="highlight-box green" style="margin-top:10px;">
-      <strong>Strategy ★ tab vs. Live Signals:</strong> both now use the same +2% / −1% / 7d exit frame but fire on opposite directional signals.
+      <strong>Strategy ★ tab vs. Live Signals:</strong> both hold at most 7 days and stop out at −1%, but the targets diverged on
+      <strong>2026-09-03</strong>: Strategy ★ still scores +2%, Live Signals now takes profit at +3% (sig-10). They also fire on opposite directional signals.
       Strategy ★ is a <em>momentum</em> screener (DoD &gt; +1%, not at 5d high) for manual entries on confirmed up days.
       Live Signals is an <em>automated mean-reversion</em> engine (DoD ≤ −1%, not at 5d high, no-Friday) that opens/closes its own positions.
       Running both surfaces opportunities on both up and down days and reduces idle cash.
     </div>
 
-    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Performance breakdown by entry source</div>
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Entry source on closed trades</div>
     <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
-      The Live Signals page's Performance breakdown shows separate WR / Avg ret / P&amp;L rows for three entry sources:
-      <strong>Automated</strong> (filter passed with no user input), <strong>User (watchlist)</strong> (you approved a mid/small-cap;
-      filter still had to pass), and <strong>User (forced)</strong> (you clicked Override on a near-miss; filter was bypassed).
-      The Closed trades table also shows a Source column (Auto / User) per row. This makes it immediately obvious whether
-      the engine or your discretionary picks are driving the realized P&amp;L — if your user-approved trades are systematically
-      losing, you can stop approving and let the engine run pure.
+      The Closed trades table carries a <strong>Source</strong> column (Auto / User) per row, so the historic user-approved and forced entries
+      stay distinguishable from engine fills when you read the record. The separate <em>Performance breakdown by entry source</em> panel that
+      split WR / Avg ret / P&amp;L three ways was removed along with the approval UI — with entries fully automatic again, every trade opened
+      from 2026-08-24 onward is <strong>Auto</strong>, so there is nothing left to split.
     </p>
 
-    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Near-misses — approve to override the filter</div>
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Near-misses — diagnostic only</div>
     <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
-      The Live Signals page has a <strong>Near-misses</strong> table showing the top 10 primary-universe tickers that came closest to passing the entry filter
-      but missed on one or more rules (DoD, 5d high, Friday, or 20d crash guard). Each row shows the exact reason it failed and a <strong>Buy limit</strong> price input.
-      Set a price and click <strong>Override + buy</strong> to place a <strong>same-day buy limit order</strong> that <em>bypasses the validated filter entirely</em>
-      (stored in <code>live_limit_orders.json</code> with a <code>forced</code> flag). The engine fills it at your limit price once the market reaches it, with normal sizing.
-      Forced entries are tagged <code>[FORCED]</code> in the log and on the closed-trades table.
+      The names that came closest to passing the entry filter, and the exact rule each one failed on (DoD, 5d high, Friday, or the 20d crash guard),
+      still appear at the bottom of every run under <code>--- CLOSEST TO SIGNAL ---</code>. They are a sanity check on the filter, nothing more.
+      The <strong>Near-misses</strong> table and its <strong>Override + buy</strong> button were removed from the Live Signals page, so the
+      validated filter can no longer be bypassed from the UI — every entry now comes from the rules.
     </p>
-    <div class="highlight-box blue" style="margin-top:0; margin-bottom:10px;">
-      <strong>Good for the day.</strong> An unfilled override order expires at the close — re-approve the next day if you still want it.
-      Every override is a deliberate price + approve action; nothing is bought automatically.
-    </div>
     <div class="highlight-box" style="margin-top:0;">
-      <strong>When to override:</strong> sparingly. The filter exists because the backtest showed each rule contributes positive EV.
-      Skipping rules turns the engine into a discretionary tool. Reasonable use cases: a ticker barely missed DoD (e.g. -0.95% instead
-      of -1.0%) and you have an independent thesis on why it should bounce; or you want to take a Friday entry into a known event.
-      Don't use this to chase momentum — for that, use the Strategy ★ tab.
+      <strong>If you want the override back:</strong> the forced-entry path still exists behind <code>/live-force-entry</code> and
+      <code>live_force_entry.json</code> — a ticker listed there skips the filter on the next entry pass and is tagged <code>[FORCED]</code>
+      — but no page can reach it. Re-adding the control is a deliberate decision, not an oversight to patch: the backtest says each rule in
+      the filter contributes positive EV, and bypassing them turns the engine into a discretionary tool. For momentum, use the Strategy ★ tab.
     </div>
   </div>
 
@@ -641,6 +634,40 @@
     </ul>
     <div class="highlight-box">
       Browser notifications must be allowed for <strong>localhost:8765</strong>. If you don't see a permission prompt, check your browser's site settings.
+    </div>
+  </div>
+
+
+  <!-- Trade notifications -->
+  <div class="section" id="trade-notifications">
+    <div class="section-title">
+      <div class="section-icon icon-orange">📣</div>
+      Trade Notifications
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 12px;">
+      Distinct from <strong>Alerts</strong> above: those are price thresholds you set by hand on a
+      stock page, and they only fire while that page is open. These are sent by the
+      <strong>live engines</strong> themselves, one per fill, whether or not a browser is running.
+      Configured under <strong>Settings → Trade Notifications</strong>.
+    </p>
+    <ul class="tip-list">
+      <li><span class="tip-icon">🔵</span><span><strong>Buy</strong> — "Signals bought Gränges", then size, fill price, TP/SL and the exit-by date. Pattern and Cross entries also name the pattern that fired.</span></li>
+      <li><span class="tip-icon">🟢</span><span><strong>Sell</strong> — "Patterns sold Altra Fastigheter", then the return, exit reason, P&amp;L in SEK, both prices and how long it was held.</span></li>
+      <li><span class="tip-icon">💻</span><span><strong>macOS banner</strong> — zero setup, but only while you're at the Mac. Posted via <code>osascript</code>, which macOS attributes to <strong>Script Editor</strong>: it must be allowed in System Settings → Notifications or the banner is dropped with no error anywhere.</span></li>
+      <li><span class="tip-icon">📱</span><span><strong>ntfy push</strong> — reaches the phone. Install the <strong>ntfy</strong> app (iOS / Android), subscribe to the topic in <code>NTFY_TOPIC</code>, and fills arrive wherever you are. A stop-out is sent at a higher priority than a take-profit.</span></li>
+      <li><span class="tip-icon">🧪</span><span><strong>Send Test Notification</strong> on the Settings page fires one specimen buy + sell through every enabled sink — the only way to confirm the macOS permission, since that failure is silent.</span></li>
+    </ul>
+    <div class="highlight-box">
+      <strong>The ntfy topic name is the only credential.</strong> Anyone who knows it can read your
+      trades and push to your phone, so it lives in <code>.env</code> as <code>NTFY_TOPIC</code>
+      (gitignored) and is never sent to the browser — the Settings page can only tell you whether
+      it is set, not what it is. Change it there and re-subscribe if it ever leaks.
+    </div>
+    <div class="highlight-box">
+      One notification <em>per fill</em>, by design — on 2026-08-24 the three engines opened
+      17 positions in a single pass, which would be 17 banners. The engines tick every 3 minutes;
+      a whole flush is capped at 30 seconds so a burst can never delay the next run, and anything
+      still unsent past that cap is dropped with a line in the engine log rather than queued.
     </div>
   </div>
 

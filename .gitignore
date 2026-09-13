@@ -16,3 +16,12 @@ ohlc/
 
 # Smoke test artifacts (regenerate as needed)
 scripts/smoke_test_results.json
+
+# Cross-process lock for the stock_names.csv read-modify-write (lib/webScrapper.py).
+# Never deleted by design — removing it while a writer holds it breaks the locking.
+stock_names.csv.lock
+
+# Temp files from the atomic writers in lib/engine_common.py. These are renamed
+# into place via os.replace and should never survive a run; one that does is the
+# residue of a crash between mkstemp and replace.
+.tmp-*

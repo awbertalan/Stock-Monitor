@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "_readme": "Project changelog + version ledger. `app_version` bumps on every Claude-assisted change; `strategy_versions` bump ONLY when an engine's tradeable parameters, gates or detectors change. lib/version.py is the read API; the engines stamp these onto every position, so a trade can always be traced back to the code that opened it. Entries are newest-first. Entries with source='reconstructed' were rebuilt from session notes on 2026-08-21 (before the ledger existed) and their exact dates are best-effort; source='live' entries were written at the time of the change.",
-  "app_version": "0.16.0",
+  "app_version": "0.24.0",
   "strategy_versions": {
-    "signals": "sig-9",
-    "patterns": "pat-4",
-    "cross": "x-3"
+    "signals": "sig-12",
+    "patterns": "pat-5",
+    "cross": "x-5"
   },
   "engines": {
     "signals": {
@@ -26,6 +26,13 @@
   },
   "strategy_history": {
     "signals": [
+      {
+        "version": "sig-11",
+        "from": "2026-09-06",
+        "app_version": "0.23.0",
+        "params": "TP +3.0% / SL -1.0% / 7d hold, DoD <= -2%, no-Friday, not-at-5d-high",
+        "note": "Audit batch 2. Stop-loss fills at min(market, stop) instead of always at the stop — every prior stop-out booked a price that, on a gap-down, never traded. Real trading-holiday calendar behind add_trading_days/trading_days_between (holidays were counted as sessions, shortening a 7-day hold to as few as 4). Cross's wallet no longer vetoes Signals entries. Force-entry overrides no longer published as signal_check passes. No TP/SL level or hold-period change."
+      },
       {
         "version": "sig-1",
         "from": "2026-05-16",
@@ -88,9 +95,30 @@
         "app_version": "0.16.0",
         "params": "TP +2.0% / SL -1.0% / 7d hold, cooldown 1d, STALE guard, CLOSE-CONFIRMED ENTRY (one post-close pass, filled at the official close), liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
         "note": "Entries move off the intraday tick and onto the confirmed close. Measured by replaying this exact filter over 64 entry days of minute data (2026-04-30..2026-08-20), varying only the execution regime: close entry + close exit n=2346 46.6% WR +0.372%/trade; close entry + intraday exit n=2346 43.5% WR +0.301%; intraday entry + intraday exit (sig-8) n=4352 40.2% WR +0.202%. Entering intraday nearly doubles the trade count by taking names that dip 1% and recover before the close - trades the backtest never saw - and costs ~45% of the per-trade edge. Chosen because the wallet is slot-constrained rather than signal-constrained (6 open against a 35k floor), so per-trade quality outranks signal count. NOT a fix for the sig-8 result: at 7W/16L against a true 40.2%, P(<=7 wins in 23) = 23%, i.e. ordinary variance - roughly 200 trades are needed before the win rate separates from the 33.3% break-even at all. Carries a mild lookahead (the close both triggers the entry and sets the fill), the same assumption the arm-B figure was measured under; the real-world equivalent is a closing-auction order."
+      },
+      {
+        "version": "sig-10",
+        "from": "2026-09-03",
+        "app_version": "0.18.0",
+        "params": "TP +3.0% / SL -1.0% / 7d hold, DoD <= -2.0%, cooldown 1d, STALE guard, close-confirmed entry, liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
+        "note": "Retune of the two parameters that actually carry edge, after the -1% stop was questioned and re-tested. Method: the same entry filter swept over two independent samples — 11 years of daily closes for the 158-name large-cap universe (n=68,905 close-to-close trades, 2016-01-01 onward) and true tick-order fills reconstructed from 3.4M minute prints (n=2,723, 2026-04-30..2026-09-03), the latter walking every print in sequence so TP/SL ordering inside a bar is real rather than assumed. TAKE-PROFIT +2% -> +3%: 11y 45.8% WR +0.353%/trade -> 41.1% +0.545%; tick 44.7% +0.335% -> 37.4% +0.455%. Monotonic out to +4% on both samples, but return per day-of-held-capital flattens after +3%, and this wallet is capital-constrained. DOD_THRESHOLD -1% -> -2%: 11y +0.353% -> +0.385%; tick +0.335% -> +0.390%; also monotonic (-3% gives +0.423% / +0.434%). Took -2% rather than -3% because -3% fires only ~3x/day across the universe against ~6.6x while scoring +0.267%/capital-day vs +0.231% — the wallet is slot-constrained (6 open, 581k idle), so candidate starvation costs more than the extra per-trade edge earns. Combined: +0.143% -> +0.231% per capital-day, every one of the 11 years positive (+0.48%..+0.83%). STOP DELIBERATELY UNCHANGED at -1%: widening to -2% was the actual request, and it is wrong. Live record splits cleanly by the stop in force — the -2% era (sig-3/4/6) ran n=27 33.3% WR -0.85%/trade -16,025 SEK against the -1% era (sig-7/8/9) n=40 35.0% +0.05% +1,638 SEK, and break-even WR moves from 33.3% to 50.0%, which this engine has never sustained. An OHLC replay of the current 40 trades under a -2% stop lifts win rate 37.5% -> 50.0% (5 of 26 stop-outs do recover, so the shake-out intuition is real) but cuts per-trade edge +0.125% -> +0.026%, landing exactly on break-even. On tick data the stop curve is a shallow U (-0.5% +0.378% | -1% +0.335% | -2% +0.299% | -3% +0.342%), i.e. the stop only trades win rate against loss size and is not a lever at all; the monotonic 'tighter is better' seen on close-only data is an artefact of never observing an intraday touch. Two hypotheses were tested and REJECTED rather than shipped: that the most-negative-DoD-first candidate ranking was inverted (it is not — deep down-days are the best bucket on both samples, +0.423%/+0.434% at -3%), and that a DoD *band* beat a threshold (a 40-trade live slice suggested -3%..-1.5% was a sweet spot; on 68,905 trades the band is flat-to-worse, so that slice was noise). Expect ~42% win rate against ~46% before, i.e. visibly more red for more money. Caveat carried forward: live runs +0.05%/trade against a +0.35% backtest, so the ranking of these parameters is what transfers, not the magnitudes."
+      },
+      {
+        "version": "sig-12",
+        "from": "2026-09-08",
+        "app_version": "0.24.0",
+        "params": "TP +3.0% / SL -1.0% / 7d hold, DoD <= -2%, no-Friday, not-at-5d-high, close-confirmed entry bounded to close+60min",
+        "note": "Bounds WHEN the close-confirmed entry pass may fire. Filling at the official close is justified in sig-9 as 'the real-world equivalent of a closing-auction order' — an order that must be submitted by ~17:25. But close_confirmed_entry_ready() had no upper bound: it required only after-the-close, feed-settled, trading-day and not-already-scanned. Observed fire times across the 29 close-confirmed entries were 17:45, 18:01, 18:04, 18:05 and, on 2026-09-03, 19:57 — five entries booked at the 17:30 close price two and a half hours after it, by which point the US session had been open ~3.5h and any post-close Nordic news had landed. That is information no auction order could have had, i.e. lookahead beyond what the sig-9 measurement covered. Past the cutoff the day is now SKIPPED, not entered late. Expressed as ENTRY_WINDOW_MINUTES = 60 minutes AFTER THE CLOSE rather than a wall-clock 18:30: on a 13:00 half-day an absolute 18:30 would have permitted a decision 5.5h after the close, the exact thing the bound exists to prevent. On an ordinary session close+60 == 18:30, identical to EOD_WINDOW_END. An unbounded pass was originally deliberate — a fixed window produced zero entries on 2026-08-31 when the Mac slept 16:12-18:04 — but that reasoning is obsolete: `pmset -g sched` shows `wakepoweron at 5:48PM weekdays only` and the plist carries a 17:50 Mon-Fri StartCalendarInterval alongside StartInterval 180, so the window is reached unattended. The feed runs ~16 min behind (state's own data_lag: 963s against a probe trade at 17:29:48), so the close is not visible until ~17:46 and the usable runway is ~45 min at a 3-minute cadence, i.e. ~14 attempts. NOT a fix for a bug: entering after the close is the sig-9 design and is worth ~45% of per-trade edge over intraday entry (close+close +0.372%/trade vs intraday +0.202%, n=2,346 vs 4,352). The owner's 'nothing after 17:15' cannot be combined with it at all — at 17:15 wall clock the feed only shows ~16:59 prices, so buying pre-close and buying at the confirmed close are mutually exclusive."
       }
     ],
     "patterns": [
+      {
+        "version": "pat-5",
+        "from": "2026-09-06",
+        "app_version": "0.22.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, 5 entry-eligible patterns",
+        "note": "Audit batch 1. Detector exceptions are recorded and surfaced instead of swallowed per-stock. A non-positive live quote is tagged stale, so it can no longer book a phantom stop-loss. An unreadable history CSV now disqualifies the name rather than silently skipping the -15% crash guard. No TP/SL/hold or detector-logic change."
+      },
       {
         "version": "pat-1",
         "from": "2026-05-25",
@@ -122,6 +150,13 @@
     ],
     "cross": [
       {
+        "version": "x-5",
+        "from": "2026-09-06",
+        "app_version": "0.22.0",
+        "params": "TP +3.0% / SL -1.0% / 7d hold, signal AND same-day 2+ pattern confluence",
+        "note": "Audit batch 1. Pattern half now hard-gated to fires stamped today (the 30h window let the previous session's list pass as confluence); a down pattern half closes the gate and does not consume the day. Cash floor no longer latched pre-exit. Pre-open ticks defer the exit pass instead of booking calendar TIMEOUTs at the prior close. No TP/SL/hold change."
+      },
+      {
         "version": "x-1",
         "from": "2026-06-13",
         "app_version": "0.6.0",
@@ -141,10 +176,605 @@
         "app_version": "0.15.0",
         "params": "entries paused, exits still managed, STALE guard, liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
         "note": "Same two gates as sig-8, surfaced in each candidate's skip_reasons so the Approve control renders disabled. Bites hardest here: every Cross candidate is by construction a name both upstream engines like, so it is above-average likely to already be held by one of them."
+      },
+      {
+        "version": "x-4",
+        "from": "2026-09-03",
+        "app_version": "0.19.0",
+        "params": "TP +3.0% / SL -1.0% / 7d hold (mirrors sig-10), sig-10 signal hit AND a 2+-pattern Patterns fire, auto-entry at the confirmed close, cross-wallet dedupe OFF",
+        "note": "Entries resumed against a rebuilt gate. x-1..x-3 never tested confluence: the Signals half was the whole ~400-name radar rather than the names Signals wanted, and the Patterns half read recent_pattern_fires upstream of live_patterns' own CONFLUENCE_REQUIRED, so 21 of 23 scored trades were the solo fires Patterns had just rejected. Now an A/B arm over the Signals wallet — same params, same fill timing, one extra condition."
       }
     ]
   },
   "entries": [
+    {
+      "version": "0.24.0",
+      "date": "2026-09-08",
+      "source": "live",
+      "title": "Close-confirmed entries bounded to close+60min; a forfeited day now warns",
+      "summary": "The owner asked whether buying after the close is a bug. It is not — it is the sig-9 close-confirmed design, worth ~45% of per-trade edge over intraday entry. But the gate had no upper bound, and on 2026-09-03 five entries were booked at the 17:30 close price at 19:57, after ~3.5h of US session. The entry pass is now bounded to 60 minutes after the close (18:30 on a normal day, 14:00 on a 13:00 half-day); past that the day is skipped rather than entered on hours-old information, and the skip renders as a warning instead of the muted line every routine gate reason gets.",
+      "files": [
+        "live_signals.py",
+        "web/live_signals.html",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "live_signals.py: new ENTRY_WINDOW_MINUTES = 60, declared next to EOD_WINDOW_START/END. Minutes after the close, not a wall-clock time, so a 13:00 half-day gets a 14:00 cutoff rather than 18:30.",
+        "live_signals.py: close_confirmed_entry_ready() now returns a 3-tuple (ready, reason, missed_window) and rejects past close+ENTRY_WINDOW_MINUTES. The cutoff is tested BEFORE the feed-settled check so a feed that only settles at 19:00 reports 'window gone' rather than blaming the feed for a day that was already forfeit.",
+        "live_signals.py: the single call site stamps missed_window onto both entry_gate and last_entry_gate, matching the existing both-keys contract (writing one key renders the previous run's reason under a fresh clock).",
+        "web/live_signals.html: renderSignalScan() computes `missed` and paints a forfeited day as 'health-banner warn' with an explicit message. Every other closed reason keeps the muted 'section-subtitle' treatment - a closed gate is the normal state on nearly every 3-minute tick, so warning on all of them trains the eye to skip the box, and the one state worth acting on has to look different.",
+        "live_signals.py: close_confirmed_entry_ready() docstring referenced ENTRY_WINDOW_END, the name the constant carried before it was made close-relative; corrected to ENTRY_WINDOW_MINUTES so the only documented name matches the only defined one."
+      ],
+      "strategy_bumps": {
+        "signals": "sig-11 -> sig-12"
+      },
+      "notes": "Verified by patching live_signals.datetime and walking the clock. Ordinary Tuesday: 17:29 'before the 17:30 close'; 17:31-18:30 open; 18:31 and 19:57 skipped with missed_window=True. 13:00 half-day (2026-01-05, which is_early_close recognises): 12:59 'before the 13:00 half-day close'; 13:01-14:00 open; 14:01 and 18:29 skipped - the cutoff scales with the close as intended. Feed-not-settled inside the window still blames the feed; outside it blames the window. Weekend and holiday reasons unaffected. Critically, the every-3-minute post-pass evening tick still reports 'already scanned' with missed_window=False, so a normal successful day raises no alarm. First harness attempt swapped live_signals.datetime for a subclass whose now() returned a base-class instance, which broke `isinstance(d, datetime)` inside is_early_close() and made half-days look mis-handled; that was the test, not the code - fixed by returning a subclass instance. UI verified by slicing the real renderSignalScan out of the page by brace matching and running it in node against a DOM stub (no CDP tooling installed here), built via new Function rather than eval to avoid the let-scoping trap: missed-today -> warn banner, already-scanned / before-close -> muted, stale gate -> the stale warning even when missed_window is set, open gate -> hidden. ast.parse clean. NOT CHANGED, reported instead: live_cross.py's own close_confirmed_entry_ready (line 305) has the identical unbounded gate, and Cross entries are live again (ENTRIES_PAUSED = False since 2026-09-03, x-4), so it could book a 19:57 entry too. It additionally reads L.MARKET_CLOSE directly instead of market_close_for(), so it has no half-day handling, and gates on weekday() >= 5 rather than is_trading_day(), so it would run on a holiday. Left for a separate decision since it is a different wallet and version line. live_patterns.py is unaffected - it enters intraday and already refuses after LATE_ENTRY_CUTOFF_MIN 16:30."
+    },
+    {
+      "version": "0.23.3",
+      "date": "2026-09-06",
+      "source": "live",
+      "title": "Audit tail closed — UI honesty fixes, temp-file leak, deposit safety",
+      "summary": "Final batch of the full-codebase audit. Of the 22 remaining medium/low findings plus the leftover regressions, 12 were verified and fixed, 18 were refuted as wrong on inspection, and 20 were verified as real but deliberately deferred rather than shipped hours before the open. All 60 audit findings have now been worked. Every file compiles, all three engines and app.py import cleanly, and every wallet is intact.",
+      "files": [
+        "lib/engine_common.py",
+        "app.py",
+        "live_cross.py",
+        "lib/ohlc_capture.py",
+        "web/settings.html",
+        "web/live_overview.html",
+        "web/live_widget.js",
+        "scripts/deposit.py",
+        "scripts/notify_open_positions.py",
+        ".gitignore"
+      ],
+      "changes": [
+        "lib/engine_common.py write_text_atomic(): the temp files were created with a .csv suffix in the destination directory, which app.py enumerates BY the .csv extension — a crash between mkstemp and os.replace would have left a .tmp-*.csv that the scanner then treated as a stock file. The suffix no longer collides, and .gitignore now covers both .tmp-* and the new stock_names.csv.lock.",
+        "web/settings.html: saveNotif() ignored the /settings reply entirely and reported success unconditionally — with 0.23.0 having made that route answer a real status code, a rejected save (for instance a disallowed ntfy host) displayed as saved. testNotif() also reported a total send failure as 'no sink is active', which reads as a configuration state rather than the delivery failure it actually is.",
+        "web/live_overview.html: the combined win-rate tile was graded against the stale 50% default break-even instead of the real one, so the headline number across all three wallets was coloured against a bar none of the strategies actually uses.",
+        "scripts/deposit.py: a refused --apply left an orphan pre_deposit backup in state/backups/, so the presence of a backup no longer implied a deposit had happened. The duplicate re-check now runs before the backup is taken. 'Written.' is also no longer printed without verifying the write survived a concurrent engine tick.",
+        "scripts/notify_open_positions.py: the snapshot pushed stale marks as live because it never read last_run — a phone notification could report a position's P&L from a quote hours old with nothing saying so.",
+        "web/live_widget.js: stale quotes were hidden rather than marked, so a position could show an out-of-date P&L that looked current.",
+        "live_cross.py: the persisted pause reason was still the retracted x-2 Tweezer Bottom text, and CRASH_GUARD read as a dead constant. lib/ohlc_capture.py and app.py: comments and docstrings asserting UI wiring that was never built now describe the real state — data served, display not yet wired."
+      ],
+      "strategy_bumps": {},
+      "notes": "No strategy_version bump: nothing in this batch alters a TP, SL, hold period, entry gate or detector. VERIFICATION RUN AFTER THIS BATCH: every .py compiles and every web/*.js parses; app.py imports and serves _load_settings/_live_health on a spare interpreter (background threads are __main__-only, so :8765 was never bound); live_signals, live_patterns and live_cross all import; all state/*.json parse except state/trading_rules.json, which is a 0-byte orphan dated 2026-05-16, referenced by no code, and predates this work; the three wallets are intact (Signals 3 open / 70 closed, Patterns 0 / 78, Cross 0 / 27); no stray .tmp-* files exist. Smoke-tested the new date and money helpers directly: is_trading_day correctly rejects 2026-12-25 and Midsummer Eve, add_trading_days(2026-12-21, 7) returns 2027-01-05 rather than counting the holidays, and write_rows_atomic preserves CSV quoting. 20 findings were verified as real and DEFERRED — the significant ones are: live_patterns still has no post-close exit sweep; state['detector_errors'] and the OHLC capture-skip sidecar have no UI reader, so the standing rule is unmet in both places; Cross's fills still one-way veto future Signals entries; notify.queue_buy still fires before the save on the entry path (the sell side was fixed); a crash inside live_signals.main() is now caught but surfaces only in the log; the mutating POST routes are still unauthenticated; and there are still no automated tests for the money math."
+    },
+    {
+      "version": "0.23.2",
+      "date": "2026-09-06",
+      "source": "live",
+      "title": "Silent 'Sell now' refusals surfaced, refresh guard corrected, help.html made true",
+      "summary": "Third corrective batch. The headline is that app.py's force-sell refusal — added in 0.23.0 and correct in itself — was invisible on all three live pages, so a refused click looked exactly like a dead button. That is the owner's standing rule violated by a fix intended to honour it. Also repairs a refresh guard that fired on the wrong condition and would have degraded Monday's sweep, and corrects two factual errors in help.html.",
+      "files": [
+        "lib/webScrapper.py",
+        "live_patterns.py",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html",
+        "web/help.html"
+      ],
+      "changes": [
+        "web/live_signals.html, web/live_patterns.html, web/live_cross.html: all three parsed app.py's 409 {ok:false,error} force-sell refusal and threw it away — fetch() does not throw on 4xx, so `if (res && res.ok)` fell through to `finally { btn.disabled = false }` and displayed nothing. Clicking 'Sell now' on a row the engine had already closed was indistinguishable from a broken endpoint. Each page now renders the server's reason in a notice built from the existing style.css tokens, set via textContent so a server-supplied string cannot inject markup, and the failure path deliberately does not refresh or flip the button into a success state.",
+        "web/live_signals.html: the Sell-now onclick was built through live_common.js esc(), which maps an apostrophe to &#39;. The attribute is entity-decoded before its contents are parsed as JS, so the handler was a syntax error and the button simply dead for any holding whose display name contains an apostrophe — stock_names.csv really does carry one (Neem's Hill B), and positions are keyed by display name.",
+        "lib/webScrapper.py update_csvs(): the truncation guard added in 0.22.0 tested `not seven_day_rows`, which is the NORMAL outcome for a thin stock whose newest print falls just outside the 7-day window — not evidence of a failed fetch. It therefore froze week-old bars on disk for quiet names and re-reported an error on every 15-minute sweep. The trigger is now `not rows` (nothing parsed at all, the actual signature of the payload shift the guard defends against), so a genuinely quiet stock self-clears exactly as it did before the audit.",
+        "lib/webScrapper.py: that guard also raised mid-function, which unwound the caller's remaining per-stock work — app.py refresh_one and webController.scrape_one both call infoScrapper.sync_history immediately afterwards inside the same try. Under the universe-wide payload shift the guard exists for, it would have stopped the daily History.csv sync that live_signals reads. It now returns False with the same loud per-stock log line, and returns True on the normal path so callers have a status to check.",
+        "lib/webScrapper.py: stock_names.csv's read-modify-write was serialised only by an in-process threading.Lock, while two separate processes write it (app.py's refresh sweep and scripts/tag_sectors.py). Because the write is atomic, the loser's changes were silently reinstated rather than torn — sector tags and cap tiers could vanish with nothing logged. Added a cross-process fcntl.flock on a separate lockfile (flock on the CSV itself would be defeated by the os.replace inode swap). Best-effort by design: non-blocking acquire retried every 100ms, and after 30s it logs and proceeds unserialised rather than hanging a refresh worker.",
+        "live_patterns.py: the 0.22.0 edit hoisted scan-stage rejections into state['last_skipped'], so the 'Blocked this run' panel began listing names that never fired a pattern at all, mixed in with real entry blocks. Scan-stage rejections are back out of that list. state['detector_errors'] was also written only on full-scan runs and never refreshed on the Friday or post-16:30 early returns, so a stale error report could ride under a fresh last_run; the write moved into the shared UI-snapshot path.",
+        "web/help.html: corrected two false statements introduced in 0.22.0 — that Signals fills 'at ask' (under sig-9 the ask branch is unreachable for entries; it fills at the confirmed close) and a '16:30 cutoff' rule row claiming parity across all three engines (past_late_entry_cutoff has exactly one call site repo-wide, in live_patterns.py; live_signals defines it but never calls it)."
+      ],
+      "strategy_bumps": {},
+      "notes": "No strategy_version bump: nothing here changes a TP, SL, hold period, entry gate or detector. The live_patterns edits are state/UI visibility only, and the webScrapper change restores the pre-audit data behaviour rather than altering it. DELIBERATELY DEFERRED, all verified as real and left for a calmer window: (1) live_patterns has no post-close exit-only sweep — main() returns unconditionally once is_market_open() is false at 17:30, so its book is last evaluated ~15 minutes of feed lag before the closing print, unlike live_signals' run_eod_sweep; (2) state['detector_errors'] still has no reader in app.py or any page, so a universally-raising detector remains invisible on /live-patterns — the standing rule is still unmet there; (3) the Live Signals section of help.html still labels the strategy sig-9/sig-10 while the engine now runs sig-11; (4) a re-read-and-merge before os.replace in the names writer, now redundant given the lockfile. NEW UNTRACKED FILE: stock_names.csv.lock appears at the project root on first write and is never deleted by design — it wants a .gitignore line."
+    },
+    {
+      "version": "0.23.1",
+      "date": "2026-09-06",
+      "source": "live",
+      "title": "Corrective pass — repairs to the audit-fix batches themselves",
+      "summary": "An independent adversarial review of the 2,287 lines changed in 0.22.0 and 0.23.0 found that the fix pass had refuted 0 of 38 findings and, in doing so, introduced 26 problems of its own. This entry repairs the ones that mattered and reverts three changes that should never have been made. Nothing here is a new feature; it is the fix batches being made honest.",
+      "files": [
+        "app.py",
+        "live_cross.py",
+        "lib/notify.py",
+        "web/live_signals.html"
+      ],
+      "changes": [
+        "app.py _load_settings(): the 0.23.0 edit made a READ path destroy its own input — on any JSONDecodeError it renamed state/settings.json aside, and that loader runs on every GET /get-settings poll and inside _auto_refresh_loop. A half-saved hand-edit would therefore vanish, taking update_filter with it (the next sweep crawling ~61k instruments instead of 987) and silently reverting lib/notify.py in the engine process to all-sinks-on. The loader now only records _settings_error and serves defaults, leaving the file recoverable; the corrupt-file rename moved to the POST path, immediately before the replacement is written, so a bad file is only ever set aside when a good one is about to take its place.",
+        "app.py: added _settings_lock. Switching to ThreadingHTTPServer in 0.23.0 removed the serialisation that POST /settings had silently relied on — every other shared file in app.py already had a lock, settings.json did not. The whole read-merge-write is now inside the lock, not just the write: the lost update lives in the read-then-write pair, so locking the write alone would not have helped. web/settings.html fires one POST per checkbox, so two quick toggles could previously drop one.",
+        "lib/notify.py: reverted the OR -> AND change to the flush() tally from 0.22.0. Counting an event as failed unless EVERY enabled sink took it looked stricter but broke app.py's health watchdog, which only advances its high-water mark when failed == 0 — a single ntfy outage would have turned it into a repeating-alert loop. The any-sink rule is restored. The strict all-sinks test is kept where it was actually wanted, in send_test(), so the Settings Test button still cannot report success when ntfy fails. The per-sink counters and the richer log line ('macOS 2/2, ntfy 0/2') added alongside it are kept.",
+        "lib/notify.py: reverted COMMIT_SLACK_S. The 1.0s tolerance on the wallet-mtime comparison weakened the commit gate it was attached to for no demonstrated need; the comparison is back to a plain saved_at < queued_at.",
+        "web/live_signals.html: reverted the re-added Near-misses panel. It was deliberately deleted from this page on 2026-09-03 and Signals has been hands-off since 2026-08-24, so a manual-override table does not belong there. Also restored the canonical section order — Open positions, SL cooldown, Closed trades, Latest run log, By version — which had been broken to make room for it.",
+        "web/live_signals.html: the new gate banner was a yellow warning visible during essentially all market hours, because the engine stamps open:false on every intraday tick and only opens on the single post-17:30 pass. A warning that is always on hides the one state it exists to catch, so the normal intraday case now renders as neutral information and the banner is reserved for a genuinely blocked gate. Also corrected the gate-key precedence to last_entry_gate || entry_gate, the contract both engines document.",
+        "live_cross.py: exits_can_book()'s docstring claimed to stop exits firing a full trading day early. It does not — the TIMEOUT branch is a pure calendar test (today >= target_date) that is equally true at 06:30 and at 09:03 on the target date, so deferring the pass moves the FILL across the overnight gap rather than lengthening the hold. The guard is kept as the honest rule it actually is (do not fill against a pre-open quote) and the docstring now says so. The tempting alternative — changing TIMEOUT to today > target_date — was deliberately NOT taken: that test lives in shared code and would alter hold length for all three engines hours before the open.",
+        "live_cross.py: a queued MANUAL 'Sell now' was silently swallowed when the pre-open guard deferred the exit pass, because the skipped apply_exit_checks is the only writer of force_sell_blocked. The deferral branch now logs each queued ticker that is genuinely in the book and persists force_sell_blocked itself; the queue file is deliberately left intact so the intent survives to the first tick after the open.",
+        "live_cross.py: exit_pass is now written on the no-open-positions early return (it could otherwise carry a Friday close's result through the weekend under fresh timestamps), and the Friday case that made last_entry_scan_date unstampable — leaving the close-confirmed pass re-running on every tick from 17:30 to midnight — is fixed."
+      ],
+      "strategy_bumps": {},
+      "notes": "No strategy_version bump. x-5 and sig-11 were both minted earlier today and the market has been closed since, so neither has stamped a trade — these are corrections to versions before they ever traded, not new generations. One item is knowingly still open: app.py correctly answers HTTP 409 with a reason when a force-sell is queued for a ticker with no open position, but web/live_signals.html, web/live_patterns.html and web/live_cross.html all branch on res.ok with no else, so the refusal is invisible and a stale 'Sell now' click looks like a broken button. That violates the standing rule about gates surfacing in the UI and is being fixed in the pass that follows this entry. The app.py agent deliberately refused the suggested workaround of answering 200 with {ok:false} on the grounds that it would make the endpoint lie about the outcome."
+    },
+    {
+      "version": "0.23.0",
+      "date": "2026-09-06",
+      "source": "live",
+      "title": "Audit fixes, batch 2 — honest stop fills, holiday calendar, atomic app writes, gate visibility",
+      "summary": "Second and larger batch from the full-codebase audit, covering live_signals.py, app.py, the front end and the remaining lib/ writers. The headline is a money-accounting repair: a stop-loss can no longer book a fill better than the market, which the three wallets' own history shows never happened in reality. Signals bumps to sig-11 because how it books losses, which names it may enter, and which days count as sessions all changed.",
+      "files": [
+        "live_signals.py",
+        "app.py",
+        "lib/calendar_cache.py",
+        "lib/ohlc_capture.py",
+        "lib/engine_common.py",
+        "scripts/deposit.py",
+        "web/help.html",
+        "web/live_common.js",
+        "web/live_signals.html",
+        "web/live_widget.js"
+      ],
+      "changes": [
+        "live_signals.py apply_exit_checks(): a stop-loss now fills at min(cur_price, pos['sl']) instead of always at pos['sl']. Under ENTRY_AT_CLOSE the engine's next look at a position is the following session's ~09:00 tick, so every first stop test is taken across an overnight gap it never observed — on a gap-down open the stop price simply never traded. Evidence from the live books: all 81 stop-outs across the three wallets closed at exactly -1.00% or -2.00%, while 10 of them OPENED below their stop, worth roughly 4,100 SEK of P&L that was never available. The sl_fill_at_market special case retighten_stops.py needed is subsumed by the general rule.",
+        "live_signals.py: a trading-holiday calendar (is_trading_day) now backs add_trading_days / trading_days_between, which previously counted Swedish holidays as sessions — making a nominal 7-day hold as short as 4 real sessions — and treated a holiday weekday as an open market. Stockholm 13:00 half-days no longer block OHLC capture or the whole close-confirmed entry pass.",
+        "live_signals.py: the wallet is now saved immediately after apply_exit_checks() and again before consume_limit_orders(), so an intent queue is only emptied on disk AFTER the exits or entries it justifies are persisted. build_universe() and the 158-fetch calendar refresh moved below the sweep's final save, removing the multi-minute crash window that sat between booked exits and their save. The inverted failure is harmless: apply_exit_checks skips tickers no longer held.",
+        "live_signals.py reconcile_force_sells(): consumes both the tickers actually sold MANUAL and every queued ticker with no open position left, printing the pruned names. An orphaned force-sell used to survive in the queue forever and, because force-sell is the first branch of the exit chain, liquidate the NEXT position opened in that ticker. A position deferred for want of a live quote is deliberately not pruned.",
+        "live_signals.py feed_settled_past_close(): the settle threshold is now derived from today rather than from the probe trade's own date, so a day-stale feed can no longer satisfy it. run_eod_sweep — unlike maybe_capture_eod_ohlc — had no date guard, so a frozen probe could book TP/SL/TIMEOUT exits against stale prices and stamp last_eod_sweep_date so the real close was never swept.",
+        "live_signals.py: Cross's wallet is excluded from the cross-wallet dedupe check. Every Cross candidate is by construction a same-day sig-10 hit, so the experimental arm was silently deleting entries from the benchmark arm it is measured against, for up to MAX_HOLD_DAYS per Cross position. Patterns' wallet still blocks. Cost recorded in-comment: aggregate concentration in one company across wallets is no longer capped by this gate.",
+        "live_signals.py: force-entry overrides are no longer published into last_signal_hits, which promised 'names that PASSED signal_check'. live_cross.compute_candidates() re-checks confluence, calendar and cooldown but never dod / at_5d_high / ret_20d, so a manual override was auto-bought by Cross and stamped signal_confirmed. last_signal_hits_meta now carries forced_excluded.",
+        "live_signals.py: main() is wrapped in try/except in __main__, matching its two chained dependents, so a Signals fault can no longer leave Patterns and Cross with no TP/SL/force-sell enforcement. The entry gate is now written to last_entry_gate (the key the other two pages already read) and per-run rejections to last_skipped.",
+        "app.py: switched to ThreadingHTTPServer. Blocking 8-15s upstream fetches inside GET handlers froze the entire UI, including the Sell-now POST. Mutating POSTs no longer report failure as HTTP 200 with an error body. The force-sell route rejects a ticker with no open position in that engine (the app.py half of the orphan fix). settings.json, watchlist, alerts and the limit-order queue are written through the atomic helpers; a corrupt settings file is no longer laundered into defaults that the next save persists. ntfy_server is restricted so an unauthenticated POST cannot redirect the NTFY_TOPIC credential to an arbitrary host. refresh_one no longer swallows every exception and reports 100% complete on a total failure. Engine health can now push rather than waiting for a browser.",
+        "lib/calendar_cache.py: a failed fetch no longer overwrites real event dates with [] and stamps the cache fresh, which silently disabled the earnings-proximity entry gate. fetched_at only advances when every stock returned; a partial refresh stays stale and is retried.",
+        "lib/ohlc_capture.py: a transient read error no longer wipes a stock's entire OHLC history down to one row.",
+        "lib/engine_common.py: daily pre-write wallet snapshot with retention — state/ is gitignored and the trade record had no scheduled backup of any kind.",
+        "scripts/deposit.py: idempotency guard, so a second --apply cannot double-credit cash and wallet_start.",
+        "web/: the Live Signals page now renders its entry gate and scan result; per-version win rates are graded against each version's own break-even instead of the current one; the floating widget no longer turns a failed wallet fetch into a fake empty wallet, no longer computes equity % over a different wallet set than the equity itself, and no longer falls back to a hardcoded 500000 baseline. help.html corrected on six counts, including the reversed 'no longer auto-buys' claim and a stale +2% target that contradicted the +3.0% rule row on the same page."
+      ],
+      "strategy_bumps": {
+        "signals": "sig-10 -> sig-11"
+      },
+      "notes": "REVIEW PENDING: an independent adversarial review of all 2,287 changed lines is running and had not reported when this entry was written. The fix agents refuted 0 of 38 findings, which is not a credible rate, so some of these repairs may be answers to non-problems and may be reverted in a follow-up entry. Expect these behaviour changes on Monday: stop-outs will book their true loss rather than exactly -1.00%/-2.00%, so the recorded loss tail will widen and per-trade averages will worsen — this is the accounting becoming honest, not performance degrading; Signals may take slightly MORE entries now that Cross's book no longer vetoes it; holidays and half-days are handled correctly, which shifts exit-by dates. No TP, SL level or hold period changed."
+    },
+    {
+      "version": "0.22.0",
+      "date": "2026-09-06",
+      "source": "live",
+      "title": "Audit fixes, batch 1 — stale confluence, phantom fills, truncating writers, honest notifications",
+      "summary": "First batch of repairs from the full-codebase audit. Each finding was re-verified against the source before anything changed. Two engines changed tradeable behaviour and are bumped accordingly: Cross now refuses to enter on a pattern half it cannot confirm for today, and Patterns now refuses names whose quote or history it cannot trust. The common thread is replacing a plausible default with a visible refusal.",
+      "files": [
+        "live_cross.py",
+        "live_patterns.py",
+        "lib/notify.py",
+        "lib/infoScrapper.py",
+        "lib/webScrapper.py",
+        "lib/engine_common.py"
+      ],
+      "changes": [
+        "live_cross.py fresh_pattern_fires(): the pattern half of the confluence gate now enforces the same hard same-day contract signals_hits() always had — a fire counts only if its ts falls on today's local trade date, and an undated fire is stale rather than fresh. The 30-hour rolling window (PATTERN_FIRE_FRESH_HOURS) is gone: it was wider than the gap between two daily scans, so the previous session's fire list passed as today's confluence. live_patterns returns before publishing recent_pattern_fires whenever the market is shut or the late cutoff has passed, which is exactly when Cross's post-17:30 pass reads it — the live state showed fires stamped 2026-09-03 against a last_run of 2026-09-04. A down pattern half now CLOSES the gate, publishes patterns_half into last_entry_gate, and does not stamp last_entry_scan_date, so a pass that never confirmed confluence no longer consumes the day.",
+        "live_cross.py compute_candidates(): dropped the cash-floor test from the candidate snapshot. It ran before apply_exit_checks credited sale proceeds and was latched into `blocked` for the whole run, so a day that would have had cash after its exits took no entries at all — and last_entry_scan_date was stamped either way, so there was no retry. The entry loop's own fill-time cash check (mirroring live_signals:1249) is the correct one and still applies.",
+        "live_cross.py exits_can_book(): new tick-timing gate. Cross is the only engine that reaches the exit path pre-open, and apply_exit_checks' TIMEOUT branch is pure calendar (`today >= target_date`) while a pre-open quote carries ok=True with no `source` key, so it passed both stale guards. A 06:03 tick could therefore book a full trading day early at the previous session's close. Pre-open weekday ticks now defer the exit pass, leave queued MANUAL sells unconsumed, and persist state['exit_pass'] = {ran, reason, closed, checked}.",
+        "live_patterns.py detect_patterns_on_yesterday(): the bare `except Exception: pass` around each detector became a recorded error — detection stays per-stock non-fatal, but raises are collected, summarised per pattern in a DETECTOR ERRORS block and persisted, so a detector that starts raising universally can no longer stop firing forever while the logs read like a quiet market.",
+        "live_patterns.py: a live quote whose `last` is non-numeric or <= 0 is now re-tagged source='stale' rather than trusted. apply_exit_checks already honours that flag, so a zero print can no longer book a phantom stop-loss on a position it never touched.",
+        "live_patterns.py: an unreadable history CSV now disqualifies the name instead of silently skipping the -15% crash guard and continuing. The guard was inverted to a positive skip-and-continue so a fired guard is recorded rather than falling through.",
+        "lib/notify.py: an announced fill must be proved committal by evidence on disk, not by call order. queue_buy/queue_sell stamp queued_at, and flush() checks each event against that engine's wallet file mtime (COMMIT_SLACK_S = 1.0) before sending — a run that dies between the fill and the save now logs a DROPPED line naming the tickers instead of pushing a sell that never happened.",
+        "lib/notify.py flush(): an event counted as sent if ANY enabled sink took it, so the Settings Test button could never fail on ntfy. Tallies are now per-sink and an event is sent only when every enabled sink took it; the summary names the sinks it actually reached.",
+        "lib/infoScrapper.py sync_history(): the overlap rewrite truncated the live History.csv and then appended in a separate unguarded step, so a raise in between left the only copy of a series going back years permanently short. Prefix and fetched window are now assembled in memory and swapped in through engine_common.write_text_atomic(). update_history_csv(rewrite=True) likewise routes through write_rows_atomic(); the append/dedupe branch is deliberately untouched since it never truncates.",
+        "lib/webScrapper.py update_csvs(): no longer opens the 7-day CSV in 'w'. An empty parse against a populated existing file now prints what it is keeping and raises rather than destroying the patterns engine's only price input; the successful path writes atomically."
+      ],
+      "strategy_bumps": {
+        "cross": "x-4 -> x-5",
+        "patterns": "pat-4 -> pat-5"
+      },
+      "notes": "Expect fewer Cross entries, deliberately: Cross now takes ZERO entries on any day live_patterns did not complete a scan — including any day the Mac sleeps through market hours — and says so on the page instead of trading a day-old confluence. The live_patterns half of that fix (moving the scan above the market-closed and late-cutoff returns so detection still happens when entries are suppressed) is NOT yet applied and is the highest-value remaining followup. Also unapplied: surfacing gate.patterns_half and state.exit_pass in web/live_cross.html. One trait worth knowing: the atomic writers build their replacement with tempfile.mkstemp, which is 0600, so a rewritten History.csv becomes owner-only — harmless while everything runs as the same user, but relevant if anything is ever synced as another user. No TP, SL or hold period changed in either engine; the bumps are for entry- and exit-gate behaviour."
+    },
+    {
+      "version": "0.21.4",
+      "date": "2026-09-05",
+      "source": "live",
+      "title": "Atomic CSV writes + changelog version collision repaired",
+      "summary": "First changes out of a full-codebase audit. Several writers opened the real CSV in \"w\" mode, which truncates the destination before the replacement is known to be good — for History.csv and the per-stock OHLC bars that file is the only copy of data going back years. engine_common now offers the CSV counterpart of write_json_atomic so those call sites can stop destroying their own input. Separately the ledger itself had rolled backwards: 0.20.0 and 0.20.1 each labelled two different builds.",
+      "files": [
+        "lib/engine_common.py",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "NEW, lib/engine_common.py write_text_atomic(path, text): writes to a temp file in the same directory, fsyncs, then os.replace()s it onto the destination — the CSV counterpart of write_json_atomic(). The destination is only ever the old file or the complete new one, so an empty upstream fetch, a raised parser or a crash mid-write can no longer leave it short or empty.",
+        "NEW, lib/engine_common.py write_rows_atomic(path, rows): the same guarantee for an iterable of row-sequences, routed through csv.writer so callers stop hand-joining fields and losing quoting on company names containing a comma.",
+        "CHANGELOG.json: app_version was 0.20.1 while entries already reached 0.21.1, and the two most recent entries had reused 0.20.0 and 0.20.1 — so each of those version strings labelled two different builds. Renumbered them to 0.21.2 and 0.21.3 in date order and set app_version to 0.21.4. Verified safe first: no closed trade or open position in any of the three wallets is stamped with either colliding version (the highest stamp anywhere is 0.16.6), so no trade-to-entry link is broken by the renumber."
+      ],
+      "strategy_bumps": {},
+      "notes": "No engine parameter, gate or detector changed, so no strategy_version bump. The new writers are additive — nothing calls them yet; the call sites that currently truncate (lib/infoScrapper.py sync_history, lib/webScrapper.py update_csvs, lib/ohlc_capture.py) are converted in the audit-fix batch that follows."
+    },
+    {
+      "version": "0.21.3",
+      "date": "2026-09-05",
+      "source": "live",
+      "title": "Live Cross weekend tick no longer republishes Friday's gate reason",
+      "summary": "Caught on the page while verifying the top-up: on a Saturday the Cross page read 'No entry pass right now. no Friday entries.' The x-4 weekend early-return wrote entry_gate but not last_entry_gate, and the page reads `last_entry_gate || entry_gate`, so it rendered the previous trading day's reason under a fresh last_run. Stale behind a fresh clock — the same shape as the frozen-prices bug, introduced by the very change whose comment warns about it.",
+      "files": [
+        "live_cross.py"
+      ],
+      "changes": [
+        "live_cross.py: the no-open-positions early return now writes the same gate dict to BOTH entry_gate and last_entry_gate, and clears last_skipped and pending_candidates. Previously only entry_gate moved, so the page kept showing whatever the last full run had left in last_entry_gate — on 2026-09-05 (a Saturday) that was Friday's 'no Friday entries'.",
+        "The gate dict on that path now carries the same shape as the full-run one (open / reason / signals_half / date / checked / entries) rather than a shorter variant, so the page's renderer cannot hit an undefined field depending on which path wrote it.",
+        "Verified against the live LaunchAgent: the 15:02 tick wrote reason 'weekend' dated 2026-09-05 with last_skipped [], where the 14:59 tick had left reason 'no Friday entries' dated 2026-09-04."
+      ],
+      "strategy_bumps": [],
+      "notes": "Display-only — no gate decision, entry or exit changed, and the deposit written earlier survived this and two prior ticks intact. Worth recording rather than folding into 0.20.0 because it is a defect in the x-4 rebuild, not part of the wallet top-up."
+    },
+    {
+      "version": "0.21.2",
+      "date": "2026-09-05",
+      "source": "live",
+      "title": "Live Cross wallet topped up to 1M; deposits scripted",
+      "summary": "Cross is the A/B arm over the Signals wallet since x-4, and the two must be able to hold the same book for the comparison to mean anything. Signals' normal conviction sizes at 70k target / 85k cap against 1M contributed; Cross had identical sizing against 500k, so it could carry roughly half as many concurrent positions and would have been forced to skip entries the arm it is measured against had taken — a capacity difference masquerading as a signal difference. Third hand-run top-up in three weeks, so the operation is now a script with the guards the other two were done without.",
+      "files": [
+        "scripts/deposit.py",
+        "state/live_cross_portfolio.json"
+      ],
+      "changes": [
+        "state/live_cross_portfolio.json: cash 490,530.54 -> 990,530.54, wallet_start 500,000 -> 1,000,000, and a deposits[] audit row. All three move together — bumping cash alone makes a top-up read as profit on all five consumers at once (every one computes return as equity/wallet_start), and bumping wallet_start alone silently dilutes the recorded return of past trades.",
+        "scripts/deposit.py: new. Dry-run by default, backs up to state/backups/ before writing, and refuses to write while an engine run is in flight — write_json_atomic prevents a torn write, not a lost update, and Cross's own engine rewrites this file every 3 minutes even on a weekend tick. Same engines_running() check as scripts/retighten_stops.py. Positive amounts only; it does not withdraw.",
+        "scripts/deposit.py prints the return% before and after and says plainly why it moves: -1.89% -> -0.95% here with the P&L unchanged at -9,469 SEK. The deposit is correctly not counted as profit, but trades already closed are diluted by capital that never funded them, so the equity tile flatters a topped-up wallet. Both prior top-ups did this silently. Judge the strategy on the per-trade record, not on that tile.",
+        "No strategy_version bump, following the precedent of the Patterns top-up in 0.13.0 and the Signals top-up in 0.17.0: TP, SL, hold period, entry gate and detectors are all untouched. Capacity is not a strategy parameter in this scheme — though it is the reason for the deposit, so it is recorded here rather than only in the state file's note."
+      ],
+      "strategy_bumps": [],
+      "notes": "Cross has still not had a tradeable day under x-4. It shipped Thursday 2026-09-03 after Signals had already stamped last_entry_scan_date, Friday the 4th was blocked by the no-Friday rule (gate logged 'no Friday entries' with signals_half 'ok', so the last_signal_hits contract is working), and the 5th is a Saturday. First real close-confirmed pass is Monday 2026-09-08. The wallet therefore has 0 open positions and was in no way cash-constrained at 490k — this top-up is for capacity parity with the Signals arm, not to unblock anything. Verified the write survived the next two engine ticks rather than being clobbered."
+    },
+    {
+      "version": "0.21.1",
+      "date": "2026-09-05",
+      "source": "live",
+      "title": "Open-position snapshot push (scripts/notify_open_positions.py)",
+      "summary": "The Settings Test button sends invented data, which proves the plumbing but says nothing about how a real position reads on a phone. This pushes the actual book — one message per open position across all three wallets.",
+      "files": [
+        "scripts/notify_open_positions.py",
+        "lib/notify.py"
+      ],
+      "changes": [
+        "NEW, scripts/notify_open_positions.py: one push per open position with its real numbers — unrealized return and P&L, share count, entry price -> current quote (flagged if the quote is stale), TP/SL, exit-by date, buy timestamp and how long it has been held. Read-only over the three wallet files, so it is safe to run while the engines are mid-tick. Takes --dry-run to print without sending.",
+        "Phrased as a snapshot, never a fill: 'holds', with a 🧪 marker. queue_buy/queue_sell put 'bought'/'sold' in the title, which on a phone means money moved — a snapshot borrowing that shape would be indistinguishable from a real trade.",
+        "notify.queue_message(title, lines, tag, priority) added for messages that are neither a fill nor an exit. The two trade builders stay the canonical shapes; this caller titles its own.",
+        "ntfy tag is green_circle / red_circle by whether the position is currently in profit, so the phone's list is readable without opening anything."
+      ],
+      "notes": "Ran live against the current book: 3 Signals positions (Stora Enso R +1.62%, SCA B +1.71%, Holmen A +0.93%), 3 sent / 0 failed via both sinks, and confirmed server-side by polling the ntfy topic back. Also confirmed while checking the book that the 0.21.0 engine wiring is running clean under launchd — no crash lines in any of the three engine logs since the change, and live_patterns' stale last_run is only its pre-existing weekend early-return, which skips save_state."
+    },
+    {
+      "version": "0.21.0",
+      "date": "2026-09-04",
+      "source": "live",
+      "title": "Trade notifications — one macOS banner + ntfy push per fill, sent by the engines",
+      "summary": "Until now a fill was only discoverable by opening a page. The engines now announce every buy and sell as it happens: a macOS banner while you're at the Mac, and an ntfy push that reaches the phone. Two sinks, independently toggled from Settings, both fail soft — a notification must never be the reason a trade doesn't get booked.",
+      "files": [
+        "lib/notify.py",
+        "live_signals.py",
+        "live_patterns.py",
+        "live_cross.py",
+        "app.py",
+        "web/settings.html",
+        "web/help.html"
+      ],
+      "changes": [
+        "NEW, lib/notify.py: queue/flush notifier with two sinks. macOS via osascript; ntfy via its JSON publish API — deliberately NOT the header API, because ntfy passes Title/Tags as HTTP headers (latin-1) and half the Stockholm tape is names like 'Gränges', which would either mojibake or raise. Verified round-trip by polling the topic back: titles, arrows and the '−' minus all survive.",
+        "One notification per fill, per the user's choice over batching. Buy: engine, ticker, size, fill price, cost, TP/SL, exit-by date, and the pattern for Patterns/Cross entries. Sell: return, exit reason, P&L, both prices, hold duration. macOS takes the first body line as the banner subtitle (more room there than the body); ntfy takes every line, since a phone's list shows title + first line. SL pushes go at priority 4, everything else 3.",
+        "WIRING, sells: notify.queue_sell() sits in apply_exit_checks (live_signals.py) — the single point all three engines book an exit through, so TP/SL/TIMEOUT/MANUAL/STALE are all covered by one call. It gained an `engine` kwarg purely to label the message; live_patterns and live_cross pass their own key. Buys are wired at all four entry sites: Signals' signal entry, Signals' user-limit-order fill, Patterns' pattern entry, Cross' confluence entry.",
+        "DELIVERY ORDER, deliberate: events are queued during the run and flushed only AFTER save_state(). A crash between the fill and the flush loses a notification; notifying first and crashing before the save would announce a trade that never happened. Losing one is recoverable by looking at the page, inventing one is not. flush() drains its queue (so it is idempotent) and is also registered with atexit, which covers the engines' many early-return paths and the EOD sweep, which sells well before main() reaches its final save.",
+        "FAIL-SOFT: every send is wrapped, the network sink has a 4s timeout, and a whole flush is capped at 30s — the engines tick every 180s and the 2026-08-24 record pass opened 17 positions at once, so a burst of pushes must not be able to run into the next tick. Anything past the cap is dropped with a log line. 'ntfy enabled but NTFY_TOPIC unset' is called out explicitly in the run log rather than failing silently.",
+        "CONFIG: a `notifications` block in state/settings.json (enabled / macos / macos_sound / ntfy / ntfy_server), edited from a new Settings card whose toggles post one key at a time and are merged server-side. New GET /notify-status reports which sinks are LIVE (including whether .env carries a topic) and POST /notify-test fires one specimen buy + sell through each — the only way to confirm the macOS side, which fails silently when Script Editor is not allowed in System Settings -> Notifications.",
+        "SECURITY: the ntfy topic name is the only credential — it grants both read of your trades and publish to your phone — so it lives in .env (gitignored) and NOT in settings.json, which /get-settings hands to anything that can reach the web app over LAN/Tailscale. /notify-status reports `ntfy_topic_set: true|false` and never the value. A random 20-char topic was generated into .env; rotate it there and re-subscribe if it leaks.",
+        "DOC, help.html gained a Trade Notifications section distinguishing these from the pre-existing stock-page price Alerts (hand-set thresholds that only fire while that page is open)."
+      ],
+      "notes": "Verified: message formatting and AppleScript escaping (a ticker containing quotes and a backslash), per-engine sell labelling through synthetic TP/SL/no-trigger states with both sinks stubbed, /notify-status and /notify-test through the running server, and the ntfy topic polled back to confirm server-side delivery with UTF-8 intact. The launchd path — the one the Test button cannot exercise, since the engines run under a LaunchAgent rather than a terminal — was tested with a one-off `launchctl submit` job: osascript exited 0, so a banner does post from engine context. Whether macOS DISPLAYS it still depends on Script Editor's notification permission, which only the user can confirm by eye."
+    },
+    {
+      "version": "0.20.1",
+      "date": "2026-09-04",
+      "source": "live",
+      "title": "Recent trades in the floating live widget — the 0.20.0 feed, compressed to 220px",
+      "summary": "The trade feed only existed on a page the widget exists to save you from opening. This is the same data at sidebar scale: the six most recent exits, two dense lines each, on every non-live page.",
+      "files": [
+        "web/live_widget.js",
+        "web/style.css",
+        "web/live_overview.html"
+      ],
+      "changes": [
+        "FEATURE, live_widget.js 'Recent trades': the six newest exits across all three wallets. Line 1 is the engine dot + ticker + return + a short exit-reason tag (TIMEOUT -> TIME, MANUAL -> MAN, since the full word is a third of the row width); line 2 is the two fill prices and the exit clock as MM-DD HH:MM. The row tooltip carries what the row cannot: engine, share count, both full timestamps with their prices, and P&L in SEK.",
+        "The widget block shows CLOSED trades only, unlike the overview feed. Its 'Open positions' block two rows up already lists every open position with a live return, and re-stating them would spend a third of a 220px sidebar on a duplicate. The open rows instead gained their buy timestamp in the tooltip, which the widget never carried before — so 'when did we buy this' is now answerable from either block.",
+        "Footer links to the full feed ('+169 more in the full feed →'), anchored at the new #trade-feed id on the overview with a scroll-margin so the card doesn't land flush against the viewport top.",
+        "The reason tag reuses the shared .reason-* palette promoted in 0.20.0, at 8.5px with 4px side padding rather than the table pill's 8px — at full padding the tag pushes the return percentage off the row.",
+        "Timestamps are string-sliced, never Date-parsed: the engines write local wall-clock stamps with no timezone, so parsing and reformatting them can shift the displayed hour by the UTC offset."
+      ],
+      "notes": "Rendered headlessly on the dashboard at 1500px: 6 rows + '+169 more', colours and reason tags correct, longest ticker in the set (Avanza Bank Holding) fits without clipping the return. The widget is still hidden below 1360px viewport width."
+    },
+    {
+      "version": "0.20.0",
+      "date": "2026-09-04",
+      "source": "live",
+      "title": "Trade feed on the Live Overview — every buy and sell across all three wallets in one table",
+      "summary": "The overview summed the three wallets but never listed what they actually traded: answering \"what did we buy this week, and what did it sell for\" meant opening three tabs and reading three closed-trades tables, each sorted only within its own engine. The feed puts all 178 positions in one chronological table with the engine on every row. No engine or strategy logic touched — this reads existing state, nothing new is computed or stored.",
+      "files": [
+        "web/live_overview.html",
+        "web/live_common.js",
+        "web/style.css",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html"
+      ],
+      "changes": [
+        "FEATURE, Live Overview 'Trade feed': one row per position across Signals + Patterns + Cross, newest activity first. Columns: ticker, engine pill (coloured to match the equity-curve legend and linking to that engine's page), strategy version, buy price + timestamp, sell price + timestamp, shares, hold, return, P&L, exit reason. All of it was already in the three portfolio states (entry_ts/exit_ts have been stamped since the engines were built); nothing new is persisted.",
+        "Open positions are included deliberately, marked with an accent edge, an OPEN pill and a '~' on return/P&L. A feed that only shows a position once it closes hides the current day's activity, which is the part most worth seeing — but their exit side is the last live quote rather than a fill, so it must never read as booked P&L. The feed's own 'realized' total counts closed rows only.",
+        "Filter chips for engine (All/Signals/Patterns/Cross) and status (All/Open/Closed), paginated 10 per page like every other live table. Changing a filter resets to page 1; the 2-minute auto-refresh does not, so it can't yank the reader off page 4 mid-read.",
+        "BUGFIX, css specificity: '.sig-table td' (0,1,1) outranked '.up' / '.down' (0,1,0), so the Return and P&L columns on EVERY live page had been rendering in the default near-black instead of green/red — the one thing those columns exist to show. Restated as '.sig-table td.up/.down' using the --positive/--negative tokens, so a green number and a green TP pill on the same row are now the same green.",
+        "SHARED, '.sig-table .mobile-hide { display: none }' promoted from three byte-identical per-page copies (signals/patterns/cross) into style.css's 720px block. The overview never had a copy, so its 10-column feed kept every column on a phone until this moved. Same rule, same breakpoint — desktop rendering of the other three pages is unchanged.",
+        "SHARED, exit-reason pills: '.reason-MANUAL' promoted out of live_cross.html (the only page that styled it) into style.css, plus new '.reason-STALE' (amber — an outage artefact, not a strategy exit) and '.reason-OPEN' (outlined, so it reads as not-yet-final). The feed shows all three engines' reasons, and MANUAL/STALE were rendering as unstyled pills on Signals and Patterns.",
+        "makePager() in live_common.js gained reset() and an optional function-valued emptyMsg, so the feed can distinguish 'No trades yet' from 'No trades match these filters' — Cross has no open positions, and the two states read identically otherwise."
+      ],
+      "notes": "Verified against live state on a spare port (:8791): 178 rows (175 closed + 3 open) across the three wallets, engine/status chips and pagination exercised headlessly, mobile-hide confirmed active at 700px with no page-level horizontal overflow."
+    },
+    {
+      "version": "0.19.0",
+      "date": "2026-09-03",
+      "source": "live",
+      "title": "Live Cross rebuilt as a pattern-confirmed Signals arm (x-4) and re-enabled",
+      "summary": "Cross was paused on 2026-08-18 for 'inverting Patterns' edge'. Checking that reason did not survive contact with the data — it compared disjoint windows — but the audit turned up a worse defect underneath: the engine had never tested the gate it claimed to. Its Signals half was the entire radar, and its Patterns half consumed pattern fires upstream of live_patterns' own confluence gate, so 21 of its 23 scored trades were solo fires Patterns itself refuses to trade. Rebuilt around a question that is actually testable: does a fresh multi-pattern fire improve a sig-10 setup? Same params as Signals, same close-confirmed fill, one extra condition, read side by side.",
+      "files": [
+        "live_cross.py",
+        "live_signals.py",
+        "app.py",
+        "web/live_cross.html",
+        "web/help.html"
+      ],
+      "changes": [
+        "AUDIT, why the x-2 pause reason was wrong: it cited Tweezer Bottom at 69.2% WR (n=13) in Patterns against 25.0% (n=8) in Cross. The Patterns sample is entirely 2026-05-27..06-10 under pat-1; Patterns traded ZERO Tweezer Bottoms in August. Over the window Cross was actually alive (entries Aug 1-18) Patterns ran 36% WR / -3,136 SEK (n=11) against Cross's 43% / -6,674 (n=23) — Cross had the HIGHER win rate. Patterns' strong August (78% WR, +16,959) is all Aug 19-31 under pat-3/pat-4, after Cross was already paused. At n=23 against a 50% break-even the -6,674 is inside noise either way; the case against the old engine is the mechanism, not the P&L.",
+        "AUDIT, the real defect: live_patterns.py builds pattern_fires (line ~422) and publishes recent_pattern_fires (line ~550), but applies CONFLUENCE_REQUIRED downstream in its entry loop (line ~444). live_cross read the published list and never inherited the gate. It DID inherit ENTRY_DISABLED_PATTERNS, since those are stripped from each fire's `patterns` upstream — so the docstring claim that Cross 'inherits pattern logic automatically' was half true in a way that hid the half that mattered.",
+        "live_signals.py: new state[\"last_signal_hits\"] + state[\"last_signal_hits_meta\"], published next to last_universe/last_watchlist. The names that PASSED signal_check on the run, each with dod / ret_20d / tier / insref / last, plus a meta block carrying the trade date and whether the run was the close-confirmed pass or an intraday one. Pure addition — no engine behaviour changes.",
+        "live_cross.py: signals_radar() (last_universe union last_watchlist, ~400 names) replaced by signals_hits(), which consumes last_signal_hits and refuses it outright if it is not from today or not from a close-confirmed pass. An intraday hit is evaluated against a mid-session quote and routinely evaporates by 17:30; a stale one would enter on yesterday's down day against today's price.",
+        "live_cross.py: an intraday hit-set is still returned, with every row marked provisional, so the page shows the day taking shape instead of sitting empty through every market hour. Provisional rows carry a skip reason and therefore cannot enter — the entry path only ever iterates unblocked candidates. A hit-set from a PREVIOUS day is refused outright rather than made provisional; the failure there is staleness, not timing.",
+        "live_cross.py: confluence gate added, reading CONFLUENCE_REQUIRED / CONFLUENCE_MIN_COUNT off live_patterns rather than restating them, so the two engines cannot drift. Solo fires and Hammer-only fires now surface as blocked candidates with the reason, not as tradeable ones.",
+        "live_cross.py: TP_PCT 0.020 -> 0.030 and SL_PCT -0.020 -> -0.010, mirroring sig-10. Break-even WR on this wallet moves from 50.0% to 25.0%. Cross had been on the pre-2026-08-24 pair for ten days on the strength of a docstring claiming all three engines were held identical, which stopped being true when Signals reverted its stop.",
+        "live_cross.py: AUTO_ENTRY. The approval flow is gone — a human choosing which candidates to approve makes the record a measure of that choosing rather than of the gate, which defeats the point of an arm. Candidates are ranked most-negative-DoD first, matching live_signals' own ranking, so that when cash runs out both wallets have spent it on the same names.",
+        "live_cross.py: ENTRY_AT_CLOSE + a Cross-local close_confirmed_entry_ready(). Deliberately not live_signals' copy: that one reads last_ohlc_capture_date off the state it is handed and only Signals captures OHLC, so Cross tracks its own last_entry_scan_date but borrows the feed-settled proof from the Signals state. The fill takes lq['last'] (the confirmed close), not the ask — same reasoning as live_signals:1225.",
+        "live_cross.py: the market-closed early return is gone. A post-close tick now falls through into the scan exactly as live_signals does; a run with open positions always reaches apply_exit_checks even when the entry gate is shut, and only a run with an empty book returns early.",
+        "live_cross.py: CROSS_WALLET_DEDUPE True -> False, and this one is load-bearing rather than incidental. Cross's whole question is what happens to a sig-10 setup that Signals is ALSO taking; deduping against the sibling wallets would block exactly the overlap being measured. This is the same collision that makes a strict-confluence Cross unrunnable — Patterns runs one step earlier in the same chain and takes the name first. Accepted cost: the aggregate book can hold one company twice, so concentration has to be read across all three wallets rather than per wallet.",
+        "live_cross.py: within-run stem dedupe added. compute_candidates snapshots held_stems once, before any of the day's fills, so under auto-entry a pass that bought Electrolux A could have bought Electrolux B three iterations later. Under the old approval flow this could not happen often enough to notice.",
+        "live_cross.py: state[\"last_skipped\"] + state[\"last_entry_gate\"] written at the end of the run, next to last_run, following the live_patterns contract. last_entry_gate carries a separate signals_half field because the gate can be wide open while the Signals half is unavailable — two independent failures that both empty the candidate table.",
+        "web/live_cross.html: Approve button, toggleApprove(), approvedSet and the /live-cross-approved fetch removed. Candidates gain DoD and 20d columns (the sig-10 numbers behind the Signals half, so the page shows WHY Signals liked the name) and blocked names stay listed with their gate. setBreakeven(0.020,-0.020) -> (0.030,-0.010), moving the win-rate colour threshold from 50.0% to 25.0%.",
+        "web/live_cross.html: new #gate-notice banner. It fires when the entry gate is shut OR when the Signals half is unavailable, independently — reporting only the gate would render an unavailable Signals half as a quiet 'No candidates right now', which is the exact silent-failure shape this project keeps hitting.",
+        "app.py: GET /live-cross-approved removed; POST answers 410 with an explanation rather than 404 or silence, so a stale cached page gets an error it can show instead of writing to a file no engine reads. _json() gained an optional status argument.",
+        "web/help.html: the Exits block still said 'Target +2.0%' after sig-10 raised it this morning; corrected to +3.0% and both target and stop now name which engines they apply to."
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "cross",
+          "from": "x-3",
+          "to": "x-4",
+          "why": "New entry gate (sig-10 signal hit AND 2+-pattern fire, replacing radar-membership AND any fire), sig-10 TP/SL, auto-entry, close-confirmed fill, cross-wallet dedupe off. Every tradeable parameter changed."
+        }
+      ],
+      "notes": "The 27 closed x-1 trades are left untouched and stay in the record as the evidence base — they are not comparable to what x-4 will produce and the By version panel already separates them. No open positions existed at the time of the change, so no stop migration was needed and scripts/retighten_stops.py was NOT run. Verified by driving compute_candidates over ten synthetic upstream states (confluence fire enters; solo fire blocked; Hammer-only blocked; fire on a non-signal name yields no candidate; yesterday's and intraday hit-sets both refused; DoD ranking with blocked names sinking last; already-held dropped; a name held by Signals still enterable; and the three close-confirm gate branches), by importing app.py on port 8791 (background threads are __main__-only, so :8765 was untouched) and probing the retired routes, and by rendering /live-cross headless. The LaunchAgent picked the new code up mid-session at 23:04 and behaved correctly: it opened the close-confirmed pass, found signals_hits=0, logged 'signals has not published last_signal_hits yet' and entered nothing. That is expected for today only — Signals had already stamped last_entry_scan_date before last_signal_hits existed, so the first real Cross pass is tomorrow's close."
+    },
+    {
+      "version": "0.18.0",
+      "date": "2026-09-03",
+      "source": "live",
+      "title": "Signals retuned to TP +3% / DoD <= -2% (sig-10); stop stays at -1%",
+      "summary": "Started from 'the stop is too short, widen it to -2%' and ended somewhere else. Two independent backtests (11 years of daily closes, n=68,905; true tick-order fills from 3.4M minute prints, n=2,723) say the stop level is not a lever — under real intraday fills the curve is a shallow U, and the -2% era of this very wallet lost 16,025 SEK against the -1% era's +1,638. The levers are the take-profit (+2% -> +3%) and the entry threshold (DoD -1% -> -2%), each monotonic and each replicating on both samples. Together they take modelled return from +0.143% to +0.231% per day of held capital, positive in all 11 years.",
+      "files": [
+        "live_signals.py",
+        "web/live_signals.html",
+        "web/live_common.js",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "live_signals.py: TP_PCT 0.020 -> 0.030 and DOD_THRESHOLD -0.010 -> -0.020, each with the two-sample evidence recorded inline. SL_PCT left at -0.010 with a note on why the re-test cleared it.",
+        "live_signals.py: signal_check() docstring records that condition 2 (not at the 5-day high) is UNREACHABLE — condition 1 already forces today's close below yesterday's, and yesterday is inside the 5-day window, so `today_p >= hi5` cannot hold for a passing candidate. Verified: the 11-year backtest returns byte-identical results with the check on and off (n=68,905 either way). Left in the code because removing it changes nothing and it documents the original filter.",
+        "web/live_signals.html: setBreakeven(0.020, -0.010) -> (0.030, -0.010), moving the win-rate colour threshold from 33.3% to 25.0%. Without this the page would have graded a correctly-performing sig-10 book as failing.",
+        "web/live_signals.html: strategy subtitle now reads TP +3% / DoD <= -2% so the page states the parameters actually in force.",
+        "web/live_common.js: the trade-scoring comment claimed all three engines run +2/-2. Corrected — Patterns and Cross are +2/-2 (50% break-even), Signals is now +3/-1 (25%)."
+      ],
+      "strategy_bumps": {
+        "signals": "sig-9 -> sig-10"
+      },
+      "notes": "The 6 open positions are untouched and will settle on sig-9 terms: exits read each position's own stored tp/sl (live_signals.py:673), not the module constants, so no migration was needed and scripts/retighten_stops.py was NOT run. Verified by importing live_signals on a spare interpreter (background threads are __main__-only, so :8765 was untouched) and driving signal_check() directly: -0.5%/-1.0%/-1.5% now correctly reject, -2.0%/-2.5%/-3.0% pass, and a -3% Monday passes while a -3% Friday still fails. Python syntax checked with ast.parse and live_common.js with node --check. No engine run was in flight at the time of the edit (last_run 20:34Z, no live_signals.py process). Known limitation, pre-existing: the win-rate pill grades the wallet's all-time WR against a single break-even, so while the book mixes sig-9 (33.3%) and sig-10 (25.0%) trades that one number is approximate — the per-version table is the accurate read. Same situation as the 2026-08-24 stop change; not re-architected here."
+    },
+    {
+      "version": "0.17.1",
+      "date": "2026-09-03",
+      "source": "live",
+      "title": "Open positions now looks the same on all three live pages",
+      "summary": "Patterns and Cross pick up the Spread column and stale-quote marker that Signals gained in 0.16.9, and Cross additionally gets the sector tag, sector-concentration block and Exit-by entry timestamp it never had. The grading logic moved into the shared layer so there is one implementation, not three.",
+      "files": [
+        "web/live_common.js",
+        "web/style.css",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html"
+      ],
+      "changes": [
+        "web/live_common.js: new spreadInfo() / spreadCell() / staleMark() plus SPREAD_WARN (0.25) and SPREAD_BAD (0.50). The spread is graded against each position's OWN tp/entry distance rather than a fixed 2%, so it stays correct on an engine with a different target. staleMark() keys off source === 'stale', which build_quote_snapshot() sets identically on all three engines regardless of their source_label.",
+        "web/style.css: .sig-table td.warn / td.neg, .q-stale and .sig-table .exit-cell moved here. They were inline in live_signals.html (and .exit-cell duplicated again in live_patterns.html) - now defined once.",
+        "web/live_signals.html: refactored onto the shared helpers; its inline copies of the CSS and the ~15-line spread computation are gone. Rendered output is unchanged (still 13 columns).",
+        "web/live_patterns.html: added the Spread column and the stale marker; colspan 13 -> 14. Its renderer now keeps the whole quote object instead of pulling .last out of it.",
+        "web/live_cross.html: brought fully to parity - Sector column (sectorPill) with loadSectors() added to refresh(), Spread column, stale marker, the conc-wrap sector-concentration block and render, and the Exit-by cell now shows the entry timestamp beneath the date like the other two. colspan 12 -> 14.",
+        "Cross's positions carry cost_sek (live_cross.py:466), so the concentration block computes correctly; its closed trades do not, but that block only reads open positions."
+      ],
+      "notes": "Patterns and Cross both had ZERO open positions at the time of the change (Patterns' two closed that day, Cross has been entry-paused since 2026-08-18), so the real pages could only exercise the empty state. Verified the row rendering by driving each page's own renderPortfolio() through CDP with a synthetic four-position book chosen to hit every branch: a 1.11% spread (grades .neg at 56% of target), 0.93% (.warn at 47%), 0.05% and 0.08% (plain), and one quote tagged source:'stale'. All three pages produced identical results - correct cell counts (13 signals / 14 patterns / 14 cross), correct grading and tooltips, the stale marker on the right row, four sector pills, four concentration rows, no horizontal overflow (table 1154px inside the 1200px card) and uniform 51px exit cells, i.e. no date wrap at 14 columns. Confirmed separately that the real empty state renders with colspan matching the new header count on both pages."
+    },
+    {
+      "version": "0.17.0",
+      "date": "2026-09-03",
+      "source": "live",
+      "title": "Manual buy path removed from Signals; wallet topped up to 1M",
+      "summary": "New signals and Pending orders are gone - the two halves of the manual buy-limit feature - so Signals now has no manual entry path at all. The wallet was topped up by 500,000 SEK so the engine has the headroom to act on its own signals instead of skipping them for lack of cash.",
+      "files": [
+        "web/live_signals.html",
+        "state/live_portfolio.json"
+      ],
+      "changes": [
+        "web/live_signals.html: removed the New signals card and, with it, Pending orders. These are one feature, not two: the engine NEVER creates a limit order (consume_limit_orders only ever removes them) - the sole creator was the UI POST to /live-limit-orders from New signals. With that gone, Pending orders could never populate again, so leaving it would have meant a permanently empty tab plus dead JS.",
+        "web/live_signals.html: removed the seven functions behind the feature (setPriceDraft, toggleLimitOrder, cssId, buyLimitCell, buyActionCell, renderPendingSignals, renderPendingOrders), the newsigPager, the /live-limit-orders fetch in refresh(), the lastLimitOrders and pendingPriceDrafts state, and the .approve-btn / .limit-price-input CSS. Nothing else referenced any of it.",
+        "state/live_portfolio.json: cash 81,117.59 -> 581,117.59 and wallet_start 500,000 -> 1,000,000, with a `deposits` audit entry. Both fields move together so engine_common.wallet_start() measures return against contributed capital and the top-up does not read as profit - the equity tile shows -1.35% of 1M, not +100%. Written atomically (tempfile + os.replace) after confirming no engine run was in flight; verified the deposit survived the next live 3-minute run.",
+        "app.py untouched: /live-limit-orders still exists but is no longer reachable, and state/live_limit_orders.json is {} with nothing able to add to it."
+      ],
+      "notes": "Signals page is now Open positions, SL cooldown, Closed trades, Latest run log, By version. IMPORTANT measured context for the top-up, which doubles the capital behind the strategy: over the 63 scored trades the wallet's expectancy is -140 SEK/trade. Avg win +1,245 (+1.79%), avg loss -936 (-1.35%), payoff 1.33, so break-even needs a 42.9% win rate against an actual 36.5%. The cause is NOT the win rate - it is that losses average -1.35% against a stop set at -1.00%, i.e. a third worse than the stop implies (slippage/gap-through, exits only checked once per 3-minute run). At a true -1.00% average loss the break-even would be 35.8% and the strategy would be marginally positive. Also corrects a stale claim from the 2026-06-13 audit: the +2% TP DOES fire - 17 times for +23,671 SEK - against only 6 MANUAL clips (+4,970). Separately, 4 STALE exits cost -5,596 at -2.00% avg and are excluded from the scored set. Note the equity tile's return improved from -2.70% to -1.35% purely because the denominator doubled; the absolute loss is unchanged."
+    },
+    {
+      "version": "0.16.9",
+      "date": "2026-09-03",
+      "source": "live",
+      "title": "Live quotes folded into Open positions as a Spread column",
+      "summary": "The standalone Live quotes table is gone. The two things it showed that appeared nowhere else - the bid-ask spread and the 'stale quote' tell - now live on the Open positions row instead. Display only; no engine, gate or strategy change.",
+      "files": [
+        "web/live_signals.html"
+      ],
+      "changes": [
+        "web/live_signals.html: Open positions gains a Spread column (num, mobile-hide) between Now and P&L, showing (ask-bid)/last unsigned. It is graded against the position's OWN TP distance rather than a hardcoded 2%: .warn (amber) at 25%+ of that distance, .neg (red) at 50%+. The cell's title carries the raw bid/ask, the day's move and the share-of-target, so nothing the old table displayed is lost.",
+        "web/live_signals.html: the Now cell gains a 'stale' marker when last_quotes[t].source === 'stale'. That is engine_common.build_quote_snapshot keeping the previous good quote because the live fetch failed - previously the Source column was the ONLY place on the page that surfaced it, and Open positions would show a plausible-looking price with no indication it was behind.",
+        "web/live_signals.html: removed the Live quotes section, its makePager instance, quotesPageChange() and the quote-table renderer. p.last_quotes is untouched and still read by Open positions for the live Now price and P&L - only the display went.",
+        "web/live_signals.html: Open positions placeholders 12 -> 13 colspan, and the exit-by cell picked up the .exit-cell nowrap rule (same fix Patterns needed at 13 columns) so the ISO date does not break across two lines. Verified through CDP: table 1154px inside the 1200px card, no horizontal page scroll, all six exit cells a uniform 51px."
+      ],
+      "notes": "Motivated by what the numbers showed: against the +2% target, Alvotech SDB's spread is 1.11% (55% of the whole edge) and Holmen A's 0.93% (47%), while the other four positions sit at 0.04-0.09%. Both are large caps the engine auto-entered - the sig-8 liquidity gate screens median VOLUME, not spread, so nothing currently declines a name for a wide quote. This change only makes it visible; a spread gate would be a separate sig-10 decision. Signals page is now Open positions, New signals, Pending orders, SL cooldown, Closed trades, Latest run log, By version."
+    },
+    {
+      "version": "0.16.8",
+      "date": "2026-09-03",
+      "source": "live",
+      "title": "Watchlist signals and Near-misses removed — Signals is fully hands-off",
+      "summary": "Both manual entry paths are gone from /live-signals. The engine now trades only what it auto-enters from the 158-name large-cap primary universe. UI-only: no engine, gate or strategy change, so no strategy_version bump.",
+      "files": [
+        "web/live_signals.html",
+        "state/live_approved.json"
+      ],
+      "changes": [
+        "web/live_signals.html: removed the Watchlist signals card (#watchlist-body, #approved-summary), its makePager instance, watchlistPageChange(), renderWatchlist(), lastWatchlistHits and the p.last_watchlist_hits read.",
+        "web/live_signals.html: removed the Near-misses card (#nearmiss-body, #forced-summary), renderNearMisses(), nearmissRender(), lastNearMisses and the p.last_near_misses read.",
+        "state/live_approved.json: cleared ['ABB','SEB A'] -> []. Both are large cap, so they sat in `primary` and could never be promoted out of the watchlist - approvals that no code path could ever consume. Checked no engine run was in flight before the write.",
+        "KEPT the entry-source machinery: entrySource()/sourceLabel() still classify 'watchlist' and 'forced', tagFor() still appends the -WL suffix and emits tag-forced, and Pending orders still renders the Watchlist/Forced source pills. One historical closed trade IS a watchlist entry, so removing these would have mislabelled it in the Closed trades Source column.",
+        "KEPT buyLimitCell()/buyActionCell(), now used only by New signals: a large-cap signal that clears every gate but is not auto-taken (wallet under the 35k floor, or past the 16:30 cutoff) can still be bought by hand. That is the one remaining manual path and it does not bypass any filter.",
+        "app.py untouched. /live-approved and /live-force-entry still exist but are no longer reachable from the UI, and the engine's watchlist machinery (build_universe's mid/small split, load_approved, approved_promoted) is left in place - it simply resolves to an empty promotion set now."
+      ],
+      "notes": "Rationale, from the wallet's own record: across 67 closed trades the watchlist produced exactly 1 (0 wins, -1,400 SEK) and the near-miss override produced 0; 66 of 67 were auto. The manual watchlist approval existed as a human liquidity check on mid/small caps, and sig-8 automated exactly that - liquidity_verdict + apply_liquidity_cap (5% of median daily volume) run over `tradable = primary + approved_promoted` at live_signals.py:1197, capping size rather than only rejecting. Verified the door is genuinely shut: the only route from mid/small cap to tradable is approved_set, and the forced/near-miss override is applied inside `for t in tradable:` (live_signals.py:1054), so it can bypass the filter for an already-tradable name but cannot promote a tier. Deliberately did NOT auto-enable mid/small-cap auto-entry: that tier was never in the backtests. Signals page is now Open positions, New signals, Pending orders, Live quotes, SL cooldown, Closed trades, Latest run log, By version."
+    },
+    {
+      "version": "0.16.7",
+      "date": "2026-09-03",
+      "source": "live",
+      "title": "Toolbar removed from the Signals page",
+      "summary": "The Run now button and the market / lag / SPX pills and Last-run timestamp are gone from /live-signals, which now goes straight from the stat row into Open positions like Patterns and Cross already did. Display only - the engine is unchanged and still runs on its LaunchAgent tick.",
+      "files": [
+        "web/live_signals.html"
+      ],
+      "changes": [
+        "web/live_signals.html: removed the .section.toolbar markup (Run now + #pill-market/#pill-lag/#pill-spx/#meta-text), the .toolbar CSS rules and their mobile media-query line, the runNow() function, the market-pill branch inside renderLog(), and the meta/lag/SPX tail of renderPortfolio(). p.data_lag and p.us_context are no longer read anywhere on the page.",
+        "KEPT the .pill-on / .pill-off / .pill-warn / .pill-info colour rules, which sat inside the toolbar's comment block but are NOT toolbar-specific: the Filled / Queued / Skipped / Forced / Watchlist pills in the New signals and Pending orders tables use them and they are not defined in style.css. Removing them would have silently drained the colour out of those pills. Verified after the change that all three classes still render (Filled/Queued, Forced/Skipped, Watchlist). .pill-off is now unused but kept with the set.",
+        "Signals was the only live page with a toolbar; Patterns and Cross never had one. app.py's /live-run endpoint is left in place - it is simply no longer reachable from the UI.",
+        "CONSEQUENCE, accepted by the user: 'Sell now' on an open position only queues the request (app.py:1249 - the engine executes it on the next run via apply_exit_checks(force_sells=...)). With no Run now button, a queued sell waits for the next LaunchAgent tick instead of firing on demand. That tick is StartInterval 180 in com.alexanderb.live-signals.plist, i.e. every 3 minutes, so the wait is short - this matters because Signals' wins are manual clips at +0.8-1.7%, not booked +2% TPs."
+      ],
+      "notes": "Market status is still discoverable - the log panel's header line reads 'Market closed (Stockholm OMX 09:00-17:30 Mon-Fri)'. Genuine data-health problems still surface through the /live-health banner, which was visibly reporting 'EOD sweep - 1 trading day behind' during this change. The dropped SPX pill was self-documented as 'tape-regime context only, not used as a filter (smoketest 2026-05-23)'. Signals page is now: Open positions, New signals, Watchlist signals, Near-misses, Pending orders, Live quotes, SL cooldown, Closed trades, Latest run log, By version."
+    },
+    {
+      "version": "0.16.6",
+      "date": "2026-09-02",
+      "source": "live",
+      "title": "By version moves to the very bottom of all three live pages",
+      "summary": "The By version breakdown now sits below Latest run log on Signals, Patterns and Cross instead of mid-page. It is reference material rather than something to scan on every visit, so it belongs last. Pure markup move on all three - no engine, gate or strategy change.",
+      "files": [
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html"
+      ],
+      "changes": [
+        "web/live_signals.html: the .analytics-grid wrapper (which since 0.16.5 holds only By version) moved from between Closed trades and Latest run log to below the log. The whole wrapper travels rather than just the card, because it is the show/hide target in renderAnalytics().",
+        "web/live_patterns.html: the By version .section moved from between Blocked this run and Closed trades to below Latest run log.",
+        "web/live_cross.html: the By version .section moved from between Open positions and Closed trades to below Latest run log.",
+        "All three are pure reorders - verified by sorting each file before and after the move and diffing: byte-identical content, zero lines added, altered or removed. No JS needed touching; renderVersionBreakdown(engine, closed, 'version-body') binds by id, as does the analytics-grid show/hide, so section order carries no behaviour.",
+        "live_overview.html has no By version panel, so it needed no change (its Equity curve is a separate all-wallet chart and is untouched)."
+      ],
+      "notes": "Rendered all four live pages headless: By version is the last section on Signals, Patterns and Cross and still populates (6, 4 and 1 rows). Measured the bottom of the page through CDP - 18px gap below the log panel and 1200px width, matching every other card. Page orders are now Signals: Open positions, New signals, Watchlist, Near-misses, Pending orders, Live quotes, SL cooldown, Closed trades, Latest run log, By version. Patterns: Open positions, SL cooldown, Blocked this run, Closed trades, Latest run log, By version. Cross: Cross-radar candidates, Open positions, Closed trades, Latest run log, By version."
+    },
+    {
+      "version": "0.16.5",
+      "date": "2026-09-02",
+      "source": "live",
+      "title": "By conviction and By ticker panels removed from the Signals page",
+      "summary": "The last two of the four analytics panels the user asked to drop. By version is now the only breakdown left on /live-signals. Display only - no engine, gate or strategy change.",
+      "files": [
+        "web/live_signals.html"
+      ],
+      "changes": [
+        "web/live_signals.html: removed the By conviction and By ticker cards (#conviction-body, #ticker-stats-body), the renderConvictionBreakdown() and renderTickerStats() functions, and their two calls in renderAnalytics(), which now only calls renderVersionBreakdown().",
+        "KEPT tagFor() and its `info.conviction === 'high'` branch plus the .tag-std / .tag-std-high / .tag-deep-pb CSS: those drive the conviction TAG pills in the signals tables, which are a different feature from the By conviction breakdown. wrClass() also stays - it lives in live_common.js and still backs the Win rate stat tile and renderVersionBreakdown. Nothing became dead code.",
+        "The .analytics-grid wrapper is deliberately kept even though it now holds a single card: it is the show/hide target in renderAnalytics(), and By version is span-2 in a 1fr 1fr grid so it renders full width. Measured through CDP - 1200px, identical to the ordinary .section cards (Closed trades, Latest run log), so the lone-card grid is visually indistinguishable from a plain section."
+      ],
+      "notes": "Signals page is now: Open positions, New signals, Watchlist signals, Near-misses, Pending orders, Live quotes, SL cooldown, Closed trades, By version, Latest run log. Verified headless that none of the four removed panels appear in the DOM and that the survivors still populate: Equity tile 481 244 SEK, Win rate 33%, By version 6 rows, Closed trades 10 rows with 10 Source cells, tagFor() pills rendering."
+    },
+    {
+      "version": "0.16.4",
+      "date": "2026-09-02",
+      "source": "live",
+      "title": "Equity curve and By entry source panels removed from the Signals page",
+      "summary": "Two analytics panels dropped from /live-signals at the user's request. By version, By conviction and By ticker stay, as does the Equity stat tile at the top of the page and the Source column on the closed-trades table. Display only - no engine, gate or strategy change.",
+      "files": [
+        "web/live_signals.html"
+      ],
+      "changes": [
+        "web/live_signals.html: removed the #equity-card section (SVG curve + footer stats), the renderEquityCurve() function that built the cumulative-P&L polyline and computed peak/trough/max-drawdown, its call in renderAnalytics(), and the #equity-curve / .equity-stats CSS. renderAnalytics no longer show/hides that card, only the analytics grid.",
+        "web/live_signals.html: removed the By entry source panel (span-2 card + #source-body) and renderSourceBreakdown(). KEPT entrySource() and sourceLabel() plus the .src-auto/.src-user CSS - the Source column on the closed-trades table still uses all four, so deleting them would have blanked that column. Updated the helper comment that pointed at the now-gone breakdown.",
+        "The Equity stat tile (#stat-equity) is a separate thing from the equity curve and is untouched, as is live_overview.html's own equity curve, which sums all three wallets.",
+        "Analytics grid is now By version (full width) then By conviction / By ticker side by side; the grid is 1fr 1fr so removing a span-2 card just removes a row - verified no gap."
+      ],
+      "notes": "Verified by rendering headless: no equity-card/equity-curve/'By entry source'/source-body anywhere in the DOM; Equity stat tile still reads 481 244 SEK; By version 6 rows, By conviction 1, By ticker 47; the closed-trades Source column still populates. Measured the grid geometry through CDP to confirm the 2-up layout survived: By version 1200px full width, By conviction and By ticker 591px at x=50 and x=659."
+    },
+    {
+      "version": "0.16.3",
+      "date": "2026-09-02",
+      "source": "live",
+      "title": "Closed trades paginate 10 per page on every live wallet",
+      "summary": "Patterns and Cross were rendering only the 30 most recent closed trades with nothing on the page to reach the rest - Patterns had 75 and showed 30. Both now paginate 10 at a time like Signals, and the pager itself moved into the shared layer so there is one implementation instead of three.",
+      "files": [
+        "web/live_common.js",
+        "web/style.css",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html"
+      ],
+      "changes": [
+        "web/live_common.js: makePager() + PAGE_SIZE=10 moved here out of live_signals.html, so all three live pages share one paginator. Gained a pageSize parameter (defaulting to PAGE_SIZE) plus null-guards on the body and pager elements, since not every page has every table. setData(data, rowFn) caches the full array and the row renderer, so Prev/Next re-slice without re-fetching.",
+        "web/style.css: the .pagination / .page-btn / .page-info rules moved here from live_signals.html's inline <style> - Patterns and Cross needed them too. Declarations are unchanged; no other page uses these classes, so nothing else restyles.",
+        "web/live_patterns.html, web/live_cross.html: closed trades were `sorted.slice(0, 30).map(...)`, which silently hid every trade past the 30th. Both now build the full sorted array and hand it to closedPager.setData(); added the pagination footer markup and closedPageChange(). Row templates are byte-for-byte unchanged.",
+        "web/live_signals.html: dropped its inline pagination CSS, its local makePager, and the closedSortedCache/closedPage/CLOSED_PAGE_SIZE locals in favour of the shared ones. Bespoke renderClosedPage() became renderClosedTrades(), which delegates paging to the shared pager. Its page size was already 10, so behaviour is unchanged; its other three pagers (new signals / watchlist / quotes) also stay at 10.",
+        "live_overview.html has no closed-trades table, so it needed no change."
+      ],
+      "notes": "Verified by rendering all pages headless (10 rows each; footers read 61/7, 75/8 and 27/3 pages) and by a node harness over makePager covering the partial last page, clamping past both ends, the footer hiding at exactly 10 and showing at 11, the empty state, and re-clamping when the trade list shrinks under a user parked on a high page. Unrelated pre-existing bug spotted while checking /changelog: entry 0.16.0's strategy_bumps is a bare string where the renderer expects objects, and entries 0.13.0-0.15.0 carry the note under a 'why' key while changelog.html reads 'reason' - both print 'undefined' on the page. Not touched here."
+    },
+    {
+      "version": "0.16.2",
+      "date": "2026-09-02",
+      "source": "live",
+      "title": "Live Patterns open positions gains the sector tag and concentration stats",
+      "summary": "The Open positions card on /live-patterns now carries the same sector tag and sector-concentration bars as /live-signals, so a correlated book is visible on both wallets instead of only one. Display only - nothing gates on sector in either engine.",
+      "files": [
+        "web/live_patterns.html"
+      ],
+      "changes": [
+        "web/live_patterns.html: added a Sector column (sectorPill) to the Open positions table between Pattern and Ver, and the conc-wrap block with the sector-concentration bars below the table - both lifted verbatim from live_signals.html so the two cards stay in step. Placeholder colspans 12 -> 13.",
+        "web/live_patterns.html: refresh() now awaits loadSectors() alongside loadTiers()/loadVersions(). This was the actual prerequisite - sectorPill() reads the module-level sectorMap that only loadSectors() populates, so without it every pill would have rendered as an empty string with no error.",
+        "web/live_patterns.html: Exit-by cell now matches Signals (full-size target date plus the entry timestamp beneath it) instead of a lone small-text date. Added a .exit-cell nowrap rule because this table runs 13 columns against Signals' 12 - it has both Pattern and Sector - and the ISO date was breaking across two lines at the shared 1200px width.",
+        "No engine, gate or strategy change: sector is informational on both wallets. The 40%-of-invested-capital 'hot' bar is a display threshold only, matching engine_common.sector_concentration."
+      ],
+      "notes": "Patterns keeps Pattern as its own column, so its Open positions table has one more column than Signals'. Both currently show two red concentration bars simply because the wallet holds 2 positions, i.e. 50% each - that is the shared 40% display threshold, not a warning about a new condition."
+    },
+    {
+      "version": "0.16.1",
+      "date": "2026-09-02",
+      "source": "live",
+      "title": "Open positions moves to the top of the Live Signals page",
+      "summary": "The Open positions card on /live-signals now sits directly under the run toolbar instead of fifth in the stack, matching /live-patterns where it is already the first section. Pure markup move - no engine, gate or strategy change.",
+      "files": [
+        "web/live_signals.html"
+      ],
+      "changes": [
+        "web/live_signals.html: the Open positions section (table + the sector-concentration block that lives inside the same card) was cut from between Pending orders and Live quotes and reinserted immediately after the toolbar, so the page now reads Open positions -> New signals -> Watchlist -> Near-misses -> Pending orders -> Live quotes -> SL cooldown -> Closed trades. Finishes the Patterns-parity work started in 0.15.1, which restyled the cards but left the ordering alone.",
+        "No JS touched: every renderer on the page binds by id (open-body, conc-wrap), and the file has no nextElementSibling/insertBefore/parentNode traversal, so section order carries no behaviour. Verified by serving app.py on a spare port and rendering /live-signals headless - all 7 open rows, the sector bars and the New signals paginator (1-10 of 50) populate as before."
+      ],
+      "notes": "Signals keeps its run toolbar above Open positions; Patterns has no toolbar, so that row is the one intentional difference between the two layouts."
+    },
     {
       "version": "0.16.0",
       "date": "2026-08-31",
