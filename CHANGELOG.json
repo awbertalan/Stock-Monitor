@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "_readme": "Project changelog + version ledger. `app_version` bumps on every Claude-assisted change; `strategy_versions` bump ONLY when an engine's tradeable parameters, gates or detectors change. lib/version.py is the read API; the engines stamp these onto every position, so a trade can always be traced back to the code that opened it. Entries are newest-first. Entries with source='reconstructed' were rebuilt from session notes on 2026-08-21 (before the ledger existed) and their exact dates are best-effort; source='live' entries were written at the time of the change.",
-  "app_version": "0.24.0",
+  "app_version": "0.24.1",
   "strategy_versions": {
     "signals": "sig-12",
     "patterns": "pat-5",
@@ -187,6 +187,30 @@
     ]
   },
   "entries": [
+    {
+      "version": "0.24.1",
+      "date": "2026-09-17",
+      "source": "live",
+      "title": "Open-positions table: stop the Sell button being clipped off the card edge",
+      "summary": "The owner reported the Sell button 'looks a bit weird' on /live-patterns — 'we don't have enough space'. Confirmed by headless screenshot: the button was clipped at the card edge. Cause is arithmetic, not styling. Body max-width is 1200px, so after body padding (40) and .section padding (44) the open-positions table gets 1116px — and Patterns runs 14 columns (Signals and Cross run 13; Patterns adds Pattern). At the canonical 12px cell padding that is 336px of pure gutter, leaving ~56px per content column. Everything that could wrap did: the Sector pill broke to four lines, the `pat-5` version pill broke across its hyphen, and Action — the one cell that must never wrap, because it holds the Sell button — was pushed past the edge. Reclaimed ~150px inside the table instead of widening the page (which would have collided with the 1360px sidebar breakpoint and put a horizontal scrollbar on 1440px laptops) and instead of dropping a column (the column set is a deliberate standard). No strategy parameter, gate or engine behaviour is touched; this is presentation only.",
+      "files": [
+        "web/style.css",
+        "web/live_common.js",
+        "web/live_patterns.html",
+        "web/live_signals.html",
+        "web/live_cross.html",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "web/style.css: new `.positions-table` block — cell padding trimmed 12px -> 8px horizontally (~112px back across 14 columns), sector pill capped at 116px with ellipsis, nowrap on the Ver and Action cells, min-width 92px on Ticker so long names wrap to 2-3 lines instead of one word per line. Scoped to a class rather than `.sig-table` so the roomier closed-trades and analytics tables keep the canonical spacing.",
+        "web/style.css: the ellipsis sits on `.sector-cell .pill`, not on the td. The pill is inline-block, so a cell-level text-overflow would clip it mid-glyph with no ellipsis marker — the rule has to make the pill itself the block box.",
+        "web/live_common.js: sectorPill() now emits `title` with the full sector name, so ellipsising 'Personal Care, Drug and Grocery Stores' loses nothing.",
+        "web/live_common.js: new shared `exitCell(pos)` replaces the identical inline Exit-by template on all three engine pages. The cell is nowrap and was stacking two 19-character timestamps; it now shows the entry DAY with the full timestamp on the tooltip, worth ~55px of the reclaim. Shared rather than copied so the three pages cannot drift.",
+        "web/live_patterns.html, web/live_signals.html, web/live_cross.html: open-positions table gains the `positions-table` class; sector/ver/action cells gain their classes; Exit-by calls the shared helper. Applied to all three pages, not only the one that overflowed, so the live pages stay structurally identical per the page-structure standard."
+      ],
+      "strategy_bumps": [],
+      "notes": "Verified against the running :8765 instance with headless Chrome at 1280px: Sell button fully inside the card on Patterns and Signals, `pat-5` one token, sector single-line, rows down from 3-4 lines to 1-2. exitCell() exercised in a node harness for the entry_ts, entry_date-only and empty cases. The 400px mobile render is byte-identical to HEAD, so the pre-existing horizontal overflow at phone width is untouched — it is a separate, older issue and was NOT fixed here."
+    },
     {
       "version": "0.24.0",
       "date": "2026-09-08",

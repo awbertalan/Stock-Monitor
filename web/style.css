@@ -296,6 +296,36 @@ table.sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Feed-only: the position hasn't been sold yet. Outlined rather than filled so
    it is distinguishable at a glance from the booked MANUAL exit above. */
 .reason-OPEN    { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+/* ───── Open-positions table ─────
+   The densest table in the app: 14 columns on /live-patterns (Signals and
+   Cross have 13, minus Pattern). Body max-width is 1200px, so after body
+   padding (40) and .section padding (44) the table gets 1116px — and the
+   canonical 12px cell padding spends 336px of that on gutters alone.
+
+   The content columns were starved as a result: the Sector pill wrapped to
+   four lines, the `pat-5` version pill broke across the hyphen, and Action —
+   the one cell that must never be clipped, because it holds the Sell button —
+   was cut off at the card edge. Tightened here rather than on `.sig-table` so
+   the roomier closed-trades and analytics tables keep the canonical spacing;
+   applied via a class on all three engine pages rather than only the one that
+   overflowed, so the live pages stay structurally identical. */
+.positions-table th,
+.positions-table td { padding-left: 8px; padding-right: 8px; }
+/* Ellipsis has to sit on the pill, not the cell: the pill is inline-block, so
+   a cell-level text-overflow would just clip it mid-glyph with no marker.
+   Full name is on the pill's title — see sectorPill() in live_common.js. */
+.positions-table .sector-cell .pill {
+  display: block; max-width: 116px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Neither of these may wrap: `pat-5` reads as two broken tokens, and a
+   two-line Sell button is the artefact this whole block exists to fix. */
+.positions-table .ver-cell,
+.positions-table .action-cell { white-space: nowrap; }
+/* Long names ("Corem Property Group Pref") should wrap to 2-3 lines rather
+   than force the table wider, but not collapse to one word per line. */
+.positions-table .ticker { min-width: 92px; }
+
 .sell-btn { background: #fff; color: #b08000; border: 1px solid #e0c060; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: Arial, sans-serif; white-space: nowrap; }
 .sell-btn:hover:not(:disabled) { background: #fff4d6; }
 .sell-btn:disabled { color: #c8cdd9; border-color: #eef0f6; cursor: not-allowed; background: #fff; }

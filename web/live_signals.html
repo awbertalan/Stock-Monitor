@@ -126,7 +126,7 @@
          un-disabled itself — indistinguishable from a dead endpoint. Uses the
          shared .health-banner styling from style.css: no per-page colours. -->
     <div id="sell-notice" class="health-banner critical" style="display:none;"></div>
-    <table class="sig-table">
+    <table class="sig-table positions-table">
       <thead>
         <tr>
           <th>Ticker</th>
@@ -618,8 +618,8 @@
           <tr>
             <td class="ticker">${tickerLink(tk)}</td>
             ${tierCell(tk)}
-            <td class="mobile-hide">${sectorPill(tk)}</td>
-            ${verCell('signals', pos, 'mobile-hide')}
+            <td class="mobile-hide sector-cell">${sectorPill(tk)}</td>
+            ${verCell('signals', pos, 'mobile-hide ver-cell')}
             <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
             <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
             <td class="num">${fmt(now, 2)}${staleMark(lq)}</td>
@@ -627,8 +627,8 @@
             <td class="num ${cls(ret)}">${pct(ret)}  <span class="small">(${sign(pnl)})</span></td>
             <td class="num mobile-hide">${fmt(pos.tp, 2)}</td>
             <td class="num mobile-hide">${fmt(pos.sl, 2)}</td>
-            <td class="exit-cell mobile-hide">${esc(pos.target_exit_date || '')}<div class="small">from ${esc(fmtTs(pos.entry_ts) || pos.entry_date || '')}</div></td>
-            <td>
+            ${exitCell(pos)}
+            <td class="action-cell">
               <button class="sell-btn${queued ? ' queued' : ''}"
                       ${canSell ? '' : 'disabled'}
                       title="${esc(btnTitle)}"

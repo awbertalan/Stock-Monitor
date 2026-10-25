@@ -155,8 +155,26 @@ const sectorOf = name => sectorMap[name] || '';
 
 function sectorPill(name) {
   const s = sectorOf(name);
-  return s ? `<span class="pill sector-pill">${esc(s)}</span>` : '';
+  // The full name also goes in `title`: the open-positions table ellipsises
+  // this cell (.positions-table .sector-cell), and Swedish sector names are
+  // long phrases — "Personal Care, Drug and Grocery Stores" used to wrap to
+  // four lines and steal the width the Action column needs.
+  return s ? `<span class="pill sector-pill" title="${esc(s)}">${esc(s)}</span>` : '';
 }
+
+// "Exit by" cell for the three open-positions tables. Target exit date, with
+// the entry DAY beneath it and the full entry timestamp on the tooltip.
+//
+// The cell is nowrap (.exit-cell) and used to render two 19-character
+// timestamps stacked. In a 14-column table inside a 1116px content box that
+// cost ~55px, and the column that paid for it was Action — the one cell that
+// must never be clipped, because it holds the Sell button. Shared rather than
+// inlined per page so the three engine pages cannot drift apart.
+const exitCell = pos => {
+  const full = fmtTs(pos.entry_ts) || pos.entry_date || '';
+  return `<td class="exit-cell mobile-hide">${esc(pos.target_exit_date || '')}`
+       + `<div class="small" title="${esc(full)}">from ${esc(full.slice(0, 10))}</div></td>`;
+};
 
 // [{sector, tickers, n, cost, pct}] heaviest first — mirrors
 // engine_common.sector_concentration so the page and the log agree.
