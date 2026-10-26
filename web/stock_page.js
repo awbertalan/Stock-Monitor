@@ -1228,7 +1228,7 @@ async function loadRecommendations() {
 
 // ── News ──────────────────────────────────────────────────────────────────────
 
-const _BADGE_CLASS = { Analyst: 'news-badge-analyst', 'Press Release': 'news-badge-press', Regulatory: 'news-badge-reg' };
+const _BADGE_CLASS = { Analyst: 'news-badge-analyst', 'Press Release': 'news-badge-press', Report: 'news-badge-reg' };
 
 async function loadNews() {
   try {

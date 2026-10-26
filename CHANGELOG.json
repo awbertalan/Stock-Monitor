@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "_readme": "Project changelog + version ledger. `app_version` bumps on every Claude-assisted change; `strategy_versions` bump ONLY when an engine's tradeable parameters, gates or detectors change. lib/version.py is the read API; the engines stamp these onto every position, so a trade can always be traced back to the code that opened it. Entries are newest-first. Entries with source='reconstructed' were rebuilt from session notes on 2026-08-21 (before the ledger existed) and their exact dates are best-effort; source='live' entries were written at the time of the change.",
-  "app_version": "0.24.1",
+  "app_version": "0.25.0",
   "strategy_versions": {
     "signals": "sig-12",
     "patterns": "pat-5",
@@ -26,13 +26,6 @@
   },
   "strategy_history": {
     "signals": [
-      {
-        "version": "sig-11",
-        "from": "2026-09-06",
-        "app_version": "0.23.0",
-        "params": "TP +3.0% / SL -1.0% / 7d hold, DoD <= -2%, no-Friday, not-at-5d-high",
-        "note": "Audit batch 2. Stop-loss fills at min(market, stop) instead of always at the stop — every prior stop-out booked a price that, on a gap-down, never traded. Real trading-holiday calendar behind add_trading_days/trading_days_between (holidays were counted as sessions, shortening a 7-day hold to as few as 4). Cross's wallet no longer vetoes Signals entries. Force-entry overrides no longer published as signal_check passes. No TP/SL level or hold-period change."
-      },
       {
         "version": "sig-1",
         "from": "2026-05-16",
@@ -104,6 +97,13 @@
         "note": "Retune of the two parameters that actually carry edge, after the -1% stop was questioned and re-tested. Method: the same entry filter swept over two independent samples — 11 years of daily closes for the 158-name large-cap universe (n=68,905 close-to-close trades, 2016-01-01 onward) and true tick-order fills reconstructed from 3.4M minute prints (n=2,723, 2026-04-30..2026-09-03), the latter walking every print in sequence so TP/SL ordering inside a bar is real rather than assumed. TAKE-PROFIT +2% -> +3%: 11y 45.8% WR +0.353%/trade -> 41.1% +0.545%; tick 44.7% +0.335% -> 37.4% +0.455%. Monotonic out to +4% on both samples, but return per day-of-held-capital flattens after +3%, and this wallet is capital-constrained. DOD_THRESHOLD -1% -> -2%: 11y +0.353% -> +0.385%; tick +0.335% -> +0.390%; also monotonic (-3% gives +0.423% / +0.434%). Took -2% rather than -3% because -3% fires only ~3x/day across the universe against ~6.6x while scoring +0.267%/capital-day vs +0.231% — the wallet is slot-constrained (6 open, 581k idle), so candidate starvation costs more than the extra per-trade edge earns. Combined: +0.143% -> +0.231% per capital-day, every one of the 11 years positive (+0.48%..+0.83%). STOP DELIBERATELY UNCHANGED at -1%: widening to -2% was the actual request, and it is wrong. Live record splits cleanly by the stop in force — the -2% era (sig-3/4/6) ran n=27 33.3% WR -0.85%/trade -16,025 SEK against the -1% era (sig-7/8/9) n=40 35.0% +0.05% +1,638 SEK, and break-even WR moves from 33.3% to 50.0%, which this engine has never sustained. An OHLC replay of the current 40 trades under a -2% stop lifts win rate 37.5% -> 50.0% (5 of 26 stop-outs do recover, so the shake-out intuition is real) but cuts per-trade edge +0.125% -> +0.026%, landing exactly on break-even. On tick data the stop curve is a shallow U (-0.5% +0.378% | -1% +0.335% | -2% +0.299% | -3% +0.342%), i.e. the stop only trades win rate against loss size and is not a lever at all; the monotonic 'tighter is better' seen on close-only data is an artefact of never observing an intraday touch. Two hypotheses were tested and REJECTED rather than shipped: that the most-negative-DoD-first candidate ranking was inverted (it is not — deep down-days are the best bucket on both samples, +0.423%/+0.434% at -3%), and that a DoD *band* beat a threshold (a 40-trade live slice suggested -3%..-1.5% was a sweet spot; on 68,905 trades the band is flat-to-worse, so that slice was noise). Expect ~42% win rate against ~46% before, i.e. visibly more red for more money. Caveat carried forward: live runs +0.05%/trade against a +0.35% backtest, so the ranking of these parameters is what transfers, not the magnitudes."
       },
       {
+        "version": "sig-11",
+        "from": "2026-09-06",
+        "app_version": "0.23.0",
+        "params": "TP +3.0% / SL -1.0% / 7d hold, DoD <= -2%, no-Friday, not-at-5d-high",
+        "note": "Audit batch 2. Stop-loss fills at min(market, stop) instead of always at the stop — every prior stop-out booked a price that, on a gap-down, never traded. Real trading-holiday calendar behind add_trading_days/trading_days_between (holidays were counted as sessions, shortening a 7-day hold to as few as 4). Cross's wallet no longer vetoes Signals entries. Force-entry overrides no longer published as signal_check passes. No TP/SL level or hold-period change."
+      },
+      {
         "version": "sig-12",
         "from": "2026-09-08",
         "app_version": "0.24.0",
@@ -112,13 +112,6 @@
       }
     ],
     "patterns": [
-      {
-        "version": "pat-5",
-        "from": "2026-09-06",
-        "app_version": "0.22.0",
-        "params": "TP +2.0% / SL -2.0% / 7d hold, 5 entry-eligible patterns",
-        "note": "Audit batch 1. Detector exceptions are recorded and surfaced instead of swallowed per-stock. A non-positive live quote is tagged stale, so it can no longer book a phantom stop-loss. An unreadable history CSV now disqualifies the name rather than silently skipping the -15% crash guard. No TP/SL/hold or detector-logic change."
-      },
       {
         "version": "pat-1",
         "from": "2026-05-25",
@@ -146,16 +139,16 @@
         "app_version": "0.15.0",
         "params": "TP +2.0% / SL -2.0% / 7d hold, 5 entry-eligible patterns, STALE guard, liquidity cap 5% of median daily volume, cross-wallet stem dedupe",
         "note": "Same two gates as sig-8. Motivated by this engine's 2026-08-24 Electrolux A fill: 2,380 shares against a 4,460-share day, 53% of all volume, on a quote that never moved off the fill price."
+      },
+      {
+        "version": "pat-5",
+        "from": "2026-09-06",
+        "app_version": "0.22.0",
+        "params": "TP +2.0% / SL -2.0% / 7d hold, 5 entry-eligible patterns",
+        "note": "Audit batch 1. Detector exceptions are recorded and surfaced instead of swallowed per-stock. A non-positive live quote is tagged stale, so it can no longer book a phantom stop-loss. An unreadable history CSV now disqualifies the name rather than silently skipping the -15% crash guard. No TP/SL/hold or detector-logic change."
       }
     ],
     "cross": [
-      {
-        "version": "x-5",
-        "from": "2026-09-06",
-        "app_version": "0.22.0",
-        "params": "TP +3.0% / SL -1.0% / 7d hold, signal AND same-day 2+ pattern confluence",
-        "note": "Audit batch 1. Pattern half now hard-gated to fires stamped today (the 30h window let the previous session's list pass as confluence); a down pattern half closes the gate and does not consume the day. Cash floor no longer latched pre-exit. Pre-open ticks defer the exit pass instead of booking calendar TIMEOUTs at the prior close. No TP/SL/hold change."
-      },
       {
         "version": "x-1",
         "from": "2026-06-13",
@@ -183,10 +176,47 @@
         "app_version": "0.19.0",
         "params": "TP +3.0% / SL -1.0% / 7d hold (mirrors sig-10), sig-10 signal hit AND a 2+-pattern Patterns fire, auto-entry at the confirmed close, cross-wallet dedupe OFF",
         "note": "Entries resumed against a rebuilt gate. x-1..x-3 never tested confluence: the Signals half was the whole ~400-name radar rather than the names Signals wanted, and the Patterns half read recent_pattern_fires upstream of live_patterns' own CONFLUENCE_REQUIRED, so 21 of 23 scored trades were the solo fires Patterns had just rejected. Now an A/B arm over the Signals wallet — same params, same fill timing, one extra condition."
+      },
+      {
+        "version": "x-5",
+        "from": "2026-09-06",
+        "app_version": "0.22.0",
+        "params": "TP +3.0% / SL -1.0% / 7d hold, signal AND same-day 2+ pattern confluence",
+        "note": "Audit batch 1. Pattern half now hard-gated to fires stamped today (the 30h window let the previous session's list pass as confluence); a down pattern half closes the gate and does not consume the day. Cash floor no longer latched pre-exit. Pre-open ticks defer the exit pass instead of booking calendar TIMEOUTs at the prior close. No TP/SL/hold change."
       }
     ]
   },
   "entries": [
+    {
+      "version": "0.25.0",
+      "date": "2026-10-26",
+      "source": "live",
+      "title": "Event-calendar refresh no longer skipped on flat days; news feed repaired; shadow news label on Signals entries",
+      "summary": "Follow-up to the 2026-10-25 AI-news-layer evaluation, which found that no news veto (any-news, keyword rules or an LLM classifier) and no trend/regime filter improves Live Signals on 12 months of Millistream news and 11 years of closes. This entry fixes the bugs that work surfaced and adds a behaviour-neutral news label so live trades accumulate evidence. No trading parameter, gate or detector changed.",
+      "files": [
+        "live_signals.py",
+        "lib/newsScrapper.py",
+        "lib/version.py",
+        "app.py",
+        "web/stock_page.js",
+        "web/help.html",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "live_signals.py: run_eod_sweep() returned early on a flat wallet ('no open positions') BEFORE the event-calendar refresh at its end, so the cache that gates all three engines stopped refreshing whenever Signals held nothing — fetched_at was 2026-10-15 on 2026-10-26 (refreshed by hand the same morning: 158/158, 0 failures). Both sweep paths now leave state['event_cal_refresh_owed'] = today, and main() pays it via take_event_cal_refresh() + refresh_event_calendar() only once the day's entry question is settled: after the close-confirmed pass, or on a not-ready return whose reason is final (already scanned, missed window, entry disabled, not a trading day). It is deliberately NOT inside the sweep or on a transient not-ready return ('feed has not settled'): 158 sequential fetches (~1 min, far longer on timeouts) ahead of a pass still to come delayed the close+60 entry gate and could forfeit the day's entries. The flag lives in state, so a run that crashes between the sweep and the pass still pays it on the retry; a cache up to a day old loses nothing for a ±7-day window.",
+        "live_signals.py: EVENT_CAL_REFRESH_HOURS = 12 replaces the cache's 24h test at that call site — the sweep runs once per trading day at a varying minute (17:46-18:30), so a 24h test skipped the refresh every other day.",
+        "live_signals.py: shadow news label — new auto entries carry signal_info['news'] = {n, by_type, headlines, window, v} for company news published between the previous session's close and 5 minutes before today's close (what a closing-auction order could have known). It never gates or sizes an entry; a failed or half-failed lookup is stamped {'error', 'outage'} instead of being counted as 'no news', and after one outage the rest of that run's entries skip the lookup so a slow API cannot stack timeouts. apply_exit_checks copies signal_info into closed_trades, so the label survives the exit. Manual limit-order fills are not labelled.",
+        "lib/newsScrapper.py: fetch_news() filtered with insref=, which matches the news SOURCE (Cision is 8195), so every stock page's news panel was empty. It now resolves the issuer's company id via cmd=quote (cached per process, ISIN fallback; a failed or empty lookup is reported as such and not cached), fetches Swedish and English (lang=sv alone dropped English-only releases) and drops the English twin of bilingual releases (same distributor, second and type). An empty answer from the ISIN fallback after the company query failed outright counts as a failed query, not 'no news'.",
+        "lib/newsScrapper.py: the API's timezone=Europe/Stockholm applies UTC+1 all year, so every summer item came back an hour early (a 17:37 close report stamped 16:37). Requests are now made in UTC and converted with zoneinfo, with an exact EU-rule fallback where zoneinfo or its tz database is missing (e.g. an older NAS Python). Type labels corrected (1 = Newswire, the Finwire wire, not 'Regulatory'; 4 = Report, not 'Other'). An empty answer is retried once — the endpoint intermittently returns [] for valid queries. New news_window_summary() feeds the shadow label (bounded by enddate, no article bodies).",
+        "web/stock_page.js, web/help.html: news badges and help text follow the corrected labels (Report gets the orange badge; Newswire is grey).",
+        "app.py: /live-health gains an 'Event calendar' row from calendar_cache.cache_health(), which had no caller. Critical when the cache is unreadable or empty (the ±7d gate fails open), ok up to 1 trading day behind (the refresh runs after the 17:30 session-complete mark), warn at 2, critical at 3+, warn on per-stock fetch failures — and when only a few stocks fail, recency is judged by the last attempt so one permanently failing stock cannot pin the row at critical and mask later faults.",
+        "app.py: the health checks use the engines' own calendar (live_signals.is_trading_day / market_close_for, lazily imported; weekday/17:30 fallback): _market_is_open() knows holidays and 13:00 half-days, _last_completed_session() skips holidays and completes a half-day at 13:00, the 'alive at the close' rule uses each session's own close, and the OHLC/EOD/calendar rows count trading days. Previously every exchange holiday and half-day afternoon read as a missed or cut-short session — Patterns stops stamping last_run when the market is closed, so its row went critical and the watchdog pushed on each one.",
+        "lib/version.py: strategy_history() returns rows chronologically (ties by version number; non-dict rows ignored). The 2026-09-06 rows (sig-11, pat-5, x-5) sat at the head of each list and strategy_version_at() stops at the first later row, so it returned None for every earlier date (signals on 2026-06-01 now resolves to sig-3).",
+        "CHANGELOG.json: strategy_history rows re-sorted chronologically (data only; no version value changed)."
+      ],
+      "strategy_bumps": [],
+      "notes": "Reviewed adversarially in two rounds before shipping (one reviewer on the first draft, two independent lenses on the follow-up). Confirmed defects fixed in this entry: the refresh delaying the entry gate (twice: inside the sweep, then on a transient not-ready return), outages recorded as 'no news' in the shadow label, and weekday-only health logic. No path found that can crash the engine or change fills, sizing or which entries are taken."
+    },
     {
       "version": "0.24.1",
       "date": "2026-09-17",

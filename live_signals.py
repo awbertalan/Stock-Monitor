@@ -66,6 +66,7 @@ import infoScrapper    # noqa: E402
 import tradesScrapper  # noqa: E402
 import ohlc_capture    # noqa: E402
 import calendar_cache  # noqa: E402
+import newsScrapper    # noqa: E402  — shadow news label on new positions
 import version as V     # noqa: E402  — app/strategy version stamping
 import notify          # noqa: E402  — trade notifications (macOS banner / ntfy push)
 
@@ -237,6 +238,12 @@ MARKET_CLOSE     = (17, 30)
 # Nasdaq Stockholm half-days close at 13:00 (Maundy Thursday, Jan 5, Apr 30, the
 # day before Ascension). Consulted through market_close_for(); see is_early_close.
 EARLY_CLOSE      = (13, 0)
+# Event-calendar refresh threshold for the EOD sweep. Below 24h on purpose: the
+# sweep runs once per trading day at a varying minute (17:46-18:30), so the
+# cache's own 24h staleness test skipped the refresh every other day.
+EVENT_CAL_REFRESH_HOURS = 12
+# Version of the shadow news label stamped into signal_info["news"].
+NEWS_LABEL_VERSION = 1
 
 # Stockholm's closing auction prints a few seconds *before* 17:30:00 — the probe
 # ticker's final trade of the day lands at 17:29:54. Demanding trade_dt >= exactly
@@ -1114,6 +1121,62 @@ def maybe_capture_eod_ohlc(state, today):
     save_state(state)
 
 
+def refresh_event_calendar():
+    """Re-pull the corporate-event calendar for the primary universe once it is
+    more than EVENT_CAL_REFRESH_HOURS old, so the next day's entries see the
+    latest dividends/earnings. Every completed EOD sweep leaves a refresh owed;
+    main() pays it, wallet on disk, in the run that settles the day's entry
+    question (see take_event_cal_refresh). A failure only leaves the cache stale
+    (shown on /live-health) and never reaches the caller."""
+    try:
+        events_cache = calendar_cache.load_cache()
+        if not calendar_cache.is_stale(events_cache, hours=EVENT_CAL_REFRESH_HOURS):
+            print("   event calendar still fresh, skipping refresh")
+            return
+        primary, _ = build_universe()
+        print(f"   refreshing event calendar for {len(primary)} stocks…")
+        calendar_cache.refresh_cache([t["insref"] for t in primary])
+        print("   event calendar refreshed")
+    except Exception as e:
+        print(f"   ✗ event calendar refresh failed ({e}); cache left as it was")
+
+
+def take_event_cal_refresh(state, today, entry_settled):
+    """True — and the owed flag cleared — when today's completed EOD sweep left
+    an event-calendar refresh owed and the day's entry question is settled (the
+    close-confirmed pass ran, was missed, or cannot happen today). The refresh is
+    158 sequential fetches (~1 min, far longer on timeouts); run ahead of a pass
+    still to come it delayed the close+60 entry gate and could forfeit the day's
+    entries. The flag lives in state, so a run that crashes between the sweep and
+    the pass still pays it on the retry."""
+    if not entry_settled or state.get("event_cal_refresh_owed") != today.isoformat():
+        return False
+    state.pop("event_cal_refresh_owed", None)
+    return True
+
+
+def shadow_news_label(insref, today):
+    """Same-day company news for a new position, stamped into its signal_info
+    (and from there into closed_trades) so news-vs-outcome can be measured on
+    live trades. Shadow only: it never gates or sizes an entry — a 12-month
+    backtest found no news veto that improves this strategy (CHANGELOG 0.25.0).
+
+    Window: the previous session's close to 5 minutes before today's close, i.e.
+    what a closing-auction order could have known. Items that land after that
+    (the entry pass runs ~17:46 or later) are left out on purpose."""
+    prev = today - timedelta(days=1)
+    while not is_trading_day(prev):
+        prev -= timedelta(days=1)
+    ph, pm = market_close_for(prev)
+    th, tm = market_close_for(today)
+    start = datetime(prev.year, prev.month, prev.day, ph, pm)
+    end = datetime(today.year, today.month, today.day, th, tm) - timedelta(minutes=5)
+    label = newsScrapper.news_window_summary(insref, start, end)
+    label["v"] = NEWS_LABEL_VERSION
+    label["window"] = f"{start:%Y-%m-%d %H:%M} -> {end:%Y-%m-%d %H:%M}"
+    return label
+
+
 def run_eod_sweep(state, today, now_local_ts):
     """One final post-close sweep that polls open-position quotes and applies
     TP/SL/timeout exits against the closing prices. The Millistream feed lags
@@ -1150,6 +1213,7 @@ def run_eod_sweep(state, today, now_local_ts):
     if not state["positions"]:
         print("   no open positions to check")
         state["last_eod_sweep_date"] = today.isoformat()
+        state["event_cal_refresh_owed"] = today.isoformat()
         save_state(state)
         return
 
@@ -1214,31 +1278,15 @@ def run_eod_sweep(state, today, now_local_ts):
                   f"close {cur_price:.2f}   P&L {pnl:+,.0f} SEK ({ret*100:+.2f}%)")
 
     state["last_eod_sweep_date"] = today.isoformat()
+    state["event_cal_refresh_owed"] = today.isoformat()
     save_state(state)
 
-    # Everything below runs AFTER the wallet is on disk, deliberately: the
-    # calendar refresh is 158 sequential HTTP fetches and used to sit between
-    # the booked exits and their save, which is the widest crash window in the
-    # engine. Nothing here mutates the wallet, so a failure now costs a stale
-    # event cache and nothing else.
-    #
-    # OHLC capture moved to maybe_capture_eod_ohlc() — it now runs as a
-    # self-gated daily step in main(), independent of positions being open
-    # and of the narrow 17:45-18:30 EOD window. We still build the universe
-    # here so the calendar refresh below has the primary insref list.
-    primary, _ = build_universe()
-
-    # Refresh the corporate-event calendar so tomorrow's entries see the
-    # latest dividends/earnings. The cache itself has a 24h staleness check
-    # so calling refresh once per day from the EOD sweep is the natural fit.
-    events_cache = calendar_cache.load_cache()
-    if calendar_cache.is_stale(events_cache):
-        n = len(primary)
-        print(f"   refreshing event calendar for {n} stocks…")
-        calendar_cache.refresh_cache([t["insref"] for t in primary])
-        print("   event calendar refreshed")
-    else:
-        print("   event calendar still fresh, skipping refresh")
+    # The event-calendar refresh used to run here, and only here, so a flat
+    # wallet (the early return above) skipped it: the cache that gates all three
+    # engines was 10 days old on 2026-10-26. Both paths now leave a refresh owed,
+    # which main() pays once the day's entry question is settled — see
+    # take_event_cal_refresh(). (OHLC capture moved to maybe_capture_eod_ohlc(),
+    # a self-gated daily step in main().)
 
 
 # ----------------------------------------------------------------------------- main
@@ -1294,9 +1342,18 @@ def main():
                     "missed_window": missed_window}
             state["entry_gate"] = gate
             state["last_entry_gate"] = gate
+            # Settled = no close-confirmed pass is still to come today. On the
+            # transient reasons (before the close, feed not settled) the pass is
+            # yet to run, so an owed calendar refresh keeps waiting for it.
+            entry_settled = (missed_window or not ENTRY_AT_CLOSE
+                             or not is_trading_day(today)
+                             or state.get("last_entry_scan_date") == today.isoformat())
+            pay_refresh = take_event_cal_refresh(state, today, entry_settled)
             save_state(state)
             print(f" Market closed (Stockholm OMX 09:00-17:30 Mon-Fri). "
                   f"No entry pass: {why}.")
+            if pay_refresh:
+                refresh_event_calendar()
             return
         print(f" CLOSE-CONFIRMED ENTRY PASS — feed settled past today's close, "
               f"scanning at closing prices")
@@ -1529,6 +1586,7 @@ def main():
             "not_taken":       reason,
         })
 
+    news_label_down = False   # first news-API outage this run skips later labels
     for c in candidates:
         t, lq, info, live_close = c["t"], c["lq"], c["info"], c["live_close"]
         name = t["name"]
@@ -1601,6 +1659,20 @@ def main():
             entry_info["forced"] = True
             entry_info["entry_tag"] = "forced"
         entry_info.setdefault("entry_tag", "auto")
+        # Shadow news label (0.25.0): recorded for later evaluation only, never
+        # a gate — a failed lookup is stamped as an error and the entry proceeds.
+        # After one outage the rest of the pass skips the lookup, so a slow news
+        # API cannot stack ~5 s timeouts across every entry.
+        if news_label_down:
+            entry_info["news"] = {"error": "skipped: news API failed earlier this run",
+                                  "v": NEWS_LABEL_VERSION}
+        else:
+            try:
+                entry_info["news"] = shadow_news_label(t["insref"], today)
+            except Exception as e:
+                entry_info["news"] = {"error": str(e)[:200], "outage": True,
+                                      "v": NEWS_LABEL_VERSION}
+            news_label_down = bool(entry_info["news"].get("outage"))
 
         tp_price = round(entry_price * (1 + TP_PCT), 4)
         sl_price = round(entry_price * (1 + SL_PCT), 4)
@@ -2057,12 +2129,18 @@ def main():
     # cleared. Every skip is already logged as a "skipped" event in
     # recent_signals. Publish the list together with the page that reads it.
     state["last_entry_gate"] = gate
+    # A close-confirmed pass settles the day's entry question, so a calendar
+    # refresh owed by today's EOD sweep is paid here, after the entries. A cache
+    # up to a day old loses nothing for a ±7-day window.
+    pay_refresh = take_event_cal_refresh(state, today, close_entry_pass)
 
     save_state(state)
     # Wallet is on disk — now it is safe to announce. Early-return paths (and
     # the EOD sweep, which sells before ever reaching here) are covered by the
     # atexit hook notify registers on the first queued event.
     notify.flush()
+    if pay_refresh:
+        refresh_event_calendar()
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ carry on.
 
 import json
 import os
+import re
 import threading
 
 LEDGER_PATH = os.path.join(
@@ -85,10 +86,25 @@ def stamp(engine):
     }
 
 
+def _version_seq(version):
+    """Trailing number of a strategy version ('sig-12' -> 12). Orders versions
+    that share a start date — sig-6, sig-7 and sig-8 all start 2026-08-24."""
+    m = re.search(r"(\d+)$", str(version or ""))
+    return int(m.group(1)) if m else 0
+
+
 def strategy_history(engine):
-    """Ordered [{version, from, params, note, app_version}, ...] for ``engine``."""
+    """Chronological [{version, from, params, note, app_version}, ...] for ``engine``.
+
+    Sorted here rather than trusted from the file: the 2026-09-06 rows (sig-11,
+    pat-5, x-5) were inserted at the head of each list, and strategy_version_at()
+    stops at the first later row, so it returned None for every earlier date.
+    A row with no 'from' sorts last, where it cannot cut that scan short."""
     d = ledger()
-    return ((d or {}).get("strategy_history") or {}).get(engine) or []
+    rows = ((d or {}).get("strategy_history") or {}).get(engine) or []
+    rows = [r for r in rows if isinstance(r, dict)]     # fail soft on a hand edit
+    return sorted(rows, key=lambda r: (str(r.get("from") or "9999-99-99"),
+                                       _version_seq(r.get("version"))))
 
 
 def strategy_version_at(engine, date_str):

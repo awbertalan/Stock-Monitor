@@ -298,29 +298,57 @@ _HEALTH_FORCE_SELLS = (
 _MARKET_OPEN_MIN  = 9 * 60
 _MARKET_CLOSE_MIN = 17 * 60 + 30
 # Off-hours an engine can only be judged on whether it was still alive AT the
-# close, not merely at some point during the day — see the else: branch in
-# _live_health(). 30 minutes of slack absorbs a Mac that sleeps a little early.
-_HEALTH_SESSION_END_MIN = _MARKET_CLOSE_MIN - 30
+# close (the session's own close, 13:00 on a half-day), not merely at some point
+# during the day — see the else: branch in _live_health(). 30 minutes of slack
+# absorbs a Mac that sleeps a little early.
+_HEALTH_SESSION_SLACK_MIN = 30
+
+_ENGINE_CAL = None
+
+
+def _engine_calendar():
+    """(is_trading_day(date), close_minute(date)) from the engines' own calendar
+    — exchange holidays and 13:00 half-days included — or weekday / 17:30
+    fallbacks if live_signals cannot be imported. The health checks used the
+    fallbacks unconditionally, so every holiday and half-day read as a missed or
+    cut-short session: Patterns stops stamping last_run whenever the market is
+    closed, and its row went critical (with a push) on each one."""
+    global _ENGINE_CAL
+    if _ENGINE_CAL is None:
+        try:
+            import live_signals as _L
+
+            def _close_min(d):
+                h, m = _L.market_close_for(d)
+                return h * 60 + m
+            _ENGINE_CAL = (_L.is_trading_day, _close_min)
+        except Exception:
+            _ENGINE_CAL = (lambda d: d.weekday() < 5, lambda d: _MARKET_CLOSE_MIN)
+    return _ENGINE_CAL
 
 
 def _market_is_open(now):
-    return now.weekday() < 5 and _MARKET_OPEN_MIN <= (now.hour * 60 + now.minute) < _MARKET_CLOSE_MIN
+    is_td, close_min = _engine_calendar()
+    m = now.hour * 60 + now.minute
+    return is_td(now.date()) and _MARKET_OPEN_MIN <= m < close_min(now.date())
 
 
 def _last_completed_session(now):
-    """Date of the most recent weekday whose 17:30 close has already passed.
+    """Date of the most recent trading day whose close (17:30, 13:00 on a
+    half-day) has already passed.
 
     Used instead of a plain wall-clock age so an overnight or weekend sleep does
     not read as a fault — the engines legitimately do not tick while the Mac is
     asleep, and only a *missed session* is worth alarming on.
     """
     import datetime as _dt
+    is_td, close_min = _engine_calendar()
     d = now.date()
-    if now.weekday() < 5 and (now.hour * 60 + now.minute) >= _MARKET_CLOSE_MIN:
+    if is_td(d) and (now.hour * 60 + now.minute) >= close_min(d):
         return d
     while True:
         d -= _dt.timedelta(days=1)
-        if d.weekday() < 5:
+        if is_td(d):
             return d
 
 
@@ -330,6 +358,7 @@ def _live_health():
     now_utc  = _dt.datetime.now(_dt.timezone.utc)
     open_now = _market_is_open(now)
     session  = _last_completed_session(now)
+    is_td, close_min = _engine_calendar()
 
     engines = []
     states  = {}
@@ -376,8 +405,8 @@ def _live_health():
             if not ran_since:
                 status = "critical"
                 detail = f"has not run since the {session.isoformat()} session"
-            elif local.date() == session and stopped_min < _HEALTH_SESSION_END_MIN:
-                short_h = (_MARKET_CLOSE_MIN - stopped_min) / 60.0
+            elif local.date() == session and stopped_min < close_min(session) - _HEALTH_SESSION_SLACK_MIN:
+                short_h = (close_min(session) - stopped_min) / 60.0
                 # A tick or two short of the close is a machine sleeping early;
                 # hours short means the session ran unattended.
                 status = "warn" if short_h <= 2 else "critical"
@@ -410,11 +439,56 @@ def _live_health():
                          "detail": "unparseable date"})
             continue
         behind = sum(1 for n in range(1, (session - d).days + 1)
-                     if (d + _dt.timedelta(days=n)).weekday() < 5)
+                     if is_td(d + _dt.timedelta(days=n)))
         status = "ok" if behind == 0 else ("warn" if behind == 1 else "critical")
         jobs.append({"name": label, "status": status, "last": val,
                      "detail": ("current" if behind == 0
                                 else f"{behind} trading day{'s' if behind > 1 else ''} behind")})
+
+    # Event calendar. Its ±7d gate blocks entries in all three engines and fails
+    # OPEN on an empty or broken cache, so a dead refresh reads exactly like
+    # "nothing scheduled". cache_health() was written for this row but had no
+    # caller, and the cache sat 10 days stale (2026-10-15..26) unnoticed. One
+    # trading day behind is normal — the refresh runs in the EOD sweep, after the
+    # 17:30 session-complete mark — and harmless for a ±7-day window.
+    try:
+        ch = calendar_cache.cache_health()
+    except Exception as e:
+        ch = {"load_error": str(e)}
+    cal_last = (ch.get("fetched_at") or "")[:10] or None
+    if ch.get("load_error") or not ch.get("covered"):
+        jobs.append({"name": "Event calendar", "status": "critical", "last": cal_last,
+                     "detail": "cache unreadable or empty — the ±7d entry gate is off"})
+    else:
+        def _sessions_since(iso):
+            try:
+                day = _dt.datetime.fromisoformat(iso).astimezone().date()
+            except (TypeError, ValueError):
+                return None
+            return sum(1 for n in range(1, (session - day).days + 1)
+                       if is_td(day + _dt.timedelta(days=n)))
+        behind = _sessions_since(ch.get("fetched_at"))
+        failed = ch.get("failed") or 0
+        # A partial refresh never re-stamps fetched_at (refresh_cache keeps it
+        # stale so the next sweep retries), so one stock that always fails would
+        # pin this row at critical and mask every later fault. When only a few
+        # stocks fail, judge recency by the last attempt; the failures still
+        # hold the row at warn.
+        if failed and failed <= max(5, (ch.get("covered") or 0) // 10):
+            behind = _sessions_since(ch.get("refresh_attempted_at"))
+        if behind is None:
+            status, detail = "critical", "never refreshed"
+        elif behind <= 1:
+            status, detail = "ok", "current"
+        else:
+            status = "warn" if behind == 2 else "critical"
+            detail = f"{behind} trading days since the last refresh"
+        if failed:
+            if status == "ok":
+                status = "warn"
+            detail += f"; {failed} stock(s) failed on the last attempt"
+        jobs.append({"name": "Event calendar", "status": status,
+                     "last": cal_last, "detail": detail})
 
     # Stranded "Sell now" intent. A queued ticker is consumed only when THAT
     # ticker exits with reason MANUAL, so one queued against a position that had
