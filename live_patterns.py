@@ -112,7 +112,7 @@ def load_state():
 
 
 def save_state(state):
-    ec.save_state(STATE_PATH, state)
+    ec.save_state(STATE_PATH, state, in_session=L.is_market_open())
 
 
 def rotate_log():

@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Breakout</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { background: var(--bg); max-width: 1200px; }
+    h2 { color: var(--text); letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 22px; margin-bottom: 18px;
+    }
+
+    .sig-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .paused-notice {
+      background: var(--warning-soft); border: 1px solid var(--warning);
+      border-radius: var(--radius-md); color: var(--warning);
+      padding: 10px 14px; margin-bottom: 12px; font-size: 12.5px; line-height: 1.5;
+    }
+    .paused-notice strong { font-weight: 600; }
+    #gate-notice { margin-top: 8px; }
+
+    .skip-tag {
+      display: inline-block; font-size: 10px; color: var(--text-muted);
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: 4px; padding: 2px 6px; margin-right: 4px;
+    }
+    .skip-tag.bought { background: var(--positive-soft); color: var(--positive); border-color: #cae8d4; }
+    .scan-meta { font-size: 12px; color: var(--text-muted); margin: -4px 0 10px; }
+    .log-empty { color: var(--text-muted); font-style: italic; }
+  </style>
+</head>
+<body>
+  <h2>Live Breakout</h2>
+  <p class="subtitle">Long-hold momentum engine — buys the strongest <strong>fresh 52-week highs</strong> among the 150 most-traded Swedish stocks at the confirmed close.
+    Target <strong>+10% from week 4</strong>, stop <strong>−15%</strong>, sold by <strong>week 12</strong> · 20 equal slots · separate 1M wallet ·
+    exempt from the cross-wallet duplicate rule. Judge it against the index, not against zero.</p>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/stocksearch">Stock Search</a>
+    <a href="/browse">Browse Folders</a>
+    <a href="/live" class="active">Live</a>
+    <a href="/ohlc-capture">OHLC Capture</a>
+    <a href="/scrape">Scrape</a>
+    <a href="/settings">Settings</a>
+    <a href="/changelog">Changelog</a>
+    <a href="/help">Help</a>
+    <button id="btn-update-all" class="nav-update-btn" onclick="startUpdateAll()">Update All</button>
+  </nav>
+
+  <div class="tab-bar">
+    <a class="tab"        href="/live-overview">Overview</a>
+    <a class="tab"        href="/live-signals">Signals</a>
+    <a class="tab"        href="/live-patterns">Patterns</a>
+    <a class="tab"        href="/live-cross">Cross</a>
+    <a class="tab active" href="/live-breakout">Breakout</a>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Equity</div>
+      <div class="stat-value" id="stat-equity">—</div>
+      <div class="stat-sub" id="stat-equity-sub">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">vs Index</div>
+      <div class="stat-value" id="stat-bench">—</div>
+      <div class="stat-sub" id="stat-bench-sub">OMX Stockholm PI</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Cash</div>
+      <div class="stat-value" id="stat-cash">—</div>
+      <div class="stat-sub" id="stat-cash-sub">— live, — closed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open positions</div>
+      <div class="stat-value" id="stat-open">—</div>
+      <div class="stat-sub" id="stat-open-sub">— SEK deployed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value" id="stat-realized">—</div>
+      <div class="stat-sub" id="stat-realized-sub">— trades</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win rate</div>
+      <div class="stat-value" id="stat-wr">—</div>
+      <div class="stat-sub" id="stat-wr-sub">60% breakeven</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Latest scan</div>
+    <div id="paused-notice" style="display:none;"></div>
+    <div id="gate-notice" style="display:none;"></div>
+    <div class="section-subtitle">
+      Once a day after the close: every one of the 150 most-traded names (60-day median turnover) whose close beat its
+      <strong>highest close of the previous 250 sessions</strong> with <strong>no such high in the 20 sessions before</strong>.
+      Strongest 12-month momentum fills first. Bought at the confirmed close — there is nothing to approve.
+    </div>
+    <div class="scan-meta" id="scan-meta"></div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Tier</th>
+          <th class="num">Close</th>
+          <th class="num mobile-hide">52w high</th>
+          <th class="num">Through</th>
+          <th class="num mobile-hide">12-1 mom</th>
+          <th class="num mobile-hide">Turnover rank</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="candidates-body">
+        <tr><td colspan="8" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Open positions</div>
+    <!-- "Sell now" can be refused (409) by app.py when the engine already
+         closed the position — said out loud, same as the other engine pages. -->
+    <div id="action-error" class="paused-notice" role="alert" style="display:none;"></div>
+    <table class="sig-table positions-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Tier</th>
+          <th class="mobile-hide">Sector</th>
+          <th class="mobile-hide">Ver</th>
+          <th class="num mobile-hide">Shares</th>
+          <th class="num mobile-hide">Entry</th>
+          <th class="num">Now</th>
+          <th class="num mobile-hide">Spread</th>
+          <th class="num">P&amp;L</th>
+          <th class="num mobile-hide">TP</th>
+          <th class="num mobile-hide">SL</th>
+          <th class="mobile-hide">Exit by</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="open-body">
+        <tr><td colspan="13" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+    <!-- Sector concentration. Informational: no engine gates on it. -->
+    <div class="conc-wrap" id="conc-wrap"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Closed trades</div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Tier</th>
+          <th class="mobile-hide">Ver</th>
+          <th>Entry → Exit</th>
+          <th class="num mobile-hide">Entry</th>
+          <th class="num mobile-hide">Exit</th>
+          <th class="num">Return</th>
+          <th class="num">P&amp;L</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody id="closed-body">
+        <tr><td colspan="9" class="empty-row">No trades yet</td></tr>
+      </tbody>
+    </table>
+    <div class="pagination" id="closed-pagination" style="display:none;">
+      <button class="page-btn" id="closed-prev" onclick="closedPageChange(-1)">‹ Prev</button>
+      <span class="page-info" id="closed-page-info">Page 1 of 1</span>
+      <button class="page-btn" id="closed-next" onclick="closedPageChange(1)">Next ›</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Latest run log</div>
+    <div id="log-panel"><span class="log-empty">Loading…</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">By version <span class="panel-note">— which generation of the strategy each trade ran under</span></div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Version</th>
+          <th class="num">N</th>
+          <th class="num">WR</th>
+          <th class="num">Avg ret</th>
+          <th class="num">P&amp;L</th>
+          <th class="mobile-hide">What changed</th>
+        </tr>
+      </thead>
+      <tbody id="version-body"><tr><td colspan="6" class="empty-row">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <script src="/live_common.js"></script>
+  <script>
+    // +10 / -15 is a 60% break-even on its face. Roughly a third of trades end on
+    // the 12-week time exit instead, so read the bar as approximate; the
+    // 2003-2026 backtest ran ~62% with these exits.
+    setBreakeven(0.10, -0.15);
+    let forceSellSet = new Set();
+    let tickerPaths  = {};
+
+    const closedPager = makePager(
+      { body: 'closed-body', pager: 'closed-pagination', info: 'closed-page-info', prev: 'closed-prev', next: 'closed-next' },
+      9, 'No trades yet');
+
+    function closedPageChange(delta) { closedPager.change(delta); }
+
+    async function refresh() {
+      try {
+        const [pf, log, sellQueue] = await Promise.all([
+          fetch('/live-breakout-portfolio').then(r => r.json()),
+          fetch('/live-breakout-log').then(r => r.json()),
+          fetch('/live-breakout-force-sell').then(r => r.json()).catch(() => []),
+          loadTiers(),
+          loadSectors(),
+          loadVersions(),
+        ]);
+        forceSellSet = new Set(Array.isArray(sellQueue) ? sellQueue : []);
+        renderPortfolio(pf);
+        renderLog(log);
+      } catch (e) {
+        console.error('refresh failed', e);
+      }
+    }
+
+    function showActionError(msg) {
+      const el = document.getElementById('action-error');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.style.display = msg ? '' : 'none';
+    }
+
+    async function toggleForceSell(ticker, btn) {
+      const adding = !forceSellSet.has(ticker);
+      btn.disabled = true;
+      try {
+        const res = await fetch('/live-breakout-force-sell', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: adding ? 'add' : 'remove', ticker }),
+        }).then(r => r.json());
+        if (res && res.ok) {
+          showActionError('');
+          forceSellSet = new Set(res.queued || []);
+          refresh();
+        } else {
+          showActionError((res && res.error) ||
+            'Sell now was refused by the server and was NOT queued.');
+          refresh();
+        }
+      } catch (e) {
+        console.error('toggle force-sell failed', e);
+        showActionError('Could not reach the server — "Sell now" was NOT queued.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // Local calendar date, same convention as the engine's today_local().
+    function todayIso() {
+      const d = new Date(), pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+
+    // The target is only live from week 4, so the TP cell says when it switches on.
+    function tpCell(pos) {
+      const live = pos.tp_live_from && todayIso() >= pos.tp_live_from;
+      const note = !pos.tp_live_from ? ''
+        : (live ? 'live' : `from ${pos.tp_live_from}`);
+      const title = live
+        ? 'Target is live: a cross books at exactly +10%'
+        : `Target switches on at the 20th session (${pos.tp_live_from || '?'}). A position already above it then sells at market.`;
+      return `<td class="num mobile-hide" title="${esc(title)}">${fmt(pos.tp, 2)}`
+           + `<div class="small">${esc(note)}</div></td>`;
+    }
+
+    function renderPortfolio(p) {
+      const cash = p.cash || 0;
+      const positions = p.positions || {};
+      const closed    = p.closed_trades || [];
+      const scan      = p.last_scan || null;
+      tickerPaths = (p.ticker_paths && typeof p.ticker_paths === 'object') ? p.ticker_paths : {};
+      const lastQuotes = (p.last_quotes && typeof p.last_quotes === 'object') ? p.last_quotes : {};
+
+      const openVal = Object.entries(positions).reduce((s, [tk, pos]) => {
+        const last = (lastQuotes[tk] && lastQuotes[tk].last) || pos.entry_price;
+        return s + pos.shares * last;
+      }, 0);
+      const equity   = cash + openVal;
+      const realized = closed.reduce((s, t) => s + (t.pnl_sek || 0), 0);
+      const scored   = scoredTrades(closed);
+      const stale    = closed.length - scored.length;
+      const wins     = scored.filter(t => (t.pnl_sek || 0) > 0).length;
+      const wr       = scored.length ? wins / scored.length : null;
+
+      const walletStart = p.wallet_start || 1000000;
+      const walletRet = equity / walletStart - 1;
+      document.getElementById('stat-equity').textContent = fmt(equity, 0) + ' SEK';
+      document.getElementById('stat-equity-sub').textContent =
+        `${(walletRet * 100).toFixed(2)}% vs ${(walletStart/1000).toFixed(0)}k contributed`;
+
+      // The line this engine has to beat. Both sides are price-only: the engine's
+      // fills carry no dividends and neither does the PI index.
+      const bm = p.benchmark || {};
+      const benchEl = document.getElementById('stat-bench');
+      if (bm.ret != null) {
+        const diff = walletRet - bm.ret;
+        benchEl.textContent = `${diff >= 0 ? '+' : ''}${(diff * 100).toFixed(2)} pp`;
+        benchEl.className = 'stat-value ' + cls(diff);
+        // "as of" is part of the claim: an index level that stopped updating
+        // must not keep passing for a current comparison.
+        document.getElementById('stat-bench-sub').textContent =
+          `index ${pct(bm.ret)} since ${bm.from}, as of ${bm.date} (price, no dividends)`
+          + (bm.error ? ` · ${bm.error}` : '');
+      } else {
+        benchEl.textContent = '—';
+        benchEl.className = 'stat-value';
+        document.getElementById('stat-bench-sub').textContent =
+          bm.error ? `benchmark unavailable: ${bm.error}` : 'benchmark not read yet';
+      }
+
+      document.getElementById('stat-cash').textContent = fmt(cash, 0) + ' SEK';
+      document.getElementById('stat-cash-sub').textContent =
+        `${Object.keys(positions).length} live, ${closed.length} closed`;
+      document.getElementById('stat-open').textContent = `${Object.keys(positions).length} / 20`;
+      document.getElementById('stat-open-sub').textContent = `${fmt(openVal, 0)} SEK deployed`;
+      const realizedEl = document.getElementById('stat-realized');
+      realizedEl.textContent = sign(realized) + ' SEK';
+      realizedEl.className = 'stat-value ' + cls(realized);
+      document.getElementById('stat-realized-sub').textContent = `${closed.length} trade${closed.length===1?'':'s'}`;
+      if (wr === null) {
+        document.getElementById('stat-wr').textContent = '—';
+        document.getElementById('stat-wr-sub').textContent = 'no closed trades yet';
+      } else {
+        const wrEl = document.getElementById('stat-wr');
+        wrEl.textContent = (wr*100).toFixed(0) + '%';
+        wrEl.className = 'stat-value ' + wrClass(wr);
+        document.getElementById('stat-wr-sub').textContent =
+          `${wins}W / ${scored.length-wins}L  (${(BREAKEVEN_WR*100).toFixed(0)}% breakeven · backtest ≈62%)`
+          + (stale ? `  · ${stale} unmanaged excluded` : '');
+      }
+
+      // Entries can be switched off engine-side (ENTRIES_PAUSED in live_breakout.py).
+      const paused = p.entries_paused === true;
+      const notice = document.getElementById('paused-notice');
+      if (paused) {
+        const since = p.paused_since ? ` since <strong>${esc(p.paused_since)}</strong>` : '';
+        notice.className = 'paused-notice';
+        notice.innerHTML =
+          `<strong>⏸ New entries are paused${since}.</strong> ` +
+          `${esc(p.paused_reason || '')} Nothing below will be bought ` +
+          `until <strong>ENTRIES_PAUSED</strong> is set back to False in live_breakout.py.`;
+        notice.style.display = '';
+      } else {
+        notice.style.display = 'none';
+      }
+
+      // The gate itself — for most of the day the honest answer to "why did
+      // nothing buy?" is "the scan runs after the close". Only a closed gate
+      // whose reason is not routine is worth a banner.
+      const gate = p.last_entry_gate || p.entry_gate;
+      const gateEl = document.getElementById('gate-notice');
+      if (gate && !paused && !gate.open && gate.reason && !/already scanned|intraday run|weekend|market holiday|before the/.test(gate.reason)) {
+        gateEl.className = 'paused-notice';
+        gateEl.innerHTML = `<strong>No entry pass right now.</strong> ${esc(gate.reason)}.`;
+        gateEl.style.display = '';
+      } else {
+        gateEl.style.display = 'none';
+      }
+
+      // Latest scan — dated, because it is written once a day and stays on the
+      // page until the next close.
+      const metaEl = document.getElementById('scan-meta');
+      const candBody = document.getElementById('candidates-body');
+      if (!scan) {
+        metaEl.textContent = gate ? `No scan yet — ${gate.reason || 'waiting for the first close-confirmed pass'}.` : '';
+        candBody.innerHTML = '<tr><td colspan="8" class="empty-row">No scan has run yet</td></tr>';
+      } else {
+        const u = scan.universe || {};
+        metaEl.textContent =
+          `Scan of ${scan.date} (${fmtTs(scan.checked).slice(11, 16)}): top ${u.size ?? '?'} of ${u.eligible ?? '?'} eligible names, `
+          + `turnover cutoff ${u.cutoff_msek ?? '?'} MSEK/day · ${u.quoted ?? '?'} quoted`
+          + (u.no_quote ? ` · ${u.no_quote} without a quote` : '')
+          + ` · ${u.signals ?? 0} fresh 52-week high${u.signals === 1 ? '' : 's'}.`;
+        const cands = Array.isArray(scan.candidates) ? scan.candidates : [];
+        if (!cands.length) {
+          candBody.innerHTML = '<tr><td colspan="8" class="empty-row">No fresh 52-week highs at this close</td></tr>';
+        } else {
+          candBody.innerHTML = cands.map(c => {
+            const status = c.entered
+              ? '<span class="skip-tag bought">bought at the close</span>'
+              : (c.skip_reasons || []).map(r => `<span class="skip-tag">${esc(r)}</span>`).join(' ')
+                || '<span class="skip-tag">not bought</span>';
+            return `
+              <tr>
+                <td class="ticker">${tickerLink(c.ticker)}</td>
+                ${tierCell(c.ticker)}
+                <td class="num">${fmt(c.close, 2)}</td>
+                <td class="num mobile-hide">${fmt(c.prior_high, 2)}</td>
+                <td class="num up">${pct(c.breakout_pct, 1)}</td>
+                <td class="num mobile-hide ${c.mom_12_1 == null ? '' : cls(c.mom_12_1)}">${c.mom_12_1 == null ? '—' : pct(c.mom_12_1, 0)}</td>
+                <td class="num mobile-hide" title="${esc(fmt(c.turnover_msek, 1) + ' MSEK/day median turnover')}">${c.rank}</td>
+                <td>${status}</td>
+              </tr>`;
+          }).join('');
+        }
+      }
+
+      // Open positions — canonical 13-column table (no Pattern column).
+      const openBody = document.getElementById('open-body');
+      const openList = Object.entries(positions).sort((a,b) => a[0].localeCompare(b[0]));
+      if (!openList.length) {
+        openBody.innerHTML = '<tr><td colspan="13" class="empty-row">No open positions</td></tr>';
+      } else {
+        openBody.innerHTML = openList.map(([tk, pos]) => {
+          const lq   = lastQuotes[tk] || {};
+          const now  = (lq.last != null) ? lq.last : pos.entry_price;
+          const pnl  = pos.shares * (now - pos.entry_price);
+          const ret  = now / pos.entry_price - 1;
+          const queued  = forceSellSet.has(tk);
+          const canSell = queued || ret >= SELL_MIN_RET;
+          const early   = pos.tp_live_from && todayIso() < pos.tp_live_from;
+          const btnLabel = queued ? '✓ Sell queued' : 'Sell now';
+          const btnTitle = queued
+            ? 'Position is queued for sale on the next engine run — click to cancel'
+            : (ret >= SELL_MIN_RET
+                 ? `Manually sell at market on next run (+${(ret*100).toFixed(2)}% unrealized)`
+                   + (early ? ` — before week 4 this departs from the tested rules` : '')
+                 : `Sell button unlocks at +${(SELL_MIN_RET*100).toFixed(2)}% unrealized (currently ${ret>=0?'+':''}${(ret*100).toFixed(2)}%)`);
+          return `
+            <tr>
+              <td class="ticker">${tickerLink(tk)}</td>
+              ${tierCell(tk)}
+              <td class="mobile-hide sector-cell">${sectorPill(tk)}</td>
+              ${verCell('breakout', pos, 'mobile-hide ver-cell')}
+              <td class="num mobile-hide">${fmt(pos.shares, 0)}</td>
+              <td class="num mobile-hide">${fmt(pos.entry_price, 2)}</td>
+              <td class="num">${fmt(now, 2)}${staleMark(lq)}</td>
+              ${spreadCell(lq, pos, now)}
+              <td class="num ${cls(ret)}">${pct(ret)}  <span class="small">(${sign(pnl)})</span></td>
+              ${tpCell(pos)}
+              <td class="num mobile-hide">${fmt(pos.sl, 2)}</td>
+              ${exitCell(pos)}
+              <td class="action-cell">
+                <button class="sell-btn${queued ? ' queued' : ''}"
+                        ${canSell ? '' : 'disabled'}
+                        title="${esc(btnTitle)}"
+                        data-ticker="${esc(tk)}"
+                        onclick="toggleForceSell(this.dataset.ticker, this)">
+                  ${btnLabel}
+                </button>
+              </td>
+            </tr>`;
+        }).join('');
+      }
+
+      const concWrap = document.getElementById('conc-wrap');
+      if (concWrap) {
+        const rows = sectorConcentration(
+          openList.map(([tk, pos]) => ({ ticker: tk, cost: pos.cost_sek })));
+        concWrap.innerHTML = rows.length
+          ? `<div class="section-title" style="margin:16px 0 4px">Sector concentration</div>` +
+            rows.map(g => `
+              <div class="conc-row" title="${esc(g.tickers.join(', '))}">
+                <div class="conc-name">${esc(g.sector)}</div>
+                <div class="conc-track">
+                  <div class="conc-fill${g.pct >= 40 ? ' hot' : ''}" style="width:${g.pct.toFixed(1)}%"></div>
+                </div>
+                <div class="conc-val">${g.n} pos · ${g.pct.toFixed(0)}%</div>
+              </div>`).join('')
+          : '';
+      }
+
+      renderVersionBreakdown('breakout', closed, 'version-body');
+
+      // Closed trades (newest first), paginated 10 per page
+      const closedSorted = [...closed].sort((a,b) => (b.exit_date || '').localeCompare(a.exit_date || ''));
+      closedPager.setData(closedSorted, t => {
+          const inLabel  = fmtTs(t.entry_ts) || t.entry_date || '';
+          const outLabel = fmtTs(t.exit_ts)  || t.exit_date  || '';
+          return `
+            <tr>
+              <td class="ticker">${tickerLink(t.ticker)}</td>
+              ${tierCell(t.ticker)}
+              ${verCell('breakout', t, 'mobile-hide')}
+              <td class="small">${esc(inLabel)}<br>→ ${esc(outLabel)}</td>
+              <td class="num mobile-hide">${fmt(t.entry_price, 2)}</td>
+              <td class="num mobile-hide">${fmt(t.exit_price, 2)}</td>
+              <td class="num ${cls(t.ret_pct)}">${pct(t.ret_pct)}</td>
+              <td class="num ${cls(t.pnl_sek)}">${sign(t.pnl_sek)}</td>
+              <td><span class="pill reason-${esc(t.reason || '')}">${esc(t.reason || '')}</span></td>
+            </tr>`;
+      });
+    }
+
+    function renderLog(log) {
+      const panel = document.getElementById('log-panel');
+      const txt = log && log.text ? log.text : '';
+      if (!txt.trim()) {
+        panel.innerHTML = '<span class="log-empty">No log yet — first run happens at the next LaunchAgent cycle</span>';
+      } else {
+        panel.textContent = txt;
+        panel.scrollTop = panel.scrollHeight;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 120000);
+  </script>
+  <script src="/nav.js"></script>
+  <script src="/live_widget.js"></script>
+</body>
+</html>

@@ -21,12 +21,21 @@ function pollUpdateAll() {
         btn.textContent = `Updating… ${d.done}/${d.total}`;
         setTimeout(pollUpdateAll, 2000);
       } else {
-        btn.textContent = d.total > 0 ? `Done (${d.total})` : 'Update All';
+        btn.textContent = d.total > 0 ? `Done (${doneLabel(d)})` : 'Update All';
+        btn.title = d.message || '';
         btn.disabled = false;
         if (d.total > 0) setTimeout(() => { if (btn) btn.textContent = 'Update All'; }, 3000);
       }
     })
     .catch(resetUpdateBtn);
+}
+
+// What a finished update actually fetched. Instruments on the delisted skip list
+// count towards `total` but were never requested, so they are shown apart rather
+// than folded into a count that implies they were refreshed. The full outcome,
+// errors included, goes in the button's tooltip (d.message).
+function doneLabel(d) {
+  return d.skipped ? `${d.total - d.skipped} · ${d.skipped} skipped` : `${d.total}`;
 }
 
 function resetUpdateBtn() {

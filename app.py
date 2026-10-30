@@ -1,7 +1,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from concurrent.futures import ThreadPoolExecutor
 import sys
-import threading, webbrowser, json, urllib.parse, os, csv, time, re
+import threading, webbrowser, json, urllib.parse, urllib.error, os, csv, time, re, random
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
@@ -41,6 +41,7 @@ MARKET_INDICES = [
 INDEX_PATH     = os.path.join(STATE_DIR, "stock_index.json")
 HISTORY_PATH   = os.path.join(STATE_DIR, "scrape_history.json")
 SETTINGS_PATH  = os.path.join(STATE_DIR, "settings.json")
+DEAD_INSTRUMENTS_PATH = os.path.join(STATE_DIR, "dead_instruments.json")
 WATCHLIST_PATH = os.path.join(STATE_DIR, "watchlist.json")
 ALERTS_PATH    = os.path.join(STATE_DIR, "alerts.json")
 NAMES_CSV_PATH = os.path.join(BASE_DIR, "stock_names.csv")
@@ -59,6 +60,9 @@ LIVE_CROSS_PORTFOLIO_PATH  = os.path.join(STATE_DIR, "live_cross_portfolio.json"
 LIVE_CROSS_LOG_PATH        = os.path.join(LOGS_DIR,  "live_cross.log")
 LIVE_CROSS_APPROVED_PATH   = os.path.join(STATE_DIR, "live_cross_approved.json")
 LIVE_CROSS_FORCE_SELL_PATH = os.path.join(STATE_DIR, "live_cross_force_sell.json")
+LIVE_BREAKOUT_PORTFOLIO_PATH  = os.path.join(STATE_DIR, "live_breakout_portfolio.json")
+LIVE_BREAKOUT_LOG_PATH        = os.path.join(LOGS_DIR,  "live_breakout.log")
+LIVE_BREAKOUT_FORCE_SELL_PATH = os.path.join(STATE_DIR, "live_breakout_force_sell.json")
 
 
 def _load_names():
@@ -135,6 +139,7 @@ _live_force_sell_lock            = threading.Lock()
 _live_patterns_force_sell_lock   = threading.Lock()
 _live_cross_approved_lock        = threading.Lock()
 _live_cross_force_sell_lock      = threading.Lock()
+_live_breakout_force_sell_lock   = threading.Lock()
 _live_limit_orders_lock          = threading.Lock()
 _dashboard_cache    = {}
 _dashboard_cache_lock = threading.Lock()
@@ -201,6 +206,15 @@ def _read_live_cross_portfolio():
                 "closed_trades": [], "pending_candidates": [], "last_run": None}
 
 
+def _read_live_breakout_portfolio():
+    try:
+        with open(LIVE_BREAKOUT_PORTFOLIO_PATH, encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"cash": 1000000, "wallet_start": 1000000, "positions": {},
+                "closed_trades": [], "last_run": None}
+
+
 # ── changelog / version ledger ───────────────────────────────────────────────
 # CHANGELOG.json carries two version tiers (see lib/version.py). The page wants
 # the ledger *plus* what each strategy version actually did to the P&L, which
@@ -211,6 +225,7 @@ _CHANGELOG_WALLET_READERS = {
     "signals":  lambda: _read_live_portfolio(),
     "patterns": lambda: _read_live_patterns_portfolio(),
     "cross":    lambda: _read_live_cross_portfolio(),
+    "breakout": lambda: _read_live_breakout_portfolio(),
 }
 
 
@@ -285,6 +300,7 @@ _HEALTH_ENGINES = (
     ("Signals",  "live_portfolio.json"),
     ("Patterns", "live_patterns_portfolio.json"),
     ("Cross",    "live_cross_portfolio.json"),
+    ("Breakout", "live_breakout_portfolio.json"),
 )
 
 # Same labels as _HEALTH_ENGINES, paired with the force-sell queue each wallet
@@ -293,6 +309,7 @@ _HEALTH_FORCE_SELLS = (
     ("Signals",  LIVE_FORCE_SELL_PATH),
     ("Patterns", LIVE_PATTERNS_FORCE_SELL_PATH),
     ("Cross",    LIVE_CROSS_FORCE_SELL_PATH),
+    ("Breakout", LIVE_BREAKOUT_FORCE_SELL_PATH),
 )
 
 _MARKET_OPEN_MIN  = 9 * 60
@@ -352,6 +369,43 @@ def _last_completed_session(now):
             return d
 
 
+def _parse_stamp(val):
+    """An engine's ISO timestamp as an aware datetime (naive reads as UTC)."""
+    import datetime as _dt
+    if not val:
+        return None
+    try:
+        dt = _dt.datetime.fromisoformat(val)
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+
+
+def _session_coverage(stamp, session, close_min):
+    """(status, detail) for an engine whose last in-session tick was `stamp`,
+    judged after the `session` close; detail is None when it was covered.
+
+    It has to have been alive for the session — and alive until its CLOSE. A
+    date-only test called an engine that ticked once at 09:03 and then died (the
+    exit-78 failure mode: every later tick exits with no output) "ok" all the
+    way to the next open, which is exactly the window someone is most likely to
+    glance at the banner. Everything after the last stamp — stops, 7-day
+    timeouts, the EOD sweep — did not run.
+    """
+    local = stamp.astimezone()
+    if local.date() < session:
+        return "critical", f"no run during the {session.isoformat()} session"
+    stopped_min = local.hour * 60 + local.minute
+    if local.date() == session and stopped_min < close_min - _HEALTH_SESSION_SLACK_MIN:
+        short_h = (close_min - stopped_min) / 60.0
+        # A tick or two short of the close is a machine sleeping early;
+        # hours short means the session ran unattended.
+        return ("warn" if short_h <= 2 else "critical",
+                f"last ran at {local.strftime('%H:%M')}, {short_h:.1f}h before "
+                f"the {session.isoformat()} close")
+    return "ok", None
+
+
 def _live_health():
     import datetime as _dt
     now      = _dt.datetime.now()
@@ -362,6 +416,7 @@ def _live_health():
 
     engines = []
     states  = {}
+    stamps  = []      # (last_run, last in-session tick, faulted) per stamped engine
     for label, fname in _HEALTH_ENGINES:
         try:
             with open(os.path.join(STATE_DIR, fname), encoding='utf-8') as f:
@@ -372,15 +427,7 @@ def _live_health():
             continue
         states[label] = st
 
-        last_run = st.get("last_run")
-        dt = None
-        if last_run:
-            try:
-                dt = _dt.datetime.fromisoformat(last_run)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=_dt.timezone.utc)
-            except ValueError:
-                dt = None
+        dt = _parse_stamp(st.get("last_run"))
         if dt is None:
             engines.append({"name": label, "status": "critical", "age_min": None,
                             "detail": "never run"})
@@ -391,32 +438,45 @@ def _live_health():
             # Ticks every 3 min (launchd StartInterval 180) while the market runs.
             status = "ok" if age_min <= 30 else ("warn" if age_min <= 90 else "critical")
             detail = f"last run {age_min:.0f} min ago"
+            sess_dt = dt
         else:
-            # Off-hours: it has to have been alive for the last session — and
-            # alive until that session's CLOSE. A date-only test called an
-            # engine that ticked once at 09:03 and then died (the exit-78
-            # failure mode: every later tick exits with no output) "ok" all the
-            # way to the next open, which is exactly the window someone is most
-            # likely to glance at the banner. Everything after the last stamp —
-            # stops, 7-day timeouts, the EOD sweep — did not run.
-            local     = dt.astimezone()
-            ran_since = local.date() >= session
-            stopped_min = local.hour * 60 + local.minute
-            if not ran_since:
-                status = "critical"
-                detail = f"has not run since the {session.isoformat()} session"
-            elif local.date() == session and stopped_min < close_min(session) - _HEALTH_SESSION_SLACK_MIN:
-                short_h = (close_min(session) - stopped_min) / 60.0
-                # A tick or two short of the close is a machine sleeping early;
-                # hours short means the session ran unattended.
-                status = "warn" if short_h <= 2 else "critical"
-                detail = (f"stopped at {local.strftime('%H:%M')} — {short_h:.1f}h "
-                          f"before the {session.isoformat()} close")
-            else:
-                status = "ok"
+            # Off-hours, judged on the last IN-SESSION tick. Signals, Cross and
+            # Breakout save on every tick around the clock, so on last_run one
+            # post-close tick from a Mac waking briefly read "ok" after a
+            # session they slept through, while Patterns — which never saves
+            # with the market closed — went critical alone and took the blame
+            # for the Mac (2026-10-29/30). A wallet not stamped since that fix
+            # falls back to last_run until its first in-session tick.
+            sess_dt = _parse_stamp(st.get("last_session_run")) or dt
+            status, detail = _session_coverage(sess_dt, session, close_min(session))
+            if detail is None:
                 detail = f"last run {age_min / 60:.0f}h ago"
         engines.append({"name": label, "status": status,
                         "age_min": round(age_min, 1), "detail": detail})
+        stamps.append((dt, sess_dt, status != "ok"))
+
+    # All engines run from one LaunchAgent chain on one Mac, so when EVERY one
+    # is behind it is one fault — the Mac asleep or off, or the scheduler dead —
+    # not four rows, and not whichever engine happened to show it. Ticks since
+    # the close tell those apart: the scheduler is alive, so the gap was sleep.
+    if len(engines) > 1 and len(stamps) == len(engines) and all(f for _, _, f in stamps):
+        latest  = max(r for r, _, _ in stamps)
+        age_min = (now_utc - latest).total_seconds() / 60.0
+        if open_now:
+            status = "warn" if age_min <= 90 else "critical"
+            detail = f"none has run for {age_min:.0f} min"
+        else:
+            cm = close_min(session)
+            status, detail = _session_coverage(max(s for _, s, _ in stamps),
+                                               session, cm)
+            closed_at = _dt.datetime.combine(
+                session, _dt.time(cm // 60, cm % 60)).astimezone()
+            if latest > closed_at:
+                detail = f"Mac asleep or off — {detail} (ticking again since the close)"
+            else:
+                detail += ", and none has run since"
+        engines = [{"name": f"All {len(engines)} engines", "status": status,
+                    "age_min": round(age_min, 1), "detail": detail}]
 
     # OHLC capture and the EOD sweep are date-keyed and driven by live_signals.
     jobs = []
@@ -900,7 +960,7 @@ def _validated_ntfy_server(value):
 
 _index_lock          = threading.Lock()
 _refresh_status_lock = threading.Lock()
-_refresh_all_status  = {"running": False, "done": 0, "total": 0,
+_refresh_all_status  = {"running": False, "done": 0, "total": 0, "skipped": 0,
                         "errors": 0, "errors_sample": [], "message": ""}
 _backfill_status     = {"running": False, "done": 0, "total": 0, "fetched": 0, "skipped": 0, "errors": 0, "message": ""}
 _isin_status         = {"running": False, "done": 0, "total": 0, "updated": 0, "failed": 0, "elapsed_s": 0, "message": ""}
@@ -1012,6 +1072,175 @@ def _refresh_worker_count():
     return max(1, min(MAX_REFRESH_WORKERS, n))
 
 
+# ── delisted-instrument skip list ────────────────────────────────────────────
+# About a third of the full universe answers fetch_stock with a permanent
+# `HTTP 403 {}`: expired warrants, certificates and derivatives (they expire on
+# a rolling basis, and the universe was last scraped 2026-05-27), plus the odd
+# delisted share. Every full sweep spent ~19k requests collecting those
+# refusals, which costs time and is the kind of traffic that gets an IP blocked.
+#
+# The 403 itself proves nothing: an expired token gets the byte-identical
+# `403 {}`. So a sweep run during a token expiry or an IP block must not be able
+# to blacklist healthy instruments, which is what the two rules are for:
+#   * a 403 only counts if Millistream served some instrument AFTER it in the
+#     same sweep, proving our own access still worked (see _do_refresh_all);
+#   * an instrument is skipped only once counted 403s are at least
+#     _DEAD_CONFIRM_S apart with no successful fetch in between, because any
+#     success deletes its entry.
+# A skipped instrument is re-checked after _DEAD_RECHECK_DAYS, doubling per
+# failed re-check up to _DEAD_RECHECK_MAX_DAYS, jittered so ~19k entries marked
+# in one sweep don't all come due in the same later one. Any successful fetch
+# (a re-check, or a stock page's manual refresh) takes it off the list.
+_DEAD_CONFIRM_S        = 12 * 3600
+_DEAD_RECHECK_DAYS     = 7
+_DEAD_RECHECK_MAX_DAYS = 28
+_dead_lock  = threading.Lock()
+_dead_cache = {"mtime": None, "keys": frozenset()}
+
+
+def _load_dead():
+    """{insref_str: entry} from dead_instruments.json, or {} if absent.
+
+    The file is a derived cache, so an unreadable one is logged and treated as
+    empty: the cost is one confirmation cycle of re-learning, not lost data.
+    """
+    try:
+        with open(DEAD_INSTRUMENTS_PATH, encoding='utf-8') as f:
+            dead = json.load(f)
+        if isinstance(dead, dict):
+            return dead
+        print(f"[dead] {DEAD_INSTRUMENTS_PATH} is not a JSON object — starting a fresh list")
+    except FileNotFoundError:
+        pass
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[dead] {DEAD_INSTRUMENTS_PATH} is unreadable ({e}) — starting a fresh list")
+    return {}
+
+
+def _save_dead(dead):
+    ec.write_json_atomic(DEAD_INSTRUMENTS_PATH, dead, ensure_ascii=False, indent=None)
+
+
+def _parse_utc(ts):
+    """Aware datetime from an ISO string, or None. A naive one (a hand edit) is
+    read as UTC, since comparing it with an aware one would raise mid-sweep."""
+    import datetime as _dt
+    try:
+        parsed = _dt.datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_dt.timezone.utc)
+
+
+def _dead_skipping(entry, now):
+    """True while a confirmed-dead entry's re-check is still in the future. A
+    malformed entry is fetched, and that fetch's outcome rewrites it."""
+    if not entry or not entry.get("dead_since"):
+        return False
+    recheck_at = _parse_utc(entry.get("recheck_at"))
+    return recheck_at is not None and recheck_at > now
+
+
+def _next_recheck(now, rechecks):
+    import datetime as _dt
+    days = min(_DEAD_RECHECK_DAYS * 2 ** rechecks, _DEAD_RECHECK_MAX_DAYS)
+    return (now + _dt.timedelta(days=days * random.uniform(1.0, 1.25))).isoformat(timespec="seconds")
+
+
+def _record_dead_outcomes(forbidden, last_ok_seq, ok_insrefs, by_insref, on_disk):
+    """Fold one sweep's fetch outcomes into dead_instruments.json.
+
+    forbidden    {insref: seq} for fetch_stock calls answered 403, where seq is
+                 the order the call completed in
+    last_ok_seq  completion seq of the sweep's last successful fetch (-1: none)
+    ok_insrefs   every insref fetched successfully
+    by_insref    {insref: stock} for the instruments the sweep fetched
+    on_disk      every insref on disk; entries for anything else are pruned
+
+    Re-reads the file under _dead_lock instead of reusing the sweep's start-time
+    snapshot, so a "Re-check all" pressed mid-sweep survives this write.
+    Returns {"marked", "revived", "unvouched"} for the status message.
+    """
+    import datetime as _dt
+    now     = _dt.datetime.now(_dt.timezone.utc)
+    now_s   = now.isoformat(timespec="seconds")
+    confirm = _dt.timedelta(seconds=_DEAD_CONFIRM_S)
+    marked = revived = unvouched = 0
+    with _dead_lock:
+        dead    = _load_dead()
+        changed = False
+        # An empty scan means the instrument folders were unreadable, not that
+        # every instrument is gone, so it must not wipe the list.
+        stale = [k for k in dead if not k.isdigit() or int(k) not in on_disk] if on_disk else []
+        for key in stale:
+            del dead[key]
+            changed = True
+        for insref in ok_insrefs:
+            entry = dead.pop(str(insref), None)
+            if entry is not None:
+                changed = True
+                revived += bool(entry.get("dead_since"))
+        for insref, seq in forbidden.items():
+            if seq > last_ok_seq:
+                unvouched += 1      # nothing succeeded after it: our own access may have failed
+                continue
+            stock = by_insref[insref]
+            entry = dead.get(str(insref)) or {
+                "name": stock["name"], "type": stock["type"], "currency": stock["currency"],
+                "first_403": now_s, "strikes": 0,
+                "dead_since": None, "recheck_at": None, "rechecks": 0,
+            }
+            entry["strikes"]  = entry.get("strikes", 0) + 1
+            entry["last_403"] = now_s
+            if entry.get("dead_since"):
+                # Only a due re-check is ever fetched, and it is still 403.
+                entry["rechecks"]   = entry.get("rechecks", 0) + 1
+                entry["recheck_at"] = _next_recheck(now, entry["rechecks"])
+            else:
+                first = _parse_utc(entry.get("first_403"))
+                if first is None:
+                    entry["first_403"] = now_s          # unreadable: restart the clock
+                elif now - first >= confirm:
+                    entry["dead_since"] = now_s
+                    entry["recheck_at"] = _next_recheck(now, 0)
+                    marked += 1
+            dead[str(insref)] = entry
+            changed = True
+        if changed:
+            _save_dead(dead)
+    return {"marked": marked, "revived": revived, "unvouched": unvouched}
+
+
+def _dead_listed(insref):
+    """Cheap membership test for /refresh, which every open stock page polls
+    every 30 s. The key set is re-read only when the file has changed."""
+    try:
+        mtime = os.path.getmtime(DEAD_INSTRUMENTS_PATH)
+    except OSError:
+        return False
+    if _dead_cache["mtime"] != mtime:
+        _dead_cache["keys"]  = frozenset(_load_dead())
+        _dead_cache["mtime"] = mtime
+    return str(insref) in _dead_cache["keys"]
+
+
+def _dead_revive(insref):
+    """Take insref off the list after it was fetched successfully outside a sweep.
+
+    Best effort and never raises: its caller swallows exceptions, so a failed
+    write here would otherwise silently cost the refresh its CSV update."""
+    try:
+        if not _dead_listed(insref):
+            return
+        with _dead_lock:
+            dead = _load_dead()
+            if dead.pop(str(insref), None) is not None:
+                _save_dead(dead)
+                print(f"[dead] {insref} fetched OK — removed from the delisted skip list")
+    except Exception as e:
+        print(f"[dead] could not take {insref} off the delisted list: {e!r}")
+
+
 def _do_refresh_all(update_filter=None):
     # The whole body sits inside try/finally because the running flag used to be
     # cleared only in the executor's finally: a raise from _scan_all_stocks() or
@@ -1019,13 +1248,16 @@ def _do_refresh_all(update_filter=None):
     # every later /refresh-all answered "already running" with no reason kept
     # anywhere. The status dict now also carries how the sweep ENDED, not just
     # how far it got.
-    _refresh_all_status.update({"errors": 0, "errors_sample": [], "message": "Running…"})
+    _refresh_all_status.update({"errors": 0, "errors_sample": [], "skipped": 0,
+                                "message": "Running…"})
     try:
+        import datetime as _dt
         # Always scan the directory so every stock with CSV data is included,
         # regardless of what the index file currently knows about.
         stocks = _scan_all_stocks()
         with _index_lock:
             ec.write_json_atomic(INDEX_PATH, stocks, ensure_ascii=False, indent=None)
+        on_disk = {s["insref"] for s in stocks}
         if isinstance(update_filter, dict):
             type_filter = update_filter.get("types")
             curr_filter = update_filter.get("currencies")
@@ -1033,8 +1265,16 @@ def _do_refresh_all(update_filter=None):
                 stocks = [s for s in stocks if s["type"] in type_filter]
             if curr_filter is not None:
                 stocks = [s for s in stocks if s["currency"] in curr_filter]
-        _refresh_all_status["total"] = len(stocks)
-        _refresh_all_status["done"]  = 0
+
+        # Instruments on the delisted skip list are not requested at all; see
+        # _DEAD_CONFIRM_S for how one gets on it and how it comes back off.
+        now      = _dt.datetime.now(_dt.timezone.utc)
+        dead     = _load_dead()
+        skip     = {s["insref"] for s in stocks if _dead_skipping(dead.get(str(s["insref"])), now)}
+        to_fetch = [s for s in stocks if s["insref"] not in skip]
+        _refresh_all_status["total"]   = len(stocks)
+        _refresh_all_status["skipped"] = len(skip)
+        _refresh_all_status["done"]    = len(skip)
 
         # Names are accumulated and written once at the end. upsert_name_csv rewrites
         # the whole ~2 MB stock_names.csv per call while holding a global lock, which
@@ -1043,12 +1283,34 @@ def _do_refresh_all(update_filter=None):
         names_lock    = threading.Lock()
         done_lock     = threading.Lock()
 
+        # Completion order of every fetch_stock call, for the rule that a 403
+        # only counts if a fetch succeeded after it.
+        fetch_seq  = [0]
+        last_ok    = {"seq": -1, "insref": None}
+        forbidden  = {}
+        ok_insrefs = set()
+
+        def note_fetch(insref, ok):
+            with done_lock:
+                fetch_seq[0] += 1
+                if ok:
+                    last_ok.update(seq=fetch_seq[0], insref=insref)
+                    ok_insrefs.add(insref)
+                else:
+                    forbidden[insref] = fetch_seq[0]
+
         def refresh_one(stock):
             err = None
             try:
                 stock_dir = os.path.normpath(os.path.join(INST_DIR, stock["path"]))
                 if stock_dir.startswith(INST_DIR):
-                    _, _, rows, raw_name = webScrapper.fetch_stock(stock["insref"])
+                    try:
+                        _, _, rows, raw_name = webScrapper.fetch_stock(stock["insref"])
+                    except urllib.error.HTTPError as e:
+                        if e.code == 403:
+                            note_fetch(stock["insref"], ok=False)
+                        raise
+                    note_fetch(stock["insref"], ok=True)
                     with names_lock:
                         pending_names[stock["insref"]] = raw_name
                     webScrapper.update_csvs(
@@ -1074,33 +1336,69 @@ def _do_refresh_all(update_filter=None):
                     if len(_refresh_all_status["errors_sample"]) < 5:
                         _refresh_all_status["errors_sample"].append(err)
 
-        workers = _refresh_worker_count()
+        workers      = _refresh_worker_count()
+        dead_summary = None
         try:
-            if workers > 1 and len(stocks) > 1:
+            if workers > 1 and len(to_fetch) > 1:
                 with ThreadPoolExecutor(max_workers=workers) as ex:
-                    list(ex.map(refresh_one, stocks))
+                    list(ex.map(refresh_one, to_fetch))
             else:
-                for stock in stocks:
+                for stock in to_fetch:
                     refresh_one(stock)
+            # 403s that completed after the last success have nothing vouching
+            # for them. The sweep order is sorted, so that is the same tail
+            # every time, and those instruments could never be confirmed. One
+            # re-fetch of a stock that just worked settles it either way; if it
+            # fails too, our access broke mid-sweep and they stay uncounted.
+            if last_ok["insref"] is not None and any(
+                    seq > last_ok["seq"] for seq in forbidden.values()):
+                try:
+                    webScrapper.fetch_stock(last_ok["insref"])
+                    note_fetch(last_ok["insref"], ok=True)
+                except Exception:
+                    pass
         finally:
             # Flush names even if the sweep was cut short, so the work isn't lost.
             if pending_names:
                 webScrapper.upsert_names_bulk(pending_names.items())
+            try:
+                dead_summary = _record_dead_outcomes(
+                    forbidden, last_ok["seq"], ok_insrefs,
+                    {s["insref"]: s for s in to_fetch}, on_disk)
+            except Exception as e:
+                print(f"[dead] could not update {DEAD_INSTRUMENTS_PATH}: {e!r}")
 
-        total  = _refresh_all_status["total"]
-        errs   = _refresh_all_status["errors"]
-        sample = "; ".join(_refresh_all_status["errors_sample"])
+        total   = _refresh_all_status["total"]
+        skipped = _refresh_all_status["skipped"]
+        fetched = total - skipped
+        errs    = _refresh_all_status["errors"]
+        sample  = "; ".join(_refresh_all_status["errors_sample"])
+        notes   = []
+        if skipped:
+            notes.append(f"{skipped} skipped as delisted")
+        if dead_summary and dead_summary["marked"]:
+            notes.append(f"{dead_summary['marked']} newly added to the delisted list")
+        if dead_summary and dead_summary["revived"]:
+            notes.append(f"{dead_summary['revived']} taken off the delisted list")
+        if dead_summary and dead_summary["unvouched"]:
+            notes.append(f"{dead_summary['unvouched']} 403s not counted towards the delisted "
+                         f"list (no fetch succeeded after them)")
+        extra = (" — " + "; ".join(notes)) if notes else ""
         if total == 0:
             _refresh_all_status["message"] = (
                 f"FAILED — the update filter matched no instruments "
                 f"({_filter_label(update_filter)}); nothing was refreshed")
-        elif errs >= total:
+        elif fetched == 0:
             _refresh_all_status["message"] = (
-                f"FAILED — all {total} fetches raised; no price data was updated. {sample}")
+                f"Completed — all {total} instruments are on the delisted list; "
+                f"nothing was fetched")
+        elif errs >= fetched:
+            _refresh_all_status["message"] = (
+                f"FAILED — all {fetched} fetches raised; no price data was updated{extra}. {sample}")
         elif errs:
-            _refresh_all_status["message"] = f"Completed with {errs} of {total} failing. {sample}"
+            _refresh_all_status["message"] = f"Completed with {errs} of {fetched} failing{extra}. {sample}"
         else:
-            _refresh_all_status["message"] = f"Completed — {total} instruments, no errors"
+            _refresh_all_status["message"] = f"Completed — {fetched} instruments, no errors{extra}"
         print(f"[refresh] {_refresh_all_status['message']}")
     except Exception as e:
         import traceback
@@ -1266,6 +1564,7 @@ def _do_refresh_indices():
 def _do_refresh_one(rel_path, inst_type, currency, stock_dir, insref, name):
     try:
         _, _, rows, raw_name = webScrapper.fetch_stock(insref)
+        _dead_revive(insref)
         webScrapper.update_csvs(name, insref, rows, output_dir=stock_dir,
                                 rel_path=rel_path, inst_type=inst_type, currency=currency,
                                 display_name=raw_name)
@@ -1296,6 +1595,7 @@ STATIC = {
     "/live-signals":   ("text/html; charset=utf-8",          "web/live_signals.html"),
     "/live-patterns":  ("text/html; charset=utf-8",          "web/live_patterns.html"),
     "/live-cross":     ("text/html; charset=utf-8",          "web/live_cross.html"),
+    "/live-breakout":  ("text/html; charset=utf-8",          "web/live_breakout.html"),
     "/ohlc-capture":   ("text/html; charset=utf-8",          "web/ohlc_capture.html"),
     "/changelog":      ("text/html; charset=utf-8",          "web/changelog.html"),
 }
@@ -1318,6 +1618,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json([])
         elif parsed.path == "/refresh-all-status":
             self._json(_refresh_all_status)
+        elif parsed.path == "/dead-instruments":
+            self._dead_instruments()
         elif parsed.path == "/backfill-history-status":
             self._json(_backfill_status)
         elif parsed.path == "/update-isins-status":
@@ -1461,6 +1763,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_read_force_sell_file(LIVE_CROSS_FORCE_SELL_PATH))
         elif parsed.path == "/live-cross-log":
             self._json({"text": _read_last_log_run_at(LIVE_CROSS_LOG_PATH)})
+        elif parsed.path == "/live-breakout-portfolio":
+            self._json(_read_live_breakout_portfolio())
+        elif parsed.path == "/live-breakout-force-sell":
+            with _live_breakout_force_sell_lock:
+                self._json(_read_force_sell_file(LIVE_BREAKOUT_FORCE_SELL_PATH))
+        elif parsed.path == "/live-breakout-log":
+            self._json({"text": _read_last_log_run_at(LIVE_BREAKOUT_LOG_PATH)})
         elif parsed.path == "/live-log":
             self._json({"text": _read_last_log_run(), "running": _live_running["running"]})
         elif parsed.path in STATIC:
@@ -1611,7 +1920,8 @@ class Handler(BaseHTTPRequestHandler):
             self._mutate_ticker_list(raw, _live_force_entry_lock,
                                      _read_live_force_entry, _write_live_force_entry, "forced")
             return
-        if self.path in ("/live-force-sell", "/live-patterns-force-sell", "/live-cross-force-sell"):
+        if self.path in ("/live-force-sell", "/live-patterns-force-sell", "/live-cross-force-sell",
+                         "/live-breakout-force-sell"):
             # Queue (or unqueue) a user-requested "sell now" for one position.
             # The engine executes it on the next run via apply_exit_checks(force_sells=...).
             if self.path.endswith("/live-patterns-force-sell"):
@@ -1620,6 +1930,9 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path.endswith("/live-cross-force-sell"):
                 path_const, lock = LIVE_CROSS_FORCE_SELL_PATH, _live_cross_force_sell_lock
                 read_wallet = _read_live_cross_portfolio
+            elif self.path.endswith("/live-breakout-force-sell"):
+                path_const, lock = LIVE_BREAKOUT_FORCE_SELL_PATH, _live_breakout_force_sell_lock
+                read_wallet = _read_live_breakout_portfolio
             else:
                 path_const, lock = LIVE_FORCE_SELL_PATH, _live_force_sell_lock
                 read_wallet = _read_live_portfolio
@@ -1749,6 +2062,23 @@ class Handler(BaseHTTPRequestHandler):
                 _refresh_all_status["total"]   = 0
                 threading.Thread(target=_do_refresh_all, args=(None,), daemon=True).start()
             self._json({"started": True})
+        elif self.path == "/dead-instruments-recheck":
+            # Make every confirmed entry due, so the next sweep fetches each one
+            # once: a success takes it off the list, a 403 schedules its next
+            # re-check. Merged under _dead_lock, and a sweep already running
+            # re-reads the file before it writes, so this survives either way.
+            import datetime as _dt
+            now_s  = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+            queued = 0
+            with _dead_lock:
+                dead = _load_dead()
+                for entry in dead.values():
+                    if entry.get("dead_since"):
+                        entry["recheck_at"] = now_s
+                        queued += 1
+                if queued:
+                    _save_dead(dead)
+            self._json({"ok": True, "queued": queued})
         elif self.path == "/backfill-history":
             with _refresh_status_lock:
                 if _backfill_status["running"]:
@@ -1760,6 +2090,56 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_response(200)
             self.end_headers()
+
+    def _dead_instruments(self):
+        """Summary of the delisted skip list for the Settings page, rules
+        included, so the page explains itself without hardcoding them."""
+        import datetime as _dt
+        now  = _dt.datetime.now(_dt.timezone.utc)
+        dead = _load_dead()
+        skipping = due = pending = 0
+        next_recheck = None
+        groups, equities = {}, []
+        for key, entry in dead.items():
+            if not entry.get("dead_since"):
+                pending += 1
+                continue
+            if _dead_skipping(entry, now):
+                skipping += 1
+                at = _parse_utc(entry["recheck_at"])
+                if next_recheck is None or at < next_recheck:
+                    next_recheck = at
+            else:
+                due += 1
+            group = (entry.get("type") or "?", entry.get("currency") or "?")
+            groups[group] = groups.get(group, 0) + 1
+            if entry.get("type") == "Equity":
+                equities.append((key, entry))
+
+        # Equities are the only type the engines trade, so they are named, with
+        # the display name from stock_names.csv rather than the folder's.
+        names = _load_names() if equities else {}
+
+        def display_name(key, entry):
+            row = names.get(int(key)) if key.isdigit() else None
+            return (row[0] if row and row[0] else entry.get("name")) or "?"
+
+        self._json({
+            "skipping":     skipping,
+            "due":          due,
+            "pending":      pending,
+            "next_recheck": next_recheck.isoformat() if next_recheck else None,
+            "groups": [{"type": t, "currency": c, "count": n}
+                       for (t, c), n in sorted(groups.items(), key=lambda kv: -kv[1])],
+            "equities": sorted(
+                ({"name": display_name(key, entry), "currency": entry.get("currency"),
+                  "dead_since": entry.get("dead_since"), "recheck_at": entry.get("recheck_at")}
+                 for key, entry in equities),
+                key=lambda e: e["name"].lower()),
+            "rules": {"confirm_hours":    _DEAD_CONFIRM_S // 3600,
+                      "recheck_days":     _DEAD_RECHECK_DAYS,
+                      "recheck_max_days": _DEAD_RECHECK_MAX_DAYS},
+        })
 
     def _refresh(self, rel_path):
         parts = rel_path.strip("/").split("/")

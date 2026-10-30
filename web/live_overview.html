@@ -68,6 +68,7 @@
     .eng-signals  { background: #0052cc; }
     .eng-patterns { background: #1a8042; }
     .eng-cross    { background: #b08000; }
+    .eng-breakout { background: #7a4cc2; }
 
     /* Second line under each price: the timestamp it happened at. Keeps the
        price column numeric and right-aligned while still showing the clock. */
@@ -86,7 +87,7 @@
 </head>
 <body>
   <h2>Live — Overview</h2>
-  <p class="subtitle">Combined view across all three paper-trade engines. Each engine has its own wallet; this page sums them.</p>
+  <p class="subtitle">Combined view across all four paper-trade engines. Each engine has its own wallet; this page sums them.</p>
   <nav>
     <a href="/">Dashboard</a>
     <a href="/stocksearch">Stock Search</a>
@@ -105,6 +106,7 @@
     <a class="tab"        href="/live-signals">Signals</a>
     <a class="tab"        href="/live-patterns">Patterns</a>
     <a class="tab"        href="/live-cross">Cross</a>
+    <a class="tab"        href="/live-breakout">Breakout</a>
   </div>
 
   <div class="stat-row">
@@ -143,6 +145,7 @@
         <span><span class="legend-dot" style="background:#0052cc;"></span>Signals</span>
         <span><span class="legend-dot" style="background:#1a8042;"></span>Patterns</span>
         <span><span class="legend-dot" style="background:#b08000;"></span>Cross</span>
+        <span><span class="legend-dot" style="background:#7a4cc2;"></span>Breakout</span>
         <span><span class="legend-dot" style="background:#1a1f36;"></span>Combined</span>
       </div>
     </div>
@@ -156,13 +159,14 @@
   </div>
 
   <div class="section" id="trade-feed">
-    <div class="section-title">Trade feed <span class="panel-note">— every position across all three wallets, newest activity first</span></div>
+    <div class="section-title">Trade feed <span class="panel-note">— every position across all four wallets, newest activity first</span></div>
     <div class="feed-filters">
       <span class="filter-label">Engine</span>
       <button class="chip active" data-engine="all"      onclick="setFeedEngine('all', this)">All</button>
       <button class="chip"        data-engine="signals"  onclick="setFeedEngine('signals', this)">Signals</button>
       <button class="chip"        data-engine="patterns" onclick="setFeedEngine('patterns', this)">Patterns</button>
       <button class="chip"        data-engine="cross"    onclick="setFeedEngine('cross', this)">Cross</button>
+      <button class="chip"        data-engine="breakout" onclick="setFeedEngine('breakout', this)">Breakout</button>
       <span class="feed-sep"></span>
       <span class="filter-label">Status</span>
       <button class="chip active" data-status="all"    onclick="setFeedStatus('all', this)">All</button>
@@ -198,21 +202,27 @@
 
   <script src="/live_common.js"></script>
   <script>
-    // Read by tickerLink() in live_common.js — merged across all three wallets,
+    // Read by tickerLink() in live_common.js — merged across all four wallets,
     // since a feed row can come from any of them.
     let tickerPaths = {};
 
     async function refresh() {
       try {
-        const [sig, pat, crs] = await Promise.all([
+        const [sig, pat, crs, brk] = await Promise.all([
           fetch('/live-portfolio').then(r => r.json()),
           fetch('/live-patterns-portfolio').then(r => r.json()),
           fetch('/live-cross-portfolio').then(r => r.json()),
+          // Fails soft, unlike the three above: a server started before the
+          // Breakout engine existed answers 404 here, and that must cost the
+          // page one wallet, not the whole render. render() leaves it out of
+          // every total rather than counting it as an empty 0-SEK wallet.
+          fetch('/live-breakout-portfolio').then(r => r.ok ? r.json() : null).catch(() => null),
           loadVersions(),          // Ver pills on the trade feed
         ]);
         tickerPaths = Object.assign({},
-          sig.ticker_paths || {}, pat.ticker_paths || {}, crs.ticker_paths || {});
-        render({ signals: sig, patterns: pat, cross: crs });
+          sig.ticker_paths || {}, pat.ticker_paths || {}, crs.ticker_paths || {},
+          (brk && brk.ticker_paths) || {});
+        render({ signals: sig, patterns: pat, cross: crs, breakout: brk });
       } catch (e) {
         console.error('refresh failed', e);
       }
@@ -222,6 +232,7 @@
       { key: 'signals',  label: 'Signals',  color: '#0052cc', page: '/live-signals'  },
       { key: 'patterns', label: 'Patterns', color: '#1a8042', page: '/live-patterns' },
       { key: 'cross',    label: 'Cross',    color: '#b08000', page: '/live-cross'    },
+      { key: 'breakout', label: 'Breakout', color: '#7a4cc2', page: '/live-breakout' },
     ];
 
     function engineStats(p, color, label, link) {
@@ -247,10 +258,10 @@
     }
 
     function render(d) {
-      const sStats = engineStats(d.signals,  '#0052cc', 'Signals',  '/live-signals');
-      const pStats = engineStats(d.patterns, '#1a8042', 'Patterns', '/live-patterns');
-      const xStats = engineStats(d.cross,    '#b08000', 'Cross',    '/live-cross');
-      const all    = [sStats, pStats, xStats];
+      // One card / curve / total per wallet that answered — a missing one is
+      // absent from the sums AND the contributed baseline, never zero in one.
+      const all = ENGINES.filter(e => d[e.key])
+        .map(e => engineStats(d[e.key], e.color, e.label, e.page));
 
       const combinedEquity   = all.reduce((s, e) => s + e.equity, 0);
       const combinedCash     = all.reduce((s, e) => s + e.cash, 0);
@@ -299,9 +310,19 @@
           `${combinedWins}W / ${combinedTrades - combinedWins}L`;
       }
 
-      // Per-engine cards
+      // Per-engine cards. A wallet that did not load gets a card saying so —
+      // left out of every total above, but never silently.
       const grid = document.getElementById('engine-grid');
-      grid.innerHTML = all.map(e => `
+      const missing = ENGINES.filter(e => !d[e.key]).map(e => `
+        <div class="engine-card">
+          <div class="engine-name">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${e.color};"></span>
+            ${e.label}
+            <a href="${e.page}" style="margin-left:auto;">open →</a>
+          </div>
+          <div class="engine-line"><span class="lbl">Wallet unavailable — excluded from every total on this page</span></div>
+        </div>`).join('');
+      grid.innerHTML = missing + all.map(e => `
         <div class="engine-card">
           <div class="engine-name">
             <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${e.color};"></span>

@@ -1,11 +1,12 @@
 {
   "schema": 1,
   "_readme": "Project changelog + version ledger. `app_version` bumps on every Claude-assisted change; `strategy_versions` bump ONLY when an engine's tradeable parameters, gates or detectors change. lib/version.py is the read API; the engines stamp these onto every position, so a trade can always be traced back to the code that opened it. Entries are newest-first. Entries with source='reconstructed' were rebuilt from session notes on 2026-08-21 (before the ledger existed) and their exact dates are best-effort; source='live' entries were written at the time of the change.",
-  "app_version": "0.25.0",
+  "app_version": "0.27.1",
   "strategy_versions": {
     "signals": "sig-12",
     "patterns": "pat-5",
-    "cross": "x-5"
+    "cross": "x-5",
+    "breakout": "brk-1"
   },
   "engines": {
     "signals": {
@@ -22,6 +23,11 @@
       "label": "Live Cross",
       "wallet": "live_cross_portfolio.json",
       "page": "/live-cross"
+    },
+    "breakout": {
+      "label": "Live Breakout",
+      "wallet": "live_breakout_portfolio.json",
+      "page": "/live-breakout"
     }
   },
   "strategy_history": {
@@ -184,9 +190,139 @@
         "params": "TP +3.0% / SL -1.0% / 7d hold, signal AND same-day 2+ pattern confluence",
         "note": "Audit batch 1. Pattern half now hard-gated to fires stamped today (the 30h window let the previous session's list pass as confluence); a down pattern half closes the gate and does not consume the day. Cash floor no longer latched pre-exit. Pre-open ticks defer the exit pass instead of booking calendar TIMEOUTs at the prior close. No TP/SL/hold change."
       }
+    ],
+    "breakout": [
+      {
+        "version": "brk-1",
+        "from": "2026-10-26",
+        "app_version": "0.26.0",
+        "params": "TP +10.0% / SL -15.0% / 60-session hold; TP live only from session 20 (already above it then = sold at market); entry = fresh 52-week closing high (none in the prior 20 sessions) among the top 150 Equity/SEK names by 60-session median turnover, 12-1 momentum priority, 20 equal slots",
+        "note": "Engine launched. Long-hold momentum arm on a separate 1M SEK wallet, auto-entry at the confirmed close, exempt from the cross-wallet dedupe in both directions. Backtest 2003-2026 (survivors-only, price-only closes, intraday-equivalent fills): ~13.9% CAGR vs 8.7% for OMXS PI, max DD ~-19% vs -59% — but it beat the index in only 12 of 24 years and lagged it every year 2023-2026. Judge it against the index tile, not against zero. From app 0.26.1 (same day, before any position existed): exits wait until the feed shows today's session, and the benchmark base is an official close read from the live index quote."
+      }
     ]
   },
   "entries": [
+    {
+      "version": "0.27.1",
+      "date": "2026-10-30",
+      "source": "live",
+      "title": "Engine health: a Mac that slept through the session is reported once, as that, instead of as a Patterns fault",
+      "summary": "The health banner and its phone push kept naming Patterns as critical ('has not run since the 2026-10-30 session', 'stopped at 14:53 — 2.6h before the 2026-10-29 close') when the real cause was the MacBook asleep with the lid closed from 2026-10-29 14:53 to 2026-10-30 16:46: every engine missed the rest of Thursday's session and all of the Friday half-day. Signals, Cross and Breakout save on every tick around the clock, so one post-close tick during a brief dark wake made them read 'ok'; Patterns never saves while the market is closed, so it alone showed the gap. Engines now stamp the last IN-SESSION tick separately, the check judges a past session on that, and when every engine missed it the rows collapse into one 'All 4 engines: Mac asleep or off — …' row.",
+      "files": [
+        "lib/engine_common.py",
+        "live_signals.py",
+        "live_patterns.py",
+        "live_cross.py",
+        "live_breakout.py",
+        "app.py",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "lib/engine_common.py save_state(): new in_session flag; when set, last_session_run is stamped alongside last_run. Default False, so any other caller (scripts) never counts as an engine tick.",
+        "live_signals / live_patterns / live_cross / live_breakout save_state() wrappers pass in_session=is_market_open() (the engines' own calendar, half-days included).",
+        "app.py _live_health(): off-hours, each engine is judged on last_session_run (falling back to last_run for a wallet not yet stamped). Session logic moved into _session_coverage(); timestamp parsing into _parse_stamp(). Wording: 'no run during the <date> session' / 'last ran at HH:MM, Nh before the <date> close'.",
+        "app.py _live_health(): when every engine row is faulted (none unreadable or never-run), they merge into one 'All N engines' row. Off-hours it reads 'Mac asleep or off — … (ticking again since the close)' if any engine has ticked after the session's close, else '…, and none has run since' (scheduler down). Market open: 'none has run for N min'. A single faulted engine is still reported by name."
+      ],
+      "notes": "No strategy_version bump: no parameter, gate or detector changed — this is bookkeeping and monitoring only. Transition: Signals/Cross/Breakout have no last_session_run until their first in-session tick (Mon 2026-11-02), so over the 2026-10-31/11-01 weekend the banner still shows Patterns alone for the 2026-10-30 miss. Verified by scenario harness against temp copies of the wallets (all-missed, all-cut-short, scheduler-dead, single-engine fault, unreadable wallet, market-open stale) — real state/ untouched. The underlying cause (lid-closed sleep during market hours) is not fixed by this; it only stops being misreported.",
+      "strategy_bumps": []
+    },
+    {
+      "version": "0.27.0",
+      "date": "2026-10-27",
+      "source": "live",
+      "title": "Update All skips delisted instruments (HTTP 403) instead of requesting them every sweep",
+      "summary": "About a third of the 61k-instrument universe (31% of a random 1,500 sample, ~19k: expired warrants, certificates and derivatives, plus delisted shares) answers fetch_stock with a permanent `HTTP 403 {}`, and every Update Everything spent a request on each one. That costs time, and ~19k refusals per run is the kind of traffic that gets an IP blocked. Sweeps now keep a skip list in state/dead_instruments.json and stop requesting an instrument once it is confirmed dead, re-checking it on a backoff. Diagnosis that led here: the 2026-10 sweep slowdown itself was the OpenVPN tunnel (~75 ms vs ~6 ms round trip to Millistream), not a code change. Connection reuse was measured (3.9x) but deliberately NOT adopted: higher request rates are exactly what risks a Millistream block.",
+      "files": [
+        "app.py",
+        "web/nav.js",
+        "web/settings.html",
+        "web/help.html",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "app.py _do_refresh_all(): instruments on the skip list are not requested; status gains `skipped` (counted into `done` so progress still reaches total), and the outcome message reports skipped / newly listed / taken off / uncounted. The FAILED test now compares errors against instruments actually fetched, not the total.",
+        "Safety, because an expired token returns the byte-identical `403 {}` (verified 2026-10-27): a 403 only counts if a fetch succeeded AFTER it in the same sweep. 403s after the last success get one control re-fetch of a stock that just worked. Without it the sorted sweep order would leave the same tail unconfirmable forever. If that fails too, access broke mid-sweep and they stay uncounted. A sweep where nothing succeeded (token expiry, network down, IP block) changes nothing.",
+        "Confirmation: two counted 403s at least 12 h apart (_DEAD_CONFIRM_S), with no success in between (any success deletes the entry). Re-check after 7 days, doubling per failed re-check to a 28-day cap, x1.0-1.25 jitter so ~19k entries confirmed in one sweep don't come due together. A successful /refresh from a stock page also takes an instrument off the list (mtime-cached membership check, since that endpoint is polled every 30 s per open page).",
+        "dead_instruments.json is merged under a lock at the end of each sweep by re-reading the file rather than reusing the start-time snapshot, so a re-check queued mid-sweep survives. Entries for instruments no longer on disk are pruned, except when the scan comes back empty. Malformed or naive timestamps can't fail a sweep. An unreadable file is logged and rebuilt, as it is a derived cache.",
+        "New GET /dead-instruments (summary counts, type/currency groups, named equities, the rule parameters) and POST /dead-instruments-recheck (makes every confirmed entry due on the next update).",
+        "web/settings.html: new Delisted Instruments section showing what is skipped, what is due and what has been refused once, with the rules text served by the API rather than hardcoded, and a Re-check All on Next Update button that is disabled when nothing is being skipped. The Update All Scope text no longer claims Update Everything refreshes everything.",
+        "web/nav.js + settings.html: a finished update reads `Done (42208 · 18962 skipped)` instead of a total implying everything was refreshed, and the button tooltip carries the full outcome message, errors included. Previously both buttons discarded it.",
+        "web/help.html: Update All scope bullet corrected and a Delisted instruments bullet added."
+      ],
+      "strategy_bumps": [],
+      "notes": "No strategy_version bump: no engine parameter, gate or detector changed, and the engines' inputs only stop being refreshed for instruments Millistream already refuses. Effect arrives on the THIRD full sweep: the first records one 403 per dead instrument, the second (12 h+ later) confirms them, and the third onwards skips them. The scheduled Equity/SEK sweep (19 delisted per the 2026-09-14 audit) confirms its own within ~12 h. Verified with 48 scenario checks against the imported app (fakes for network and CSV writers, all paths redirected to a scratch dir), a real-feed run on scratch copies of 40 random instruments (19 confirmed; sweep 3 made 21 requests instead of 41, all 21 healthy _7d.csv files rewritten by the real writers), and headless-Chrome renders of the Settings section before and after a re-check. Needs an app.py restart to take effect."
+    },
+    {
+      "version": "0.26.1",
+      "date": "2026-10-26",
+      "source": "live",
+      "title": "Live Breakout review fixes + the missing All Saints' Eve half-day in the shared calendar",
+      "summary": "An independent review of 0.26.0 found nothing that crashed the chain or corrupted the wallet, but several ways the new engine could book a wrong price, skip a day or mislead its page — plus a pre-existing gap in the trading calendar all four engines share, which lands this Friday (2026-10-30). All confirmed before fixing. No TP, SL, hold period or entry rule changed in any engine.",
+      "files": [
+        "live_breakout.py",
+        "live_signals.py",
+        "web/live_breakout.html",
+        "web/live_overview.html",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "live_signals.py is_early_close(): adds Alla helgons afton (the Friday between Oct 30 and Nov 5) as a 13:00 half-day. Checked against the 2026 Stockholm trading calendar, which lists exactly Jan 5, Apr 2, Apr 30, May 13 and Oct 30; the function had the first four. Without it 2026-10-30 would run as a full session: feed_settled_past_close() never passes against a 17:30 close, so no OHLC bar, no EOD sweep, no close-confirmed entries for Signals, Cross or Breakout, and is_market_open() treats 13:00-17:30 as live trading on frozen prices. Already listed as a latent bug in the 2026-09-26 audit. Shared helper, so it changes all four engines' calendars.",
+        "live_breakout.py exits_can_book(): exits wait until the feed shows today's session. The feed runs ~15 minutes behind (2026-10-26: the 09:14 probe saw no trades, the 09:17 one SEB A's 09:02 print), so the 09:00-09:15 ticks quote the previous close. Here that would arm the week-4 target on a stale price, or market-sell at a price that may not trade that day; it also moved TIMEOUT and MANUAL fills. Gated on Signals' data_lag.trade_dt (probed and saved earlier in the same tick), falling back to 09:20 when there is no probe. The 7-day engines keep their 09:00 rule — their exposure is a TIMEOUT fill, and that is their own change to make.",
+        "live_breakout.py update_benchmark(): reads OMX Stockholm PI as a live quote. The scheduled sweep refreshes Equity/SEK only, so the index _History.csv was frozen at an 11:00 print (1116.87; the close was 1119.83) and the 'vs Index' tile would have shown the wallet's own return as relative performance forever. The base is now an official close (src='close') taken on the first post-close tick and never moved; brk-1's History-derived base was replaced by 2026-10-26's close automatically. Off-hours, at most one index quote per completed session.",
+        "live_breakout.py build_universe()/scan_problem(): a name whose History stops before the previous session is left out (77 today: thin or delisted names, best turnover rank 232 — no change to the top 150). If more than 25% of names are behind, app.py's sweep is down: the pass is HELD (no entries, day not stamped, gate reason on the page, checked before any quote is fetched) until the files catch up. If fewer than 90% of the universe answer a quote, the pass is held and retried, at most 3 times, then runs on what answered.",
+        "live_breakout.py: a scan that raises holds the pass the same way and never stops the exits; read_history_tail() parses the timestamp inside its try and drops non-finite values, so an `inf` or absurd row costs that row, not the evening (it previously escaped as OverflowError/OSError and would have re-raised on every post-close tick).",
+        "live_breakout.py: force-sell queue handled with reconcile_force_sells (as Signals does), not consume_force_sells — a 'Sell now' landing on the tick that closed the position at TP/SL/TIMEOUT is pruned and named instead of staying armed against the next position in that name.",
+        "web/live_breakout.html: the 'vs Index' tile states the index date ('as of') and any quote error, so a stalled benchmark cannot pass for a current one. web/live_overview.html: a wallet that fails to load gets an 'unavailable — excluded from every total' card instead of vanishing."
+      ],
+      "strategy_bumps": [],
+      "notes": "No strategy_version bump. Breakout: brk-1 had no positions and no trades when these landed, and its TP, SL, hold and entry rule are unchanged — the exit-timing guard and benchmark fix are folded into brk-1 and recorded on its strategy_history row. Signals/Patterns/Cross: the half-day is a calendar data correction for one day a year; no parameter, gate or detector changed. Verified: 18 original + 21 new unit checks (feed gate at 08:55 / 09:03 / 09:14 / 09:17 / 09:21 / post-close / Saturday / half-day; malformed History rows; benchmark rebase, once-per-session fetch, failure handling; data guards; previous-session across a weekend and a holiday); calendar now yields exactly the five published 2026 half-days (All Saints' Eve 2024-11-01, 2025-10-31, 2026-10-30, 2027-11-05); a fresh sandbox run against the real 2026-10-26 close (base 1119.83 src=close); the Aug-Oct replay reproduces 0.26.0 exactly. Reviewed and left as is, by design or as inherited: (1) a week-4 switch-on reached after a long engine outage sells at the price on return, booked TP — it is at or above the target by construction; (2) entry, TP and SL are never adjusted for a split — a forward split would book a phantom SL at the shared slip floor (~-18.4%), a reverse split a phantom TP. Shared with every engine but likelier over 20 slots x 12 weeks; check any Breakout exit beyond -18% or above +40% by hand until there is a corporate-action guard."
+    },
+    {
+      "version": "0.26.0",
+      "date": "2026-10-26",
+      "source": "live",
+      "title": "New engine: Live Breakout — fresh 52-week highs held 4-12 weeks (brk-1)",
+      "summary": "The owner asked whether a long-term strategy (holds of at least 4 weeks instead of ~5-7 days) is feasible, and then set the shape: a +10% target somewhere in weeks 4-12, nothing held past 12 weeks, a wide stop. Backtested on the 2003-2026 daily-close archive before writing any engine code: holding the Signals dip trigger longer has no edge at 4-12 weeks, and at this horizon every fixed take-profit and every tight stop lowers return — but a +10% target switched on only from week 4 costs almost nothing against a pure time exit, while taking +10% from day one dropped the 2015-2026 result to index level. The one entry with a consistent long-horizon edge was a fresh 52-week closing high, and only outside the 50 most-traded names. This entry ships that rule set as a fourth paper wallet, at the owner's request exempt from the cross-wallet duplicate rule in both directions. No parameter, gate or exit of Signals, Patterns or Cross changed; the only change inside live_signals.py is one more link at the end of the engine chain.",
+      "files": [
+        "live_breakout.py",
+        "live_signals.py",
+        "lib/engine_common.py",
+        "lib/notify.py",
+        "lib/version.py",
+        "app.py",
+        "web/live_breakout.html",
+        "web/live_overview.html",
+        "web/live_widget.js",
+        "web/live_signals.html",
+        "web/live_patterns.html",
+        "web/live_cross.html",
+        "web/help.html",
+        "scripts/deposit.py",
+        "scripts/notify_open_positions.py",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "live_breakout.py (new): the Breakout engine. Universe = every Equity/SEK folder with 252+ completed sessions, ranked by 60-session median turnover (close x volume, today's row excluded), top 150. Entry = today's confirmed close above the highest close of the previous 250 sessions with no such high in the previous 20 sessions; 12-1 momentum (close 21 sessions ago over close 250 sessions ago) decides who gets a slot. One scan per day on the first post-close tick once Signals' last_ohlc_capture_date says the feed settled; fills at the live close; no entry cutoff. 20 equal slots (equity / 20, floor half a slot), own-book company-stem dedupe, the shared 5%-of-volume liquidity cap. No Friday rule, no event window, no SL cooldown — the backtest had none.",
+        "live_breakout.py: exits reuse live_signals.apply_exit_checks (SL from day one with the shared min(market, stop) rule and 4% slip floor; TIMEOUT at 60 sessions; MANUAL; STALE). The week-4 target is layered on by arm_targets() / restore_targets(): before tp_live_from the target is parked out of reach; on the first LIVE look once it is on, a price already at or above +10% sells at MARKET (pos['tp'] temporarily set to that price) instead of being booked at exactly +10% — modelling that day as a +10% limit fill took the backtest from ~13% CAGR to ~5%; after that (tp_armed) a cross is the ordinary limit fill at +10%. The parked value is restored in a finally block and never reaches disk.",
+        "live_breakout.py: state carries last_scan (dated: universe stats + every fresh high with why it was or was not bought), last_entry_gate/entry_gate and exit_pass written on every tick (no stale-behind-a-fresh-clock), ENTRIES_PAUSED surfaced like Cross, and a benchmark block — OMX Stockholm PI since the wallet opened, price index on purpose because the engine's fills carry no dividends either. Own log logs/live_breakout.log with the shared rotation.",
+        "live_signals.py: the __main__ chain calls live_breakout.main() after live_cross, wrapped in try/except like the other two, so a Breakout fault can never stop Signals, Patterns or Cross.",
+        "lib/engine_common.py: comment only — Breakout is deliberately absent from WALLET_FILES. Signals and Patterns build their dedupe sibling sets from that map, so leaving it out is what makes the exemption hold in both directions; the engine's own CROSS_WALLET_DEDUPE is False.",
+        "lib/notify.py: 'breakout' added to ENGINE_LABELS and _ENGINE_WALLET, so its fills are announced (and held back until its wallet is on disk) like the other engines'. lib/version.py: 'breakout' added to ENGINES.",
+        "app.py: /live-breakout page, /live-breakout-portfolio, -log and -force-sell (GET + POST, same refuse-if-not-open guard), wallet reader with a 1M default, the wallet in the changelog performance roll-up, and Breakout rows in the health banner (engine + sell-now queue).",
+        "web/live_breakout.html (new): canonical live-page layout — stat row (incl. a 'vs Index' tile: wallet return minus OMXS PI return since inception), the dated latest-scan table, the 13-column open-positions table whose TP cell says when the target switches on, sector concentration, paginated closed trades, run log, By version last. Break-even shown as 60% (+10/-15) with the backtest's ~62% beside it, since a third of trades end on the time exit.",
+        "web/live_overview.html, web/live_widget.js: a fourth wallet everywhere (cards, curve, legend, feed chip and pill, widget counts). Both fail soft on a server that predates the route: the Overview leaves Breakout out of every total and the contributed baseline instead of counting a 0-SEK wallet, and the widget shows 'Breakout unavailable · 3/4 wallets'. web/live_signals.html, live_patterns.html, live_cross.html: Breakout tab.",
+        "web/help.html: Live Breakout section — rules, the week-4 target, what is deliberately not applied, and why it is a paper wallet. scripts/deposit.py, scripts/notify_open_positions.py: the fourth wallet."
+      ],
+      "strategy_bumps": [
+        {
+          "engine": "breakout",
+          "from": null,
+          "to": "brk-1",
+          "reason": "Engine launched — fresh 52-week highs, +10% target from week 4, -15% stop, 12-week hold"
+        }
+      ],
+      "notes": "Verified before wiring into the LaunchAgent chain: 18 unit checks on the signal and the exit layering (before week 4 a +18% position is held; a position at +14% when the target switches on sells at 114, not 110; an armed target fills at exactly +10%; a stale quote never arms or fills; stop from day one; 12-week timeout; manual sell; tp never left parked). Engine-vs-backtest parity on the last 40 sessions: all 33 backtest signals reproduced, plus 1 name at the rank-150 boundary (turnover with vs without the signal day); universe overlap 99.7%. Dry run against the real 2026-10-26 close into a scratch wallet: 968 eligible names, 150 ranked (cutoff ~12 MSEK/day), 150/150 quoted, 0 fresh highs that day, 1.3 s. Day-by-day replay over 2026-08-03..10-23 closes in a sandbox: 29 buys, 3 TP at exactly +10%, 6 SL, 20/20 slots, no duplicate company. Pages checked with app.py on a spare port + headless Chrome, including against a server without the new routes. Known, inherited and left as is: the shared 4% stop-slip floor books a deep gap at about -18.4% against a -15% stop, kinder than the real fill. The health banner reads Breakout as critical until its wallet file exists — the engine's first run creates it, so let it run once before restarting app.py. Order of go-live: CHANGELOG first (so the first positions stamp brk-1), then one manual run that created state/live_breakout_portfolio.json and ran the 2026-10-26 scan (968 eligible, 150 ranked and quoted, 0 fresh highs, benchmark base OMXS PI 1116.87), then the live_signals.py chain link — wired last so the manual run could not race a scheduled tick. The next LaunchAgent tick (19:53:16) ran the chain through Breakout ('already scanned after today's close'), no crash marker in live_signals.log. app.py on :8765 predates the new routes until restarted; the Overview and widget fail soft in the meantime."
+    },
     {
       "version": "0.25.0",
       "date": "2026-10-26",

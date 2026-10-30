@@ -87,16 +87,18 @@ _REASON_ICON = {
 }
 _BUY_ICON = ("🔵", "chart_with_upwards_trend")
 
-ENGINE_LABELS = {"signals": "Signals", "patterns": "Patterns", "cross": "Cross"}
+ENGINE_LABELS = {"signals": "Signals", "patterns": "Patterns", "cross": "Cross",
+                 "breakout": "Breakout"}
 
 # The wallet each engine writes, mirroring STATE_PATH in live_signals.py,
-# live_patterns.py and live_cross.py. Repeated here rather than imported
+# live_patterns.py, live_cross.py and live_breakout.py. Repeated here rather than imported
 # because those modules import this one; a name that ever drifts surfaces as
 # the "no wallet mapped" warning in flush(), not as a silent hole.
 _ENGINE_WALLET = {
     "signals":  os.path.join(_ROOT, "state", "live_portfolio.json"),
     "patterns": os.path.join(_ROOT, "state", "live_patterns_portfolio.json"),
     "cross":    os.path.join(_ROOT, "state", "live_cross_portfolio.json"),
+    "breakout": os.path.join(_ROOT, "state", "live_breakout_portfolio.json"),
 }
 
 _queue = []

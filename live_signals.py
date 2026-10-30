@@ -280,7 +280,7 @@ def load_state():
 
 
 def save_state(state):
-    ec.save_state(STATE_PATH, state)
+    ec.save_state(STATE_PATH, state, in_session=is_market_open())
 
 
 def load_approved():
@@ -720,15 +720,27 @@ def is_early_close(d):
     The flip side: a WRONG date here would let a perfectly normal session be
     captured and traded at 13:05 on mid-session prices. Only add a date that is
     genuinely a Stockholm half-day.
+
+    Checked 2026-10-26 against the 2026 Stockholm trading calendar (iSEC
+    Handelskalender Sverige 2026, which lists exactly Jan 5, Apr 2, Apr 30,
+    May 13 and Oct 30 as half-days). Alla helgons afton was missing until then:
+    2026-10-30 would have run as a full session — no capture, no EOD sweep, no
+    close-confirmed entries, and 13:00-17:30 treated as live trading.
     """
     if isinstance(d, datetime):
         d = d.date()
     easter = easter_sunday(d.year)
+    # Sweden keeps All Saints' Day on the Saturday between Oct 31 and Nov 6, so
+    # its eve is always the Friday between Oct 30 and Nov 5.
+    oct30 = date(d.year, 10, 30)
+    all_saints_eve = next(oct30 + timedelta(days=i) for i in range(7)
+                          if (oct30 + timedelta(days=i)).weekday() == 4)
     return d in {
         date(d.year, 1, 5),             # day before Epiphany
         easter - timedelta(days=3),     # Skärtorsdagen
         date(d.year, 4, 30),            # Valborgsmässoafton
         easter + timedelta(days=38),    # day before Kristi himmelsfärdsdag
+        all_saints_eve,                 # Alla helgons afton
     }
 
 
@@ -2177,4 +2189,15 @@ if __name__ == "__main__":
     except Exception as e:
         import traceback
         print("\n[live_cross crash]")
+        traceback.print_exc()
+    # Breakout engine (2026-10-26) runs after Cross. It reads no other wallet's
+    # positions — exempt from the cross-wallet dedupe both ways, see
+    # engine_common.WALLET_FILES — only Signals' last_ohlc_capture_date as its
+    # feed-settled proof, which main() above has already stamped by now.
+    try:
+        import live_breakout
+        live_breakout.main()
+    except Exception as e:
+        import traceback
+        print("\n[live_breakout crash]")
         traceback.print_exc()

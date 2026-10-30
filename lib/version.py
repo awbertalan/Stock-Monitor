@@ -29,7 +29,7 @@ import threading
 LEDGER_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.json")
 
-ENGINES = ("signals", "patterns", "cross")
+ENGINES = ("signals", "patterns", "cross", "breakout")
 
 _cache = {"mtime": None, "data": None}
 _lock = threading.Lock()
@@ -65,7 +65,7 @@ def app_version():
 
 
 def strategy_version(engine):
-    """Current strategy version for ``engine`` ('signals' | 'patterns' | 'cross')."""
+    """Current strategy version for ``engine`` ('signals' | 'patterns' | 'cross' | 'breakout')."""
     d = ledger()
     return ((d or {}).get("strategy_versions") or {}).get(engine)
 

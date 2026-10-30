@@ -53,6 +53,7 @@ WALLETS = {
     "signals":  ("Signals",  "live_portfolio.json"),
     "patterns": ("Patterns", "live_patterns_portfolio.json"),
     "cross":    ("Cross",    "live_cross_portfolio.json"),
+    "breakout": ("Breakout", "live_breakout_portfolio.json"),
 }
 
 
@@ -69,7 +70,8 @@ def engines_running():
     for line in ps.splitlines():
         if "deposit.py" in line:
             continue
-        for name in ("live_signals.py", "live_patterns.py", "live_cross.py"):
+        for name in ("live_signals.py", "live_patterns.py", "live_cross.py",
+                     "live_breakout.py"):
             if name in line:
                 hits.append(name)
     return sorted(set(hits))

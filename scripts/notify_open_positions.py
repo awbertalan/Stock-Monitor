@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Push a snapshot of every open position across the three wallets.
+"""Push a snapshot of every open position across the four wallets.
 
 Written as the end-to-end test of the notification path added in 0.21.0: the
 Settings page's Test button sends invented data through the sinks, which proves
@@ -11,7 +11,7 @@ the title, which on the phone means money moved; a snapshot borrowing that shape
 would be indistinguishable from a real trade. These go out through
 queue_message() with a 🧪 marker and the verb "holds".
 
-Read-only: it opens the three wallet files and never writes them, so it is safe
+Read-only: it opens the four wallet files and never writes them, so it is safe
 to run while the engines are mid-tick.
 
 Usage:
@@ -36,6 +36,7 @@ WALLETS = (
     ("signals",  "live_portfolio.json"),
     ("patterns", "live_patterns_portfolio.json"),
     ("cross",    "live_cross_portfolio.json"),
+    ("breakout", "live_breakout_portfolio.json"),
 )
 
 
@@ -161,7 +162,7 @@ def main():
     if not rows:
         # Still send something: "nothing is open" is a real answer, and a test
         # that produces silence is indistinguishable from a broken sink.
-        body = ["All three wallets are flat right now."]
+        body = ["All four wallets are flat right now."]
         if alerts:
             # Do not assert flatness we cannot prove — a wallet that could not
             # be read is not a wallet with no positions.
@@ -172,7 +173,7 @@ def main():
         title, lines, tag = build(engine, tk, pos, lq, age)
         notify.queue_message(title, lines, tag=tag)
 
-    print(f"{len(rows)} open position(s) across the three wallets")
+    print(f"{len(rows)} open position(s) across the four wallets")
     for alert in alerts:
         print(f"  ! {alert}")
     for engine, tk, pos, lq, age in rows:

@@ -210,8 +210,14 @@ def snapshot_state(path, backups_dir=None, retain=SNAPSHOT_RETAIN_DAILIES):
     return dest
 
 
-def save_state(path, state):
+def save_state(path, state, in_session=False):
     state["last_run"] = datetime.now(timezone.utc).isoformat()
+    # last_session_run moves only on a tick made while the exchange is open, and
+    # is what /live-health judges a past session on. last_run moves on every
+    # tick around the clock, so one post-close tick from a Mac waking briefly
+    # made an engine that slept through the whole session read as current.
+    if in_session:
+        state["last_session_run"] = state["last_run"]
     # Snapshot before the overwrite, so the copy is the last known-good book
     # rather than whatever this run is about to write. A backup that quietly
     # stopped running is the exact failure it exists to guard against, so the
@@ -563,6 +569,14 @@ def apply_liquidity_cap(verdict, cap_sek, floor_sek):
 # strategy samples. That is a real cost to the A/B comparison they were built
 # for, accepted because the aggregate book is one pot of money. Set
 # CROSS_WALLET_DEDUPE=False in any engine to restore independence.
+#
+# Live Breakout (live_breakout.py, 2026-10-26) is deliberately NOT in this map,
+# which is what keeps it out of the dedupe in BOTH directions: Signals and
+# Patterns build their sibling sets from here, so they never see its book, and
+# it never reads theirs (its own CROSS_WALLET_DEDUPE is False). Owner decision:
+# a 12-week position must not block a 7-day engine from a company for 12 weeks,
+# or the reverse, or no wallet trades the rules it was tested on. Adding it here
+# would silently re-couple it — list it in app.py / lib/notify.py instead.
 
 WALLET_FILES = {
     "signals":  ("Signals",  "live_portfolio.json"),

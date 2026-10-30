@@ -1,4 +1,4 @@
-// live_widget.js — floating left-side summary of all three Live engines.
+// live_widget.js — floating left-side summary of all four Live engines.
 // Renders on every page except /live*  (the user is already there).
 // Auto-suppressed on viewports narrower than 1280px so it never overlaps
 // the centred page content.
@@ -62,12 +62,13 @@
 
   async function refresh() {
     try {
-      const [sig, pat, crs] = await Promise.all([
+      const [sig, pat, crs, brk] = await Promise.all([
         loadWallet('/live-portfolio'),
         loadWallet('/live-patterns-portfolio'),
         loadWallet('/live-cross-portfolio'),
+        loadWallet('/live-breakout-portfolio'),
       ]);
-      render({ signals: sig, patterns: pat, cross: crs });
+      render({ signals: sig, patterns: pat, cross: crs, breakout: brk });
     } catch (e) {
       // Rendering itself failed. loadWallet() already absorbs the fetch side,
       // so getting here means a bug in this file — say so on screen instead of
@@ -84,6 +85,7 @@
     signals:  { label: 'Signals',  link: '/live-signals',  color: '#0052cc' },
     patterns: { label: 'Patterns', link: '/live-patterns', color: '#1a8042' },
     cross:    { label: 'Cross',    link: '/live-cross',    color: '#b08000' },
+    breakout: { label: 'Breakout', link: '/live-breakout', color: '#7a4cc2' },
   };
 
   function summarise(p) {
@@ -326,7 +328,7 @@
       return;
     }
 
-    const s = summaries.signals, p = summaries.patterns, x = summaries.cross;
+    const s = summaries.signals, p = summaries.patterns, x = summaries.cross, b = summaries.breakout;
     const all = live.map(k => summaries[k]);
     const combinedEquity = all.reduce((a, e) => a + e.equity, 0);
     const combinedOpen = all.reduce((a, e) => a + e.openCount, 0);
@@ -351,7 +353,7 @@
 
     body.innerHTML = warn + `
       <div class="lw-block">
-        <div class="lw-lbl">Equity${missing.length ? ` · ${live.length}/3 wallets` : ''}</div>
+        <div class="lw-lbl">Equity${missing.length ? ` · ${live.length}/${Object.keys(ENGINES).length} wallets` : ''}</div>
         <div class="lw-val">${fmt(combinedEquity, 0)} <span class="lw-unit">SEK</span></div>
         ${equityPct === null
           ? `<div class="lw-sub">baseline unavailable</div>`
@@ -374,6 +376,9 @@
           </a>
           <a class="lw-mini" href="/live-cross" title="Cross — ${x ? x.openCount + ' open' : 'unavailable'}">
             <span class="lw-dot" style="background:${ENGINES.cross.color};"></span>${openTxt('cross')}
+          </a>
+          <a class="lw-mini" href="/live-breakout" title="Breakout — ${b ? b.openCount + ' open' : 'unavailable'}">
+            <span class="lw-dot" style="background:${ENGINES.breakout.color};"></span>${openTxt('breakout')}
           </a>
         </div>
       </div>

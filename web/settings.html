@@ -105,7 +105,10 @@
       background: var(--surface-alt); border: 1px solid var(--border);
       border-radius: 4px; padding: 1px 4px; font-size: 11px;
     }
-    #save-status, #isin-status, #lists-status, #notif-test-status { font-size: 13px; color: var(--text-subtle); }
+    .dead-summary { font-size: 13px; color: var(--text); line-height: 1.6; }
+    .dead-detail  { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-top: 6px; }
+    .dead-detail strong { color: var(--text-subtle); }
+    #save-status, #isin-status, #lists-status, #notif-test-status, #dead-status { font-size: 13px; color: var(--text-subtle); }
     .status-ok   { color: var(--positive) !important; }
     .status-err  { color: var(--negative) !important; }
     .status-warn { color: var(--warning)  !important; }
@@ -171,8 +174,9 @@
     <div class="section-desc">
       The <strong>Update All</strong> button in the navigation bar only refreshes
       stocks whose instrument type <em>and</em> currency are both checked below.<br>
-      The <strong>Update Everything</strong> button at the bottom always
-      refreshes all stocks, regardless of this filter.
+      The <strong>Update Everything</strong> button at the bottom refreshes all
+      stocks regardless of this filter. Both skip the
+      <strong>Delisted Instruments</strong> listed further down.
     </div>
 
     <div class="section-title" style="margin-top:14px">Instrument Types</div>
@@ -243,6 +247,25 @@
         <label>Parallel Fetch Workers (1-16)</label>
         <input type="number" id="refresh-workers" min="1" max="16">
       </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Delisted Instruments</div>
+    <div class="section-desc">
+      Instruments Millistream refuses with <strong>HTTP 403</strong>: expired warrants,
+      certificates and derivatives, and delisted shares. Update All and Update Everything
+      stop requesting one <span id="dead-rules">after repeated refusals</span>.
+      A refusal only counts if Millistream served another instrument after it in the same
+      update. An expired token gets the identical 403, so a token or network problem
+      cannot put healthy stocks on this list.
+    </div>
+    <div id="dead-summary" class="dead-summary">Loading…</div>
+    <div id="dead-groups" class="dead-detail"></div>
+    <div id="dead-equities" class="dead-detail"></div>
+    <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <button class="btn-full" id="btn-dead-recheck" onclick="recheckDead()" disabled>Re-check All on Next Update</button>
+      <span id="dead-status"></span>
     </div>
   </div>
 
@@ -562,9 +585,11 @@
           btn.textContent = `Updating… ${d.done}/${d.total}`;
           setTimeout(pollFull, 2000);
         } else {
-          btn.textContent = d.total > 0 ? `Done (${d.total})` : 'Update Everything';
+          btn.textContent = d.total > 0 ? `Done (${doneLabel(d)})` : 'Update Everything';
+          btn.title = d.message || '';
           btn.disabled = false;
           if (d.total > 0) setTimeout(() => { btn.textContent = 'Update Everything'; }, 3000);
+          loadDead();
         }
       }).catch(resetFullBtn);
     }
@@ -573,6 +598,72 @@
       const btn = document.getElementById('btn-full');
       if (btn) { btn.disabled = false; btn.textContent = 'Update Everything'; }
     }
+
+    // Lists over this length end in "+N more" rather than being cut silently.
+    const DEAD_SHOW = 12;
+    const fmtNum  = n => Number(n).toLocaleString('sv-SE');
+    const fmtDay  = iso => new Date(iso).toLocaleDateString('sv-SE');
+    const andMore = (items, total) =>
+      items.join(' · ') + (total > items.length ? ` · +${fmtNum(total - items.length)} more` : '');
+
+    function loadDead() {
+      const summary = document.getElementById('dead-summary');
+      fetch('/dead-instruments').then(r => r.json()).then(d => {
+        const r = d.rules || {};
+        document.getElementById('dead-rules').textContent =
+          `once it has been refused twice at least ${r.confirm_hours} hours apart with no ` +
+          `successful fetch in between, and re-check it after ${r.recheck_days} days ` +
+          `(doubling up to ${r.recheck_max_days} while it stays dead). One successful ` +
+          `fetch, from a re-check or a refresh on its stock page, takes it off the list`;
+
+        if (!d.skipping && !d.due && !d.pending) {
+          summary.textContent = 'Nothing on the list. Every instrument is fetched on each update.';
+        } else {
+          const parts = [`<strong>${fmtNum(d.skipping)}</strong> skipped`];
+          if (d.due)     parts.push(`<strong>${fmtNum(d.due)}</strong> due for a re-check on the next update`);
+          if (d.pending) parts.push(`<strong>${fmtNum(d.pending)}</strong> refused once so far, still fetched`);
+          if (d.next_recheck) parts.push(`next scheduled re-check ${esc(fmtDay(d.next_recheck))}`);
+          summary.innerHTML = parts.join(' · ');
+        }
+
+        const groups = d.groups || [];
+        document.getElementById('dead-groups').innerHTML = groups.length
+          ? andMore(groups.slice(0, DEAD_SHOW).map(g =>
+              `${esc(g.type)} / ${esc(g.currency)} <strong>${fmtNum(g.count)}</strong>`), groups.length)
+          : '';
+        const eq = d.equities || [];
+        document.getElementById('dead-equities').innerHTML = eq.length
+          ? `Equities: ` + andMore(eq.slice(0, DEAD_SHOW * 4).map(e =>
+              `${esc(e.name)} <span title="On the list since ${esc(fmtDay(e.dead_since))}">(${esc(e.currency)})</span>`),
+              eq.length)
+          : '';
+
+        // A due re-check is already queued, so the button only has work to do
+        // while something is being skipped.
+        document.getElementById('btn-dead-recheck').disabled = !d.skipping;
+      }).catch(() => { summary.textContent = 'Could not load the delisted list.'; });
+    }
+
+    function recheckDead() {
+      const btn = document.getElementById('btn-dead-recheck');
+      const el  = document.getElementById('dead-status');
+      btn.disabled = true;
+      fetch('/dead-instruments-recheck', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          el.textContent = d.queued
+            ? `${fmtNum(d.queued)} queued: each is fetched once on the next update`
+            : 'Nothing to re-check';
+          el.className = d.queued ? 'status-ok' : '';
+          loadDead();
+        })
+        .catch(() => {
+          el.textContent = 'Could not queue the re-check';
+          el.className   = 'status-err';
+          btn.disabled   = false;
+        });
+    }
+    loadDead();
 
     function esc(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

@@ -122,6 +122,7 @@
     <a href="#strategy">Strategy ★ Tab</a>
     <a href="#simulation">Simulation Tab</a>
     <a href="#live-signals-page">Live Signals ⚡</a>
+    <a href="#live-breakout-page">Live Breakout 📈</a>
     <a href="#stock-page">Stock Page</a>
     <a href="#chart">Chart Controls</a>
     <a href="#ma">Moving Averages</a>
@@ -447,6 +448,68 @@
   </div>
 
 
+  <!-- Live Breakout -->
+  <div class="section" id="live-breakout-page">
+    <div class="section-title">
+      <div class="section-icon icon-purple">📈</div>
+      Live Breakout 📈
+    </div>
+    <p style="font-size:13.5px; color:#444; line-height:1.6; margin:0 0 14px;">
+      A long-hold paper-trading engine, launched <strong>2026-10-26</strong> (<code>brk-1</code>), with its own <strong>1M SEK</strong> wallet in
+      <code>live_breakout_portfolio.json</code>. The other three engines are 7-day mean-reversion trades; this one buys <em>strength</em> and holds for
+      <strong>4–12 weeks</strong>: the strongest fresh 52-week highs among the 150 most-traded Swedish stocks. It runs in the same 3-minute cycle,
+      after Live Cross.
+    </p>
+    <div class="highlight-box" style="margin-top:0;">
+      <strong>Why it is a paper wallet.</strong> On 2003–2026 daily closes these exact rules made ~13.9% a year against 8.7% for the OMX Stockholm
+      price index, with a worst drawdown of ~−19% against −59%. But they beat the index in only 12 of 24 years and lagged it every year 2023–2026;
+      a handful of speculative runners made the big years; the archive only holds stocks that still exist (which flatters exactly this strategy) and
+      carries no dividends; and on the 50 most-traded names alone the rules lose to the index. The <strong>vs Index</strong> tile on the page — the
+      wallet against the OMX Stockholm price index since the wallet opened — is the number to judge it by, not the P&amp;L on its own.
+    </div>
+
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Entry — once a day, after the close</div>
+    <div class="strategy-rule">
+      <span class="rule-label">Universe</span>
+      <span class="rule-val">Every Stockholm equity with a year of history, ranked by its 60-day median turnover (close × volume). The top 150 trade. Ranked fresh every day, so a speculative name is in the universe only while it actually trades heavily.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Fresh 52w high</span>
+      <span class="rule-val">Today's confirmed close is above the highest close of the previous 250 sessions — and the stock made no such high in the 20 sessions before. A new breakout, not day 37 of a run.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Priority</span>
+      <span class="rule-val">When more names qualify than slots are free, the strongest 12-month momentum (the close a month ago over the close a year ago) is bought first.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Close fill</span>
+      <span class="rule-val">Bought at the official close on the first tick after the feed settles — the same proof Signals and Cross use. No entry cutoff: on a 12-week hold the fill is the close whenever the evening pass runs.</span>
+    </div>
+
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Exits</div>
+    <div class="strategy-rule">
+      <span class="rule-label">Target +10%</span>
+      <span class="rule-val">Switched on only from the <strong>20th session</strong> after entry (week 4) — the TP column shows the date. A stock that is already above +10% when the target switches on is sold <strong>at market</strong> on that first look; after that, a cross books at exactly +10%. Taking +10% from day one tested much worse: it sells the strongest stocks in their first weeks.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Stop −15%</span>
+      <span class="rule-val">Live from day one. Wide on purpose: at a 12-week horizon a stock moves ±10% in an ordinary month, and tighter stops (−10%) stopped out a third of all trades for nothing. Like every engine, a stop is never booked more than 4% below the stop price, so a deep overnight gap reads kinder than it was.</span>
+    </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Time-out 12w</span>
+      <span class="rule-val">Sold at market on the 60th session after entry if neither target nor stop has fired. Roughly a third of trades end this way.</span>
+    </div>
+
+    <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Sizing and what is deliberately not applied</div>
+    <p style="font-size:13px; color:#444; line-height:1.6; margin:0 0 10px;">
+      <strong>20 equal slots</strong>: each fill targets 1/20 of current equity (~50k), skipped below half a slot. Never two share classes of one company
+      in this wallet, and the shared 5%-of-volume liquidity cap applies. There is <strong>no</strong> Friday rule, event-calendar window or stop-out
+      cooldown — the backtest had none. And it is <strong>exempt from the cross-wallet duplicate rule in both directions</strong>: it may hold a
+      company another wallet holds, and its 12-week positions never block Signals or Patterns. Read concentration across all four wallets, not per wallet.
+    </p>
+  </div>
+
+
   <!-- Stock Page -->
   <div class="section" id="stock-page">
     <div class="section-title">
@@ -723,7 +786,11 @@
       </li>
       <li>
         <span class="tip-icon">🎯</span>
-        <span><strong>Update All scope</strong> — the nav bar "Update All" button only refreshes instrument types and currencies that are checked in Settings. "Update Everything" always refreshes all stocks regardless.</span>
+        <span><strong>Update All scope</strong> — the nav bar "Update All" button only refreshes instrument types and currencies that are checked in Settings. "Update Everything" refreshes all stocks regardless of those checkboxes. Both skip the delisted list below.</span>
+      </li>
+      <li>
+        <span class="tip-icon">🪦</span>
+        <span><strong>Delisted instruments</strong> — about a third of all instruments (mostly expired warrants, certificates and derivatives) are refused by Millistream with HTTP 403. Once one has been refused twice at least 12 hours apart, updates stop requesting it and re-check it weekly, then less often while it stays dead. A refusal only counts if another instrument was fetched successfully after it, so an expired token or network problem can't put healthy stocks on the list. Settings → Delisted Instruments shows what is skipped and can queue a re-check of all of them. A finished update reads e.g. "Done (42208 · 18962 skipped)"; hover it for the full result.</span>
       </li>
       <li>
         <span class="tip-icon">🔢</span>
