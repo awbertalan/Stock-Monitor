@@ -112,6 +112,7 @@ HIGH_MIN_PRIOR  = 240    # a session needs this many prior closes to count as a 
 FRESH_GAP       = 20     # no new 52-week high in the previous 20 sessions
 MOM_SKIP, MOM_SPAN = 21, 250   # priority: close[t-21] / close[t-250] - 1
 TAIL_ROWS       = 320    # History rows read per name — covers every lookback above
+WATCH_NEAR_PCT  = 0.03   # pre-close watchlist: fresh names within 3% of their trigger
 
 TP_PCT            = 0.10   # +10% — live only from TP_FROM_SESSIONS
 TP_FROM_SESSIONS  = 20     # week 4: the target switches on at the 20th session
@@ -269,7 +270,9 @@ def build_universe(today):
         except Exception:                       # noqa: BLE001 — one file, not the pass
             unreadable += 1
             continue
+        today_row = None
         if rows and rows[-1][0] >= today:
+            today_row = rows[-1]
             rows = rows[:-1]
         if len(rows) < MIN_HISTORY:
             short += 1
@@ -285,6 +288,10 @@ def build_universe(today):
             "folder":   folder,
             "rows":     rows,
             "turnover": turnover,
+            # The sweep's intraday row and when it was written — read only by
+            # build_watchlist(); the pass itself prices off the live close.
+            "today_row": today_row,
+            "path":      hist[0],
         })
     ranked.sort(key=lambda u: -u["turnover"])
     universe = ranked[:UNIVERSE_SIZE]
@@ -580,6 +587,77 @@ def scan_problem(meta):
     return None, False
 
 
+def build_watchlist(state, today, now_local_ts):
+    """The page's pre-close view of tonight's pass — which names are close to,
+    or already through, the close they need, while there is still time to read
+    it before 17:30.
+
+    Same universe and the same breakout_check() as the pass, applied to the
+    sweep's intraday History row instead of a live quote, so it costs no
+    Millistream requests at all. Those rows are only as fresh as the last sweep
+    (~15 min) on top of the feed's own ~15-min lag, which is why the as-of time
+    travels with the list. A forecast, not a fill: the pass decides on the
+    official close, after the day's exits.
+
+    Lists every name that can still trigger today (no new high in the previous
+    20 sessions) and trades within WATCH_NEAR_PCT of its trigger or above it.
+    Names above it are given the slots in the pass's own order — strongest 12-1
+    momentum first — after the ones it would refuse (held, same company)."""
+    universe, meta = build_universe(today)
+    held_stems = {L.company_stem(tk): tk for tk in state["positions"]}
+    rows, blocked_recent, as_of = [], 0, None
+    for u in universe:
+        tr = u["today_row"]
+        price = tr[1] if tr else u["rows"][-1][1]
+        ok, info = breakout_check([c for _, c, _ in u["rows"]] + [price])
+        if "err" in info:
+            continue
+        if info["last_high_ago"] is not None:
+            blocked_recent += 1
+            continue
+        if info["breakout_pct"] < -WATCH_NEAR_PCT:
+            continue
+        if tr:
+            mtime = os.path.getmtime(u["path"])
+            as_of = mtime if as_of is None else max(as_of, mtime)
+        stem = L.company_stem(u["ticker"])
+        refuse = ("already held" if u["ticker"] in state["positions"]
+                  else f"skipped — holds {held_stems[stem]}" if stem in held_stems else None)
+        rows.append({
+            "ticker":        u["ticker"],
+            "price":         price,
+            "priced_today":  bool(tr),
+            "trigger":       info["prior_high"],
+            "distance":      info["breakout_pct"],
+            "above":         bool(ok),
+            "mom_12_1":      info["mom_12_1"],
+            "rank":          u["rank"],
+            "turnover_msek": round(u["turnover"] / 1e6, 1),
+            "refuse":        refuse,
+            "ticker_path":   f"Equity/SEK/{u['folder']}",
+        })
+    free = max(0, SLOTS - len(state["positions"]))
+    buyers = sorted((r for r in rows if r["above"] and not r["refuse"]),
+                    key=lambda r: -(r["mom_12_1"] if r["mom_12_1"] is not None else -9.0))
+    for i, r in enumerate(buyers):
+        r["slot"] = i < free
+    rows.sort(key=lambda r: (not r["above"], -r["distance"]))
+    state["watchlist"] = {
+        "date":          today.isoformat(),
+        "computed":      now_local_ts,
+        "prices_as_of":  (datetime.fromtimestamp(as_of).replace(microsecond=0).isoformat()
+                          if as_of else None),
+        "near_pct":      WATCH_NEAR_PCT,
+        "free_slots":    free,
+        "universe":      meta["size"],
+        "blocked_recent": blocked_recent,
+        "rows":          rows,
+    }
+    paths = state.setdefault("ticker_paths", {})
+    for r in rows:
+        paths.setdefault(r["ticker"], r["ticker_path"])
+
+
 def enter(state, candidates, live, today, now_local_ts):
     """Fill candidates in priority order until slots or cash run out. Every
     candidate that does not fill gets its reason, so the page can say why."""
@@ -683,6 +761,19 @@ def main():
     state["paused_since"]   = ENTRIES_PAUSED_SINCE  if ENTRIES_PAUSED else None
     state["paused_reason"]  = ENTRIES_PAUSED_REASON if ENTRIES_PAUSED else None
     update_benchmark(state, today, now_local)
+
+    # ── 0. Pre-close watchlist for the page ─────────────────────────────────
+    # Every market-hours tick until tonight's pass has run, plus one look at the
+    # previous close on the first tick of a trading day. Display only: it gates
+    # nothing, so a failure is recorded and the run carries on.
+    if (L.is_trading_day(now_local) and state.get("last_entry_scan_date") != today.isoformat()
+            and (L.is_market_open(now_local)
+                 or (state.get("watchlist") or {}).get("date") != today.isoformat())):
+        try:
+            build_watchlist(state, today, now_local_ts)
+        except Exception as e:                  # noqa: BLE001
+            state["watchlist"] = {"date": today.isoformat(), "computed": now_local_ts,
+                                  "error": f"{type(e).__name__}: {e}"}
 
     # ── 1. Is this the day's close-confirmed pass? ──────────────────────────
     signals_state = ec.read_json(SIGNALS_STATE_PATH, {})

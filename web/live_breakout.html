@@ -95,6 +95,33 @@
   </div>
 
   <div class="section">
+    <div class="section-title">Near breakout — before the close</div>
+    <div class="section-subtitle">
+      Names that can still trigger today and trade within <strong>3%</strong> of the close they need, or already above it.
+      Tonight's pass buys every one that <strong>closes</strong> above its trigger, strongest 12-month momentum first, while
+      slots last. A forecast from the price sweep, not a fill — a name above its trigger now can still close below it.
+    </div>
+    <div class="scan-meta" id="watch-meta"></div>
+    <table class="sig-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Tier</th>
+          <th class="num">Now</th>
+          <th class="num">Must close above</th>
+          <th class="num">Distance</th>
+          <th class="num mobile-hide">12-1 mom</th>
+          <th class="num mobile-hide">Turnover rank</th>
+          <th>Tonight</th>
+        </tr>
+      </thead>
+      <tbody id="watch-body">
+        <tr><td colspan="8" class="empty-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
     <div class="section-title">Latest scan</div>
     <div id="paused-notice" style="display:none;"></div>
     <div id="gate-notice" style="display:none;"></div>
@@ -287,6 +314,59 @@
            + `<div class="small">${esc(note)}</div></td>`;
     }
 
+    // Near-breakout watchlist, built by the engine every market-hours tick from
+    // the price sweep's intraday rows (build_watchlist in live_breakout.py). Its
+    // prices are a sweep behind on top of the feed's own lag, so the as-of time
+    // is part of every reading of it.
+    function renderWatchlist(w, scan) {
+      const metaEl = document.getElementById('watch-meta');
+      const body = document.getElementById('watch-body');
+      if (!w || w.error) {
+        metaEl.textContent = w && w.error
+          ? `Watchlist failed on the last run: ${w.error}`
+          : 'Not built yet — the engine builds it on the first tick of a trading day.';
+        body.innerHTML = '<tr><td colspan="8" class="empty-row">No watchlist</td></tr>';
+        return;
+      }
+      const hhmm = ts => ts ? fmtTs(ts).slice(11, 16) : '?';
+      const isToday = w.date === todayIso();
+      const passRan = scan && scan.date === w.date;
+      const canTrigger = (w.universe || 0) - (w.blocked_recent || 0);
+      metaEl.textContent =
+        (isToday ? 'Today' : `From ${w.date} — not today`)
+        + `: prices from the price sweep at ${hhmm(w.prices_as_of)} (the feed itself runs ~15 min behind), `
+        + `list updated ${hhmm(w.computed)} · ${w.free_slots} of 20 slots free · ${canTrigger} of ${w.universe} names `
+        + `can trigger today (${w.blocked_recent} made a new high in the last 20 sessions).`
+        + (passRan ? ' Tonight\'s pass has run — Latest scan below shows what was actually bought.' : '');
+      const rows = Array.isArray(w.rows) ? w.rows : [];
+      if (!rows.length) {
+        body.innerHTML = `<tr><td colspan="8" class="empty-row">No name within ${(w.near_pct * 100).toFixed(0)}% of its trigger</td></tr>`;
+        return;
+      }
+      body.innerHTML = rows.map(r => {
+        const status = r.refuse
+          ? `<span class="skip-tag">${esc(r.refuse)}</span>`
+          : r.above
+            ? (r.slot
+                ? '<span class="skip-tag bought">buys at the close if it holds</span>'
+                : '<span class="skip-tag">above — but no free slot</span>')
+            : `<span class="skip-tag">${(-r.distance * 100).toFixed(2)}% to go</span>`;
+        const noPrint = r.priced_today ? ''
+          : ' <span class="q-stale" title="No print in the sweep today yet — this is the last close">last close</span>';
+        return `
+          <tr>
+            <td class="ticker">${tickerLink(r.ticker)}</td>
+            ${tierCell(r.ticker)}
+            <td class="num">${fmt(r.price, 2)}${noPrint}</td>
+            <td class="num">${fmt(r.trigger, 2)}</td>
+            <td class="num ${r.above ? 'up' : ''}">${pct(r.distance, 2)}</td>
+            <td class="num mobile-hide ${r.mom_12_1 == null ? '' : cls(r.mom_12_1)}">${r.mom_12_1 == null ? '—' : pct(r.mom_12_1, 0)}</td>
+            <td class="num mobile-hide" title="${esc(fmt(r.turnover_msek, 1) + ' MSEK/day median turnover')}">${r.rank}</td>
+            <td>${status}</td>
+          </tr>`;
+      }).join('');
+    }
+
     function renderPortfolio(p) {
       const cash = p.cash || 0;
       const positions = p.positions || {};
@@ -380,6 +460,8 @@
       } else {
         gateEl.style.display = 'none';
       }
+
+      renderWatchlist(p.watchlist, scan);
 
       // Latest scan — dated, because it is written once a day and stays on the
       // page until the next close.

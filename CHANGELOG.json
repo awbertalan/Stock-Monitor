@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "_readme": "Project changelog + version ledger. `app_version` bumps on every Claude-assisted change; `strategy_versions` bump ONLY when an engine's tradeable parameters, gates or detectors change. lib/version.py is the read API; the engines stamp these onto every position, so a trade can always be traced back to the code that opened it. Entries are newest-first. Entries with source='reconstructed' were rebuilt from session notes on 2026-08-21 (before the ledger existed) and their exact dates are best-effort; source='live' entries were written at the time of the change.",
-  "app_version": "0.27.1",
+  "app_version": "0.30.0",
   "strategy_versions": {
     "signals": "sig-12",
     "patterns": "pat-5",
@@ -202,6 +202,68 @@
     ]
   },
   "entries": [
+    {
+      "version": "0.30.0",
+      "date": "2026-11-05",
+      "source": "live",
+      "title": "Stock page: 'Live trades' rail — every live-engine trade in that stock, on the right",
+      "summary": "The owner asked for each stock page to show the whole purchase history of all live engines on the right side of the page. A new 'Live trades' rail lists every trade Signals, Patterns, Cross and Breakout have made in the stock, newest first, with a summary on top, and each row opens the same detail window as the Live widget (0.29.0). On screens wide enough to hold it beside the 1100px content (>= 1724px, i.e. the owner's 2560px displays) it is a fixed rail mirroring the widget on the left; on narrower ones it is an ordinary card under the chart, so the chart is never narrowed. UI only — no engine or app.py change, no restart needed (the stock template is re-read per request).",
+      "files": [
+        "web/live_widget.js",
+        "web/stock_template.html",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "web/stock_template.html: <aside id='live-trades' data-insref data-name> under the chart card, plus its .lt-* styles in the page's own <style> (the fixed position depends on this page's 1100px body: 252 widget column + 1140 body + 16 + 300 rail + 16 = 1724px). The fixed rule only applies while the widget is on the page (body:has(.live-widget)), because the 252px left offset is the widget's; without it the body is centred and a rail at 1408px would cover the content.",
+        "web/live_widget.js renderRail(): filled from the four wallets the widget already polls, on the same 60 s tick — no extra requests, and rail, widget and detail window always agree. Trades are matched on insref: open positions carry it, closed trades carry only a display name, which the wallet's ticker_paths maps to a folder ending in {insref}_{name} (exact-name fallback for a name with no path). That merges a share renamed between trades — Munters Group / Munters Group AB land on one page. Checked across all four wallets: every traded name has a path, and open positions' insrefs agree with them.",
+        "Rail content: realised P&L over closed trades (win/loss, win rate and average return excluding STALE, as on the live pages), unrealised P&L of what is held now, one chip per engine (trades, realised P&L, links to the engine page), then one row per trade — engine, strategy version, return, exit reason (or OPEN with the live price), entry -> exit price, SEK P&L, dates and days held (open: bought date and exit-by). A wallet that did not answer is named in a warning, never shown as 'no trades'.",
+        "Detail window: rows in the rail open it like widget rows (one delegated handler bound to both lists; focus returns to the exact row via its entry stamp). Opened on the stock's own page it drops the redundant 'Stock page' button and promotes the engine-page button. refresh() now renders the widget, the rail and an open detail window in separate try blocks, so a bug in one cannot blank the others."
+      ],
+      "strategy_bumps": [],
+      "notes": "Verified with app.py imported on spare port 8766 (no bg threads, :8765 untouched) and headless Chrome over the DevTools protocol at 2560 and 1500px: Alvotech SDB (11 trades, 3 engines), SKF A (open + closed), Munters (rename merged, 5 trades), Dustin Group (empty state). At 2560 the rail sits at x 1408-1708, overlapping nothing, and the chart canvas stays 800px = 800px CSS (no stretch); at 1500 it is in-flow with rows tiled in 3 columns. Rail click opened the right Cross trade, Esc returned focus to that row; no console errors. In one of the test loads the Breakout wallet fetch failed once — the widget showed its existing '3/4 wallets' warning on the same load, so it was the shared fetch, not the rail; three monitored reloads afterwards were 200 in 10-20 ms for all four wallets."
+    },
+    {
+      "version": "0.29.0",
+      "date": "2026-11-05",
+      "source": "live",
+      "title": "Live widget: every stock opens a detail window — entry, planned exit, why it was bought",
+      "summary": "The owner asked for every stock in the floating Live widget to open a temporary window with the exact entry price, the planned exit price and the reason and analytics behind the purchase. A plain click on any row (open positions and recent trades) now opens that window over the page instead of navigating; Cmd/Ctrl/middle-click still opens the stock page in a new tab, and the window carries Stock page / engine page buttons. UI only — no engine, TP, SL, hold, gate or app.py change, so no strategy bump and no restart needed (web/ files are served fresh from disk).",
+      "files": [
+        "web/live_widget.js",
+        "web/style.css",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "web/live_widget.js: rows carry data-lw-kind/engine/ticker/entry(/exit) and one delegated click handler opens the window; modified clicks keep the link. The window is a dialog (aria-modal, focus moved in and returned to the row, Tab kept inside, Esc / x / backdrop mousedown close it) and re-renders on the widget's own 60 s poll, keeping its scroll position. If the position closes while the window is open it switches to the closed trade with a 'Closed since this window opened' banner; if the record or wallet disappears the last figures stay up under a banner saying so.",
+        "Plan: entry, take profit, stop loss and exit-by exactly as the wallet stores them (up to 4 decimals, since tp/sl are entry x (1 +/- pct) rounded to 4), each level with its % and SEK at that price, a price ladder (stop - entry - target with today's price or the exit as a dot) and how each exit really fills: TP limit-filled at the target, SL at the stop or at the market if already below it (MAX_SL_SLIP 4%), TIMEOUT at the market on the exit-by day, Breakout's target off until tp_live_from. Closed trades do not store tp/sl, so their plan is rebuilt from the opening strategy version's TP/SL in the ledger (the same entry x (1 +/- pct) the engines use) and labelled as rebuilt; an SL exit below the planned stop states the slippage.",
+        "Why it was bought, per engine, from the position's signal_info: Signals — day-over-day drop vs the version's DoD rule (parsed from the ledger params, sig-10+), 20-day return vs the -15% crash guard, not Friday, not at the 5-day high, auto / watchlist / forced source, and the shadow news label with headlines. Patterns — the patterns on the last completed daily candle, each with a one-line description worded from its detector in live_patterns.py. Cross — the Signals half (DoD, 20d) and the Patterns half. Breakout — % through the prior 52-week high, freshness, 12-1 momentum and turnover rank. Plus the version's full rules text from CHANGELOG.json.",
+        "Track record: this strategy version, other trades in the same stock, and (Patterns / Cross) other trades on the same primary pattern — trades, win rate (version row coloured against its own break-even), average return and P&L, STALE exits excluded from WR/avg as on the live pages, with a note that under ~200 trades a win rate is mostly noise.",
+        "Ledger (/changelog-data), tiers (/live-tiers) and sectors (/live-sectors) are fetched once, lazily, on the first open — pages that never open the window make no extra requests; a failed ledger read is retried on the next open. Header shows tier, sector, the version pill (links to /changelog) and, for closed trades, the exit-reason pill.",
+        "web/style.css: lwm-prefixed rules next to the widget's, built from the tokens; scoped .up/.down so host pages' own colour rules (dashboard.html's old #16c784) cannot leak in. Backdrop matches the stock page's alert modal and sits above it (z-index 200)."
+      ],
+      "strategy_bumps": [],
+      "notes": "Deliberately NOT done: stamping tp/sl onto closed trades in live_signals.apply_exit_checks. live_breakout parks each position's tp at TP_PARKED (1e18) while apply_exit_checks runs and restores it only on positions still open, so a closed trade written there would record 1e18 for Breakout; doing it needs the real value carried from arm_targets(). Verified: node --check; app.py imported on spare port 8766 (no bg threads, :8765 untouched) + headless Chrome driven over the DevTools protocol — clicked real Signals / Patterns / Breakout open rows and a closed SL row, a synthetic Cross closed row, the closed-since and not-found paths, ctrl-click passthrough, backdrop vs in-dialog mousedown, Tab trap, Esc focus return, and a real 60 s poll re-render with scroll kept at an 820 px viewport; no console errors. Figures checked against state: Nibe 45,08 x 1.03 = 46,4324 TP; Bravida SL exit 150,10 vs rebuilt stop 150,777."
+    },
+    {
+      "version": "0.28.0",
+      "date": "2026-11-05",
+      "source": "live",
+      "title": "Live Breakout: 'Near breakout — before the close' watchlist",
+      "summary": "The owner asked to see, before the 17:30 close, which stocks are about to reach the Breakout buy-in, so the page can be read while there is still time to act. The engine now builds a pre-close watchlist on every market-hours tick: every name in tonight's universe that can still trigger today and trades within 3% of the close it needs, or already above it, with what the evening pass would do with it. Display only — no TP, SL, hold, entry rule or gate changed, so no strategy bump.",
+      "files": [
+        "live_breakout.py",
+        "web/live_breakout.html",
+        "web/help.html",
+        "CHANGELOG.json"
+      ],
+      "changes": [
+        "live_breakout.py build_watchlist(): same top-150 universe and the same breakout_check() as the pass, applied to the price sweep's intraday History row instead of a live quote — so it costs no Millistream requests at all (the owner's standing rule on request rate). Lists names with no new 52-week high in the previous 20 sessions (only those can trigger today) within WATCH_NEAR_PCT = 3% of their trigger or above it; names above it get the free slots in the pass's own order (12-1 momentum), after the ones the pass would refuse (already held, second share class). Writes state['watchlist'] with the sweep time its prices come from. On 2026-11-05 at 11:00: 14 names, 5 above their trigger.",
+        "live_breakout.py main(): the watchlist is rebuilt on every market-hours tick until that day's pass has run, plus once on the first tick of a trading day (on the previous close). Wrapped so a failure is recorded on the page and the run carries on; it gates nothing. build_universe() now also keeps the sweep's intraday row and file path for it (~0.8 s).",
+        "web/live_breakout.html: new 'Near breakout — before the close' section above Latest scan — price now, the close it must beat, distance, 12-1 momentum, turnover rank and what tonight's pass would do ('buys at the close if it holds', 'no free slot', 'already held', 'skipped — holds X', 'x% to go'). The header states the sweep time, that the feed runs ~15 min behind, free slots, and how many names are blocked by a recent high; once the pass has run it points to Latest scan for what was actually bought. web/help.html: one rule row describing it."
+      ],
+      "strategy_bumps": [],
+      "notes": "Verified: watchlist matched an independent prototype on 2026-11-05 11:00 data (same 14 names, same distances); a full engine run into an empty sandbox; state stays JSON-safe; page rendered with app.py on a spare port + headless Chrome against a copy of the live wallet. Forecast caveat stated on the page: prices are a sweep (~15 min) plus the feed's lag behind, and only the official close decides."
+    },
     {
       "version": "0.27.1",
       "date": "2026-10-30",

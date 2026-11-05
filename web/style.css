@@ -218,6 +218,191 @@ nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
 .live-widget .up   { color: var(--positive); }
 .live-widget .down { color: var(--negative); }
 
+/* Live widget — stock detail window. Opened by a click on any stock in the
+   widget (open positions + recent trades): entry, planned exit, why it was
+   bought. Built by live_widget.js and appended to <body>, so nothing here may
+   assume a .live-widget ancestor. Every class is lwm-prefixed because the host
+   pages carry their own generic .up / .down / .small rules (dashboard.html's
+   .up is the old #16c784), and those would otherwise leak in. Backdrop
+   matches the stock page's alert modal; z-index sits above it (100/101). */
+.lwm-backdrop {
+  position: fixed; inset: 0; z-index: 200;
+  display: none; align-items: center; justify-content: center;
+  padding: 24px 16px; box-sizing: border-box;
+  background: rgba(26, 31, 54, 0.32);
+}
+.lwm-backdrop.open { display: flex; }
+.lwm-dialog {
+  position: relative; width: 100%; max-width: 560px; max-height: 100%;
+  overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 20px 22px 18px;
+  box-shadow: 0 12px 36px rgba(26, 31, 54, 0.18);
+  font-family: Arial, sans-serif; font-size: 12.5px; line-height: 1.45;
+  color: var(--text); text-align: left;
+}
+.lwm-dialog:focus { outline: none; }
+@keyframes lwm-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .lwm-backdrop.open .lwm-dialog { animation: lwm-in 0.14s ease-out; }
+}
+.lwm-close {
+  position: absolute; top: 12px; right: 12px;
+  width: 28px; height: 28px; padding: 0;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: none; color: var(--text-muted); cursor: pointer;
+  font-family: Arial, sans-serif; font-size: 20px; line-height: 1;
+}
+.lwm-close:hover { background: var(--surface-hover); border-color: var(--border-input); color: var(--text); }
+.lwm-close:focus-visible, .lwm-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lwm-dialog .up   { color: var(--positive); }
+.lwm-dialog .down { color: var(--negative); }
+.lwm-muted { color: var(--text-muted); }
+
+.lwm-flag {
+  font-size: 11.5px; color: var(--warning); background: var(--warning-soft);
+  border-radius: var(--radius-sm); padding: 6px 9px; margin: 0 36px 10px 0;
+}
+.lwm-kicker {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.lwm-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.lwm-title {
+  margin: 3px 36px 7px 0; font-size: 21px; font-weight: 700; line-height: 1.2;
+  letter-spacing: -0.3px; color: var(--text);
+}
+.lwm-pills { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.lwm-pills a.pill { text-decoration: none; }
+.lwm-status { margin-top: 12px; font-size: 13px; color: var(--text-subtle); font-variant-numeric: tabular-nums; }
+.lwm-status b { font-size: 15px; color: var(--text); }
+.lwm-status b.up   { color: var(--positive); }
+.lwm-status b.down { color: var(--negative); }
+
+/* Entry / Take profit / Stop loss / Exit — the numbers the window is for. */
+.lwm-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.lwm-tile {
+  min-width: 0; padding: 9px 10px;
+  background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-md);
+}
+.lwm-tile-lbl {
+  font-size: 9.5px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.4px; margin-bottom: 4px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.lwm-tile-val {
+  font-size: 15px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lwm-tile-sub { font-size: 10.5px; color: var(--text-muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+/* Price ladder: stop at the left end, target at the right, entry tick where it
+   falls between them, current price (or exit) as a dot. */
+.lwm-ladder { margin: 30px 8px 0; }
+.lwm-lad-track {
+  position: relative; height: 8px; border-radius: 4px;
+  background: var(--positive-soft);
+}
+.lwm-lad-loss {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--negative-soft); border-radius: 4px 0 0 4px;
+}
+.lwm-lad-entry {
+  position: absolute; top: -4px; width: 2px; height: 16px; margin-left: -1px;
+  background: var(--text); border-radius: 1px;
+}
+.lwm-lad-mark {
+  position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+  border-radius: 50%; background: var(--text-muted);
+  border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border-input); box-sizing: border-box;
+}
+.lwm-lad-mark.up   { background: var(--positive); }
+.lwm-lad-mark.down { background: var(--negative); }
+.lwm-lad-mlbl {
+  position: absolute; bottom: 13px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-size: 10.5px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.lwm-lad-mlbl.al-l { left: -2px; transform: none; }
+.lwm-lad-mlbl.al-r { left: auto; right: -2px; transform: none; }
+.lwm-lad-labels {
+  position: relative; height: 14px; margin-top: 7px;
+  font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.lwm-lad-labels span { position: absolute; top: 0; white-space: nowrap; }
+.lwm-lad-sl { left: 0; }
+.lwm-lad-tp { right: 0; }
+.lwm-lad-en { transform: translateX(-50%); color: var(--text-subtle); font-weight: 600; }
+
+.lwm-lines { margin-top: 12px; font-size: 11.5px; color: var(--text-subtle); }
+.lwm-lines div + div { margin-top: 3px; }
+.lwm-lines b { color: var(--text); font-weight: 600; }
+
+.lwm-sec { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.lwm-sec-title {
+  font-size: 10px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+}
+.lwm-sec-note { font-weight: normal; text-transform: none; letter-spacing: 0; }
+.lwm-lead { color: var(--text-subtle); margin-bottom: 8px; }
+
+/* Entry checks: ✓ passed, ✕ failed (a forced entry can carry one), • context. */
+.lwm-check { display: flex; gap: 8px; padding: 4px 0; }
+.lwm-ck {
+  flex: 0 0 16px; height: 16px; margin-top: 1px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; line-height: 1;
+}
+.lwm-ck.ok  { background: var(--positive-soft); color: var(--positive); }
+.lwm-ck.no  { background: var(--negative-soft); color: var(--negative); }
+.lwm-ck.ctx { background: var(--surface-alt); color: var(--text-muted); border: 1px solid var(--border); box-sizing: border-box; }
+.lwm-check-body { min-width: 0; flex: 1; }
+.lwm-check-main { font-weight: 600; color: var(--text); }
+.lwm-check-note { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.lwm-sublist {
+  margin-top: 5px; padding: 6px 9px; border-radius: var(--radius-sm);
+  background: var(--surface-alt); font-size: 11px; color: var(--text-subtle);
+}
+.lwm-sublist div + div { margin-top: 3px; }
+.lwm-sublist b { color: var(--text); font-weight: 600; }
+.lwm-rules {
+  margin-top: 8px; padding: 7px 9px; border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-input); font-size: 11px; color: var(--text-subtle);
+}
+.lwm-rules-k { font-weight: 700; color: var(--text-muted); text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.4px; margin-right: 4px; }
+
+.lwm-rec-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 56px 68px 64px 80px; column-gap: 10px;
+  align-items: baseline; padding: 4px 0; font-size: 12px; font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+}
+.lwm-rec-row > span:not(:first-child) { text-align: right; }
+.lwm-rec-row:last-child { border-bottom: none; }
+.lwm-rec-head {
+  font-size: 9.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px;
+}
+.lwm-rec-k { color: var(--text-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lwm-rec-row > span.lwm-rec-none { grid-column: span 4; text-align: left; color: var(--text-muted); font-style: italic; }
+.lwm-rec-x { color: var(--text-muted); font-size: 10px; margin-left: 2px; }
+.lwm-foot-note { margin-top: 6px; font-size: 10.5px; color: var(--text-muted); }
+
+.lwm-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);
+}
+.lwm-btn {
+  display: inline-block; padding: 7px 14px; border-radius: var(--radius-sm);
+  font-family: Arial, sans-serif; font-size: 12px; font-weight: 600; text-decoration: none;
+  border: 1px solid var(--border-input); background: var(--surface); color: var(--text-subtle);
+}
+.lwm-btn:hover { background: var(--surface-hover); border-color: var(--accent); color: var(--accent); }
+.lwm-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lwm-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
+@media (max-width: 720px) {
+  .lwm-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* Push body content right when the sidebar is present AND the viewport has
    room. Using :has() means the sidebar's DOM presence directly drives the
    layout — no JS-added class needed, and the rule auto-clears on pages

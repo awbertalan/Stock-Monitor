@@ -485,6 +485,10 @@
       <span class="rule-label">Close fill</span>
       <span class="rule-val">Bought at the official close on the first tick after the feed settles — the same proof Signals and Cross use. No entry cutoff: on a 12-week hold the fill is the close whenever the evening pass runs.</span>
     </div>
+    <div class="strategy-rule">
+      <span class="rule-label">Near breakout</span>
+      <span class="rule-val">The <strong>Near breakout — before the close</strong> table on the page shows, during the session, every name that can still trigger today and trades within 3% of the close it needs (or already above it), and what tonight's pass would do with it. Built every 3 minutes from the price sweep's intraday prices — no extra Millistream requests — so it is a sweep (~15 min) plus the feed's own ~15 min behind; the time is shown above the table. A forecast, not a fill: only the official close decides.</span>
+    </div>
 
     <div style="font-size:13px; font-weight:bold; color:#1a1f36; margin:18px 0 10px;">Exits</div>
     <div class="strategy-rule">
